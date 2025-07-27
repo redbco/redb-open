@@ -1,0 +1,150 @@
+syntax = "proto3";
+
+package redbco.redbopen.webhook.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/webhook/v1;webhookv1";
+
+import "google/protobuf/timestamp.proto";
+
+// WebhookService provides webhook delivery functionality
+service WebhookService {
+    // SendWebhook sends a webhook to the specified URL
+    rpc SendWebhook(SendWebhookRequest) returns (SendWebhookResponse);
+    
+    // SendWebhookBatch sends multiple webhooks in a batch
+    rpc SendWebhookBatch(SendWebhookBatchRequest) returns (SendWebhookBatchResponse);
+    
+    // GetWebhookStatus gets the status of a webhook delivery
+    rpc GetWebhookStatus(GetWebhookStatusRequest) returns (GetWebhookStatusResponse);
+}
+
+// SendWebhookRequest contains the parameters for sending a webhook
+message SendWebhookRequest {
+    // URL to send the webhook to
+    string url = 1;
+    
+    // HTTP method (GET, POST, PUT, etc.)
+    string method = 2;
+    
+    // Headers to include in the webhook request
+    map<string, string> headers = 3;
+    
+    // Body content of the webhook
+    bytes body = 4;
+    
+    // Content type of the body
+    string content_type = 5;
+    
+    // Timeout for the webhook request in seconds
+    int32 timeout_seconds = 6;
+    
+    // Maximum number of retry attempts
+    int32 max_retries = 7;
+    
+    // Retry delay in seconds
+    int32 retry_delay_seconds = 8;
+    
+    // Webhook ID for tracking purposes
+    string webhook_id = 9;
+    
+    // Event type that triggered the webhook
+    string event_type = 10;
+    
+    // Optional authentication configuration
+    WebhookAuth auth = 11;
+}
+
+// WebhookAuth contains authentication configuration for webhooks
+message WebhookAuth {
+    oneof auth_type {
+        BasicAuth basic_auth = 1;
+        BearerAuth bearer_auth = 2;
+        ApiKeyAuth api_key_auth = 3;
+    }
+}
+
+message BasicAuth {
+    string username = 1;
+    string password = 2;
+}
+
+message BearerAuth {
+    string token = 1;
+}
+
+message ApiKeyAuth {
+    string key = 1;
+    string value = 2;
+    // Where to include the API key (header, query)
+    string location = 3;
+}
+
+// SendWebhookResponse contains the result of a webhook send operation
+message SendWebhookResponse {
+    // Whether the webhook was sent successfully
+    bool success = 1;
+    
+    // HTTP status code received
+    int32 status_code = 2;
+    
+    // Response body from the webhook endpoint
+    bytes response_body = 3;
+    
+    // Error message if the webhook failed
+    string error_message = 4;
+    
+    // Timestamp when the webhook was sent
+    google.protobuf.Timestamp sent_at = 5;
+    
+    // Duration of the request in milliseconds
+    int64 duration_ms = 6;
+    
+    // Number of attempts made
+    int32 attempts = 7;
+}
+
+// SendWebhookBatchRequest for sending multiple webhooks
+message SendWebhookBatchRequest {
+    repeated SendWebhookRequest webhooks = 1;
+    
+    // Whether to stop processing on first failure
+    bool fail_fast = 2;
+}
+
+// SendWebhookBatchResponse contains results for batch webhook operations
+message SendWebhookBatchResponse {
+    repeated SendWebhookResponse results = 1;
+    
+    // Number of successful webhooks
+    int32 success_count = 2;
+    
+    // Number of failed webhooks
+    int32 failure_count = 3;
+}
+
+// GetWebhookStatusRequest for checking webhook delivery status
+message GetWebhookStatusRequest {
+    string webhook_id = 1;
+}
+
+// WebhookStatus represents the current status of a webhook
+enum WebhookStatus {
+    WEBHOOK_STATUS_UNSPECIFIED = 0;
+    WEBHOOK_STATUS_PENDING = 1;
+    WEBHOOK_STATUS_SENDING = 2;
+    WEBHOOK_STATUS_SUCCESS = 3;
+    WEBHOOK_STATUS_FAILED = 4;
+    WEBHOOK_STATUS_RETRYING = 5;
+}
+
+// GetWebhookStatusResponse contains webhook status information
+message GetWebhookStatusResponse {
+    string webhook_id = 1;
+    WebhookStatus status = 2;
+    int32 attempts = 3;
+    int32 max_retries = 4;
+    google.protobuf.Timestamp last_attempt_at = 5;
+    google.protobuf.Timestamp next_retry_at = 6;
+    string last_error = 7;
+    int32 last_status_code = 8;
+}

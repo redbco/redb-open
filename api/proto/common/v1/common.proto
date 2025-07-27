@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package redbco.redbopen.common.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/common/v1;commonv1";
+
+import "google/protobuf/timestamp.proto";
+
+// Status represents the status of a service or operation
+enum Status {
+    STATUS_HEALTHY = 0;
+    STATUS_DEGRADED = 1;
+    STATUS_UNHEALTHY = 2;
+    STATUS_PENDING = 3;
+    STATUS_UNKNOWN = 4;
+    STATUS_SUCCESS = 5;
+    STATUS_FAILURE = 6;
+    STATUS_STARTING = 7;
+    STATUS_STOPPING = 8;
+    STATUS_STOPPED = 9;
+    STATUS_STARTED = 10;
+    STATUS_CREATED = 11;
+    STATUS_DELETED = 12;
+    STATUS_UPDATED = 13;
+    STATUS_CONNECTED = 14;
+    STATUS_DISCONNECTED = 15;
+    STATUS_CONNECTING = 16;
+    STATUS_DISCONNECTING = 17;
+    STATUS_RECONNECTING = 18;
+    STATUS_ERROR = 19;
+    STATUS_WARNING = 20;
+    STATUS_INFO = 21;
+    STATUS_DEBUG = 22;
+    STATUS_TRACE = 23;
+    STATUS_EMPTY = 24;
+}
+
+// ServiceInfo contains basic information about a service
+message ServiceInfo {
+  string name = 1;
+  string version = 2;
+  string instance_id = 3;
+  string host = 4;
+  int32 port = 5;
+  map<string, string> metadata = 6;
+}
+
+// LogLevel represents the severity of a log entry
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  LOG_LEVEL_DEBUG = 1;
+  LOG_LEVEL_INFO = 2;
+  LOG_LEVEL_WARN = 3;
+  LOG_LEVEL_ERROR = 4;
+  LOG_LEVEL_FATAL = 5;
+}
+
+// LogEntry represents a single log entry from a service
+message LogEntry {
+  google.protobuf.Timestamp timestamp = 1;
+  LogLevel level = 2;
+  string message = 3;
+  ServiceInfo service = 4;
+  map<string, string> fields = 5;
+  string trace_id = 6;
+}
+
+// HealthStatus represents the health state of a service
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_UNHEALTHY = 3;
+  HEALTH_STATUS_STARTING = 4;
+  HEALTH_STATUS_STOPPING = 5;
+}
+
+// ServiceState represents the operational state of a service
+enum ServiceState {
+  SERVICE_STATE_UNSPECIFIED = 0;
+  SERVICE_STATE_STOPPED = 1;
+  SERVICE_STATE_STARTING = 2;
+  SERVICE_STATE_RUNNING = 3;
+  SERVICE_STATE_STOPPING = 4;
+  SERVICE_STATE_ERROR = 5;
+}

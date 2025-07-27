@@ -1,0 +1,21 @@
+# Binaries
+bin/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build output
+*.out
+
+# Dependency directories
+vendor/
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+
+# Compiled proto files
+**/*.pb.go

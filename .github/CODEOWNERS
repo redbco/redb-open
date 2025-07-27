@@ -1,0 +1,81 @@
+# Phase 1: Single Maintainer Governance
+# All changes require maintainer approval
+# This will evolve as the community grows
+
+# Global code owner - all changes require maintainer approval
+* @tommihip
+
+# Core services
+/services/core/ @tommihip
+/services/security/ @tommihip
+/services/license/ @tommihip
+
+# Database and connectivity services
+/services/anchor/ @tommihip
+/services/unifiedmodel/ @tommihip
+/services/transformation/ @tommihip
+
+# Database adapters (all under maintainer for Phase 1)
+/services/anchor/internal/database/ @tommihip
+
+# API and protocol services
+/api/proto/ @tommihip
+/services/clientapi/ @tommihip
+/services/serviceapi/ @tommihip
+/services/queryapi/ @tommihip
+
+# Network and coordination services
+/services/mesh/ @tommihip
+/services/webhook/ @tommihip
+
+# AI and MCP services
+/services/mcpserver/ @tommihip
+
+# Command-line applications
+/cmd/cli/ @tommihip
+/cmd/supervisor/ @tommihip
+
+# Shared libraries and utilities
+/pkg/ @tommihip
+
+# Documentation
+*.md @tommihip
+README.md @tommihip
+CONTRIBUTING.md @tommihip
+
+# Build system and CI/CD
+/Makefile @tommihip
+/.github/ @tommihip
+/scripts/ @tommihip
+
+# Configuration files
+*.yml @tommihip
+*.yaml @tommihip
+*.toml @tommihip
+*.json @tommihip
+.gitignore @tommihip
+
+# License and legal
+LICENSE @tommihip
+LICENSE-COMMERCIAL.md @tommihip
+
+# Database schemas and migrations
+/scripts/schema/ @tommihip
+/scripts/migrations/ @tommihip
+
+# Test files
+*_test.go @tommihip
+/test/ @tommihip
+
+# Protocol Buffer files
+*.proto @tommihip
+
+# Docker and containerization
+Dockerfile* @tommihip
+docker-compose*.yml @tommihip
+.dockerignore @tommihip
+
+# Future phases will add specialized teams:
+# Phase 2: @redbco/core-team, @redbco/security-team, etc.
+# Phase 3: Database-specific experts for each adapter
+# Phase 4: Full team structure with governance committee 

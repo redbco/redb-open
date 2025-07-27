@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: GitHub Discussions
+    url: https://github.com/redbco/redb-open/discussions
+    about: Please ask and answer questions here.
+  - name: Community Discord
+    url: https://discord.gg/K3UkDYXG77
+    about: Join our Discord community for real-time discussions and support.
+  - name: Project Wiki
+    url: https://github.com/redbco/redb-open/wiki
+    about: Check our wiki for detailed documentation and guides.

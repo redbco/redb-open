@@ -1,0 +1,476 @@
+syntax = "proto3";
+
+package redbco.redbopen.anchor.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/anchor/v1;anchorv1";
+
+import "api/proto/common/v1/common.proto";
+
+service AnchorService {
+    // Handling instance connections
+    rpc ConnectInstance(ConnectInstanceRequest) returns (ConnectInstanceResponse) {}
+    rpc UpdateInstanceConnection(UpdateInstanceConnectionRequest) returns (UpdateInstanceConnectionResponse) {}
+    rpc DisconnectInstance(DisconnectInstanceRequest) returns (DisconnectInstanceResponse) {}
+    
+    // Handling database connections
+    rpc ConnectDatabase(ConnectDatabaseRequest) returns (ConnectDatabaseResponse) {}
+    rpc UpdateDatabaseConnection(UpdateDatabaseConnectionRequest) returns (UpdateDatabaseConnectionResponse) {}
+    rpc DisconnectDatabase(DisconnectDatabaseRequest) returns (DisconnectDatabaseResponse) {}
+    
+    // Instance endpoints
+    rpc GetInstanceMetadata(GetInstanceMetadataRequest) returns (GetInstanceMetadataResponse) {}
+    rpc CreateDatabase(CreateDatabaseRequest) returns (CreateDatabaseResponse) {}
+    rpc DropDatabase(DropDatabaseRequest) returns (DropDatabaseResponse) {}
+
+    // Database endpoints
+    rpc GetDatabaseMetadata(GetDatabaseMetadataRequest) returns (GetDatabaseMetadataResponse) {}
+    rpc GetDatabaseSchema(GetDatabaseSchemaRequest) returns (GetDatabaseSchemaResponse) {}
+    rpc DeployDatabaseSchema(DeployDatabaseSchemaRequest) returns (DeployDatabaseSchemaResponse) {}
+
+    // Database data endpoints
+    rpc FetchData(FetchDataRequest) returns (FetchDataResponse) {}
+    rpc FetchDataStream(FetchDataStreamRequest) returns (stream FetchDataStreamResponse) {}
+    rpc FetchDataToCache(FetchDataToCacheRequest) returns (FetchDataToCacheResponse) {}
+    rpc InsertData(InsertDataRequest) returns (InsertDataResponse) {}
+    rpc InsertDataStream(InsertDataStreamRequest) returns (stream InsertDataStreamResponse) {}
+    rpc InsertDataFromCache(InsertDataFromCacheRequest) returns (InsertDataFromCacheResponse) {}
+    rpc WipeDatabase(WipeDatabaseRequest) returns (WipeDatabaseResponse) {}
+
+    // Data transformation endpoints
+    rpc TransformData(TransformDataRequest) returns (TransformDataResponse) {}
+    rpc TransformDataStream(TransformDataStreamRequest) returns (stream TransformDataStreamResponse) {}
+
+    // Execute command endpoints
+    rpc ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse) {}
+    
+    // Replication endpoints
+    rpc CreateReplicationSource(CreateReplicationSourceRequest) returns (CreateReplicationSourceResponse) {}
+    rpc ReconnectReplicationSource(ReconnectReplicationSourceRequest) returns (ReconnectReplicationSourceResponse) {}
+    rpc AddTableToReplicationSource(AddTableToReplicationSourceRequest) returns (AddTableToReplicationSourceResponse) {}
+    rpc RemoveTableFromReplicationSource(RemoveTableFromReplicationSourceRequest) returns (RemoveTableFromReplicationSourceResponse) {}
+    rpc RemoveReplicationSource(RemoveReplicationSourceRequest) returns (RemoveReplicationSourceResponse) {}
+}
+
+// Instance messages
+message ConnectInstanceRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string instance_id = 3;
+}
+
+message ConnectInstanceResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string instance_id = 4;
+}
+
+message UpdateInstanceConnectionRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string instance_id = 3;
+}
+
+message UpdateInstanceConnectionResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string instance_id = 4;
+}
+
+message DisconnectInstanceRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string instance_id = 3;
+}
+
+message DisconnectInstanceResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string instance_id = 4;
+}
+
+// Database messages
+message ConnectDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+}
+
+message ConnectDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+}
+
+message UpdateDatabaseConnectionRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+}
+
+message UpdateDatabaseConnectionResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+}
+
+message DisconnectDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+}
+
+message DisconnectDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+}
+
+// Instance endpoints
+message GetInstanceMetadataRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string instance_id = 3;
+}
+
+message GetInstanceMetadataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string instance_id = 4;
+    bytes metadata = 5;
+}
+
+message CreateDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string instance_id = 3;
+    string database_name = 4;
+    bytes options = 5;
+}
+
+message CreateDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+}
+
+message DropDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string instance_id = 3;
+    string database_id = 4;
+}
+
+message DropDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string instance_id = 4;
+    string database_name = 5;
+}
+
+// Database endpoints
+message GetDatabaseMetadataRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+}
+
+message GetDatabaseMetadataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    bytes metadata = 5;
+}
+
+message GetDatabaseSchemaRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+}
+
+message GetDatabaseSchemaResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    bytes schema = 5;
+}
+
+message DeployDatabaseSchemaRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    bytes schema = 4;
+}
+
+message DeployDatabaseSchemaResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+}
+
+// Database data endpoints
+message FetchDataRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    bytes options = 5;
+}
+
+message FetchDataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    bytes data = 6;  // JSON encoded array of rows
+}
+
+message FetchDataStreamRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    bytes options = 5;
+}
+
+message FetchDataStreamResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    bytes data = 6;  // JSON encoded array of rows
+}
+
+message FetchDataToCacheRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    bytes options = 5;
+}
+
+message FetchDataToCacheResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    string cache_id = 6;
+    int64 cache_object_count = 7;
+}
+message InsertDataRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    bytes data = 5;  // JSON encoded array of records
+}
+
+message InsertDataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    int64 rows_affected = 6;
+}
+
+message InsertDataStreamRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    bytes data = 5;  // JSON encoded array of records
+}
+
+message InsertDataStreamResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    int64 rows_affected = 6;
+}
+
+message InsertDataFromCacheRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    string cache_id = 5;
+}
+
+message InsertDataFromCacheResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    int64 rows_affected = 6;
+}
+
+message WipeDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+}
+
+message WipeDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+}
+
+// Data transformation endpoints
+message TransformDataRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    bytes data = 5;  // JSON encoded array of records
+    bytes options = 6;
+}
+
+message TransformDataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    bytes transformed_data = 6;  // JSON encoded array of records
+}
+
+message TransformDataStreamRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    bytes data = 5;  // JSON encoded array of records
+    bytes options = 6;
+}
+
+message TransformDataStreamResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    bytes transformed_data = 6;  // JSON encoded array of records
+    bool is_complete = 7;
+}
+
+// Execute command endpoints
+message ExecuteCommandRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string command = 4;
+}
+
+message ExecuteCommandResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string command = 5;
+    bytes data = 6;  // JSON encoded array of rows
+}
+
+// Replication endpoints
+message ReplicationSource {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    repeated string table_names = 4;
+    string replication_source_id = 5;
+    string relationship_id = 6;
+    string publication_name = 7;
+    string slot_name = 8;
+}
+
+message CreateReplicationSourceRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    repeated string table_names = 4;
+    string relationship_id = 5;
+}
+
+message CreateReplicationSourceResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    ReplicationSource source = 4;
+}
+
+message ReconnectReplicationSourceRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string replication_source_id = 4;
+}
+
+message ReconnectReplicationSourceResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    repeated ReplicationSource sources = 4;
+}
+
+message AddTableToReplicationSourceRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string replication_source_id = 4;
+    string table_name = 5;
+}
+
+message AddTableToReplicationSourceResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    ReplicationSource source = 4;
+}
+
+message RemoveTableFromReplicationSourceRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string replication_source_id = 4;
+    string table_name = 5;
+}
+
+message RemoveTableFromReplicationSourceResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    ReplicationSource source = 4;
+}
+
+message RemoveReplicationSourceRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string replication_source_id = 5;
+}
+
+message RemoveReplicationSourceResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string replication_source_id = 4;
+}

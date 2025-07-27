@@ -1,0 +1,1 @@
+This project is dual-licensed under the GNU AGPL v3 for open source use, and a commercial license for proprietary use. Contact redb@redb.co for commercial licensing.

@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package redbco.redbopen.transformation.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/transformation/v1;transformationv1";
+
+import "google/protobuf/struct.proto";
+import "api/proto/common/v1/common.proto";
+
+service TransformationService {
+    rpc Transform(TransformRequest) returns (TransformResponse);
+}
+
+message TransformRequest {
+    string function_name = 1;
+    string input = 2;
+    google.protobuf.Struct parameters = 3;
+    optional string key = 4;
+}
+
+message TransformResponse {
+    string output = 1;
+    string status_message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}

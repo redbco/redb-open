@@ -1,0 +1,61 @@
+name: Test
+
+# Phase 1: Single Maintainer Governance
+# This workflow provides basic testing functionality.
+# See CONTRIBUTING.md for governance evolution plan.
+
+on:
+  push:
+    branches: [ main, develop, release/*, hotfix/* ]
+  pull_request:
+    branches: [ main, develop, release/*, hotfix/* ]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+      
+      - name: Install dependencies
+        run: |
+          go mod download
+          go mod verify
+      
+      - name: Run tests
+        run: |
+          # Run tests with verbose output
+          if [ -f "Makefile" ]; then
+            make test
+          else
+            go test -v ./...
+          fi
+      
+      - name: Run tests with coverage
+        run: |
+          # Run tests with coverage reporting
+          if [ -f "Makefile" ]; then
+            # If your Makefile has a coverage target
+            if grep -q "coverage:" Makefile; then
+              make coverage
+            else
+              go test -cover ./...
+            fi
+          else
+            go test -cover ./...
+          fi
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        if: always()
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false 

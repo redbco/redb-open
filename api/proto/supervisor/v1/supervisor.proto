@@ -1,0 +1,258 @@
+syntax = "proto3";
+
+package redbco.redbopen.supervisor.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/supervisor/v1;supervisorv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "api/proto/common/v1/common.proto";
+
+// SupervisorService manages the lifecycle of microservices
+service SupervisorService {
+  // RegisterService registers a service with the supervisor
+  rpc RegisterService(RegisterServiceRequest) returns (RegisterServiceResponse);
+  
+  // UnregisterService unregisters a service from the supervisor
+  rpc UnregisterService(UnregisterServiceRequest) returns (UnregisterServiceResponse);
+  
+  // StartService requests the supervisor to start a service
+  rpc StartService(StartServiceRequest) returns (StartServiceResponse);
+  
+  // StopService requests the supervisor to stop a service
+  rpc StopService(StopServiceRequest) returns (StopServiceResponse);
+  
+  // GetServiceStatus retrieves the status of a specific service
+  rpc GetServiceStatus(GetServiceStatusRequest) returns (GetServiceStatusResponse);
+  
+  // ListServices lists all registered services
+  rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+  
+  // StreamLogs streams log entries to the supervisor
+  rpc StreamLogs(stream LogStreamRequest) returns (LogStreamResponse);
+  
+  // SendHeartbeat sends periodic heartbeats from services
+  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  
+  // WatchServiceHealth watches for health status changes
+  rpc WatchServiceHealth(WatchServiceHealthRequest) returns (stream ServiceHealthUpdate);
+}
+
+// ServiceControllerService is implemented by each microservice
+service ServiceControllerService {
+  // Start instructs the service to start
+  rpc Start(StartRequest) returns (StartResponse);
+  
+  // Stop instructs the service to stop gracefully
+  rpc Stop(StopRequest) returns (StopResponse);
+  
+  // GetHealth returns the current health status
+  rpc GetHealth(GetHealthRequest) returns (GetHealthResponse);
+  
+  // Configure updates the service configuration
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+}
+
+// RegisterServiceRequest is sent by a service to register with the supervisor
+message RegisterServiceRequest {
+  redbco.redbopen.common.v1.ServiceInfo service = 1;
+  ServiceCapabilities capabilities = 2;
+}
+
+message RegisterServiceResponse {
+  bool success = 1;
+  string message = 2;
+  string service_id = 3;
+  ServiceConfiguration initial_config = 4;
+}
+
+// UnregisterServiceRequest is sent when a service is shutting down
+message UnregisterServiceRequest {
+  string service_id = 1;
+  string reason = 2;
+}
+
+message UnregisterServiceResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// StartServiceRequest is used to start a specific service
+message StartServiceRequest {
+  string service_name = 1;
+  map<string, string> config_overrides = 2;
+}
+
+message StartServiceResponse {
+  bool success = 1;
+  string message = 2;
+  string service_id = 3;
+}
+
+// StopServiceRequest is used to stop a specific service
+message StopServiceRequest {
+  string service_id = 1;
+  bool force = 2;
+  google.protobuf.Duration grace_period = 3;
+}
+
+message StopServiceResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// GetServiceStatusRequest requests the status of a service
+message GetServiceStatusRequest {
+  string service_id = 1;
+}
+
+message GetServiceStatusResponse {
+  ServiceStatus status = 1;
+}
+
+// ListServicesRequest lists all services
+message ListServicesRequest {
+  // Filter by service state
+  redbco.redbopen.common.v1.ServiceState state_filter = 1;
+  // Filter by service name pattern
+  string name_pattern = 2;
+}
+
+message ListServicesResponse {
+  repeated ServiceStatus services = 1;
+}
+
+// LogStreamRequest contains log entries to be sent to supervisor
+message LogStreamRequest {
+  redbco.redbopen.common.v1.LogEntry entry = 1;
+}
+
+message LogStreamResponse {
+  bool acknowledged = 1;
+}
+
+// HeartbeatRequest is sent periodically by services
+message HeartbeatRequest {
+  string service_id = 1;
+  redbco.redbopen.common.v1.HealthStatus health_status = 2;
+  ServiceMetrics metrics = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+message HeartbeatResponse {
+  bool acknowledged = 1;
+  ServiceConfiguration config_update = 2;
+  repeated ServiceCommand commands = 3;
+}
+
+// WatchServiceHealthRequest subscribes to health updates
+message WatchServiceHealthRequest {
+  repeated string service_ids = 1;
+}
+
+// ServiceHealthUpdate is streamed when service health changes
+message ServiceHealthUpdate {
+  string service_id = 1;
+  redbco.redbopen.common.v1.HealthStatus old_status = 2;
+  redbco.redbopen.common.v1.HealthStatus new_status = 3;
+  string reason = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// Service Controller Messages (implemented by each microservice)
+
+message StartRequest {
+  ServiceConfiguration config = 1;
+}
+
+message StartResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message StopRequest {
+  google.protobuf.Duration grace_period = 1;
+  bool save_state = 2;
+}
+
+message StopResponse {
+  bool success = 1;
+  string message = 2;
+  bytes saved_state = 3;
+}
+
+message GetHealthRequest {}
+
+message GetHealthResponse {
+  redbco.redbopen.common.v1.HealthStatus status = 1;
+  repeated HealthCheck checks = 2;
+  google.protobuf.Timestamp last_healthy = 3;
+}
+
+message ConfigureRequest {
+  ServiceConfiguration config = 1;
+  bool restart_required = 2;
+}
+
+message ConfigureResponse {
+  bool success = 1;
+  string message = 2;
+  bool restarting = 3;
+}
+
+// Supporting message types
+
+message ServiceCapabilities {
+  bool supports_hot_reload = 1;
+  bool supports_graceful_shutdown = 2;
+  repeated string dependencies = 3;
+  map<string, string> required_config = 4;
+}
+
+message ServiceConfiguration {
+  map<string, string> config = 1;
+  map<string, string> environment = 2;
+  ResourceLimits resource_limits = 3;
+}
+
+message ResourceLimits {
+  int64 max_memory_mb = 1;
+  int32 max_cpu_percent = 2;
+  int64 max_disk_mb = 3;
+}
+
+message ServiceMetrics {
+  int64 memory_usage_bytes = 1;
+  double cpu_usage_percent = 2;
+  int64 goroutines = 3;
+  map<string, int64> custom_metrics = 4;
+}
+
+message ServiceStatus {
+  redbco.redbopen.common.v1.ServiceInfo info = 1;
+  redbco.redbopen.common.v1.ServiceState state = 2;
+  redbco.redbopen.common.v1.HealthStatus health = 3;
+  google.protobuf.Timestamp started_at = 4;
+  google.protobuf.Timestamp last_heartbeat = 5;
+  ServiceMetrics metrics = 6;
+}
+
+message HealthCheck {
+  string name = 1;
+  redbco.redbopen.common.v1.HealthStatus status = 2;
+  string message = 3;
+  google.protobuf.Timestamp last_checked = 4;
+}
+
+message ServiceCommand {
+  enum CommandType {
+    COMMAND_TYPE_UNSPECIFIED = 0;
+    COMMAND_TYPE_RELOAD_CONFIG = 1;
+    COMMAND_TYPE_ROTATE_LOGS = 2;
+    COMMAND_TYPE_COLLECT_METRICS = 3;
+    COMMAND_TYPE_CUSTOM = 4;
+  }
+  
+  CommandType type = 1;
+  map<string, string> parameters = 2;
+}

@@ -1,0 +1,213 @@
+syntax = "proto3";
+
+package redbco.redbopen.security.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/security/v1;securityv1";
+
+import "api/proto/common/v1/common.proto";
+
+service SecurityService {
+    rpc Login(LoginRequest) returns (LoginResponse);
+    rpc Authenticate(AuthenticationRequest) returns (AuthenticationResponse);
+    rpc Authorize(AuthorizationRequest) returns (AuthorizationResponse);
+    rpc Logout(LogoutRequest) returns (LogoutResponse);
+    rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
+
+    // JWT secret management endpoints
+    rpc GetTenantJWTSecrets(GetTenantJWTSecretsRequest) returns (GetTenantJWTSecretsResponse);
+    rpc SetTenantJWTSecrets(SetTenantJWTSecretsRequest) returns (SetTenantJWTSecretsResponse);
+    rpc RotateTenantJWTSecrets(RotateTenantJWTSecretsRequest) returns (RotateTenantJWTSecretsResponse);
+    rpc DeleteTenantJWTSecrets(DeleteTenantJWTSecretsRequest) returns (DeleteTenantJWTSecretsResponse);
+
+    // Session management endpoints
+    rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+    rpc LogoutSession(LogoutSessionRequest) returns (LogoutSessionResponse);
+    rpc LogoutAllSessions(LogoutAllSessionsRequest) returns (LogoutAllSessionsResponse);
+    rpc UpdateSessionName(UpdateSessionNameRequest) returns (UpdateSessionNameResponse);
+}
+
+message Profile {
+    string tenant_id = 1;
+    string user_id = 2;
+    string username = 3;
+    string email = 4;
+    string name = 5;
+    repeated Workspace workspaces = 6;
+}
+
+message Workspace {
+    string workspace_id = 1;
+    string workspace_name = 2;
+    string workspace_description = 3;
+}
+
+message LoginRequest {
+    string username = 1;
+    string password = 2;
+    string tenant_url = 3;
+    optional string expiry_time_hours = 4;
+    
+    // Session/client information
+    optional string session_name = 5;
+    optional string user_agent = 6;
+    optional string ip_address = 7;
+    optional string platform = 8;
+    optional string browser = 9;
+    optional string operating_system = 10;
+    optional string device_type = 11;
+    optional string location = 12;
+}
+
+message LoginResponse {
+    Profile profile = 1;
+    string access_token = 2;
+    string refresh_token = 3;
+    string session_id = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+message AuthenticationRequest {
+    string tenant_url = 1;
+    string token_type = 2;
+    string token = 3;
+}
+
+message AuthenticationResponse {
+    Profile profile = 1;
+    string access_token = 2;
+    string refresh_token = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message AuthorizationRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    string resource_type = 3;
+    string resource_id = 4;
+    string action = 5;
+}
+
+message AuthorizationResponse {
+    bool authorized = 1;
+    string message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+message LogoutRequest {
+    string refresh_token = 1;
+}
+
+message LogoutResponse {
+    string message = 1;
+    redbco.redbopen.common.v1.Status status = 2;
+}
+
+message GetTenantJWTSecretsRequest {
+    string tenant_id = 1;
+}
+
+message GetTenantJWTSecretsResponse {
+    string access_token_secret = 1;
+    string refresh_token_secret = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+message SetTenantJWTSecretsRequest {
+    string tenant_id = 1;
+    string access_token_secret = 2;
+    string refresh_token_secret = 3;
+}
+
+message SetTenantJWTSecretsResponse {
+    redbco.redbopen.common.v1.Status status = 1;
+}
+
+message RotateTenantJWTSecretsRequest {
+    string tenant_id = 1;
+}
+
+message RotateTenantJWTSecretsResponse {
+    redbco.redbopen.common.v1.Status status = 1;
+}
+
+message DeleteTenantJWTSecretsRequest {
+    string tenant_id = 1;
+}
+
+message DeleteTenantJWTSecretsResponse {
+    redbco.redbopen.common.v1.Status status = 1;
+}
+
+message ChangePasswordRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    string old_password = 3;
+    string new_password = 4;
+}
+
+message ChangePasswordResponse {
+    redbco.redbopen.common.v1.Status status = 1;
+    string message = 2;
+}
+
+// Session management messages
+message SessionInfo {
+    string session_id = 1;
+    string session_name = 2;
+    string user_agent = 3;
+    string ip_address = 4;
+    string platform = 5;
+    string browser = 6;
+    string operating_system = 7;
+    string device_type = 8;
+    string location = 9;
+    string last_activity = 10;
+    string created = 11;
+    string expires = 12;
+    bool is_current = 13;
+}
+
+message ListSessionsRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+}
+
+message ListSessionsResponse {
+    repeated SessionInfo sessions = 1;
+    redbco.redbopen.common.v1.Status status = 2;
+}
+
+message LogoutSessionRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    string session_id = 3;
+}
+
+message LogoutSessionResponse {
+    redbco.redbopen.common.v1.Status status = 1;
+    string message = 2;
+}
+
+message LogoutAllSessionsRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    optional bool exclude_current = 3;
+}
+
+message LogoutAllSessionsResponse {
+    int32 sessions_logged_out = 1;
+    redbco.redbopen.common.v1.Status status = 2;
+    string message = 3;
+}
+
+message UpdateSessionNameRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    string session_id = 3;
+    string session_name = 4;
+}
+
+message UpdateSessionNameResponse {
+    redbco.redbopen.common.v1.Status status = 1;
+    string message = 2;
+}

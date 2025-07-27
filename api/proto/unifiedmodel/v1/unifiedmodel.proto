@@ -1,0 +1,245 @@
+syntax = "proto3";
+
+package redbco.redbopen.unifiedmodel.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/unifiedmodel/v1;unifiedmodelv1";
+
+service UnifiedModelService {
+  rpc AnalyzeSchema(AnalyzeSchemaRequest) returns (AnalyzeSchemaResponse) {}
+  rpc AnalyzeSchemaEnriched(AnalyzeSchemaEnrichedRequest) returns (AnalyzeSchemaEnrichedResponse) {}
+  rpc Translate(TranslationRequest) returns (TranslationResponse) {}
+  rpc Generate(GenerationRequest) returns (GenerationResponse) {}
+  rpc CompareSchemas(CompareRequest) returns (CompareResponse) {}
+  rpc MatchSchemasEnriched(MatchSchemasEnrichedRequest) returns (MatchSchemasEnrichedResponse) {}
+  rpc MatchTablesEnriched(MatchTablesEnrichedRequest) returns (MatchTablesEnrichedResponse) {}
+  rpc DetectPrivilegedData(DetectRequest) returns (DetectResponse) {}
+  rpc Classify (ClassifyRequest) returns (ClassifyResponse);
+}
+
+message AnalyzeSchemaRequest {
+  string schema_type = 1;
+  bytes schema = 2;
+}
+
+message AnalyzeSchemaResponse {
+  bytes tables = 1;
+}
+
+message TranslationRequest {
+  string target = 1;
+  string source_type = 2;
+  bytes source_structure = 3;
+}
+
+message TranslationResponse {
+  bytes target_structure = 1;
+  repeated string warnings = 2;
+}
+
+message GenerationRequest {
+  string target = 1;
+  string source_type = 2;
+  bytes structure = 3;
+}
+
+message GenerationResponse {
+  repeated string statements = 1;
+  repeated string warnings = 2;
+}
+
+message CompareRequest {
+  string schema_type = 1;
+  bytes previous_schema = 2;
+  bytes current_schema = 3;
+}
+
+message CompareResponse {
+  bool has_changes = 1;
+  repeated string changes = 2;
+  repeated string warnings = 3;
+}
+
+message EnrichedColumnMatch {
+  string source_table = 1;
+  string target_table = 2;
+  string source_column = 3;
+  string target_column = 4;
+  double score = 5;
+  bool is_type_compatible = 6;
+  bool is_poor_match = 7;
+  bool is_unmatched = 8;
+  bool privileged_data_match = 9;
+  string data_category_match = 10;
+  double privileged_confidence_diff = 11;
+}
+
+message EnrichedTableMatch {
+  string source_table = 1;
+  string target_table = 2;
+  double score = 3;
+  bool is_poor_match = 4;
+  bool is_unmatched = 5;
+  string classification_match = 6;
+  double classification_confidence_diff = 7;
+  int32 matched_columns = 8;
+  int32 total_source_columns = 9;
+  int32 total_target_columns = 10;
+  repeated EnrichedColumnMatch column_matches = 11;
+}
+
+message MatchSchemasEnrichedRequest {
+  string source_schema_type = 1;
+  bytes source_schema = 2;
+  string target_schema_type = 3;
+  bytes target_schema = 4;
+  MatchOptions options = 5;
+}
+
+message MatchSchemasEnrichedResponse {
+  repeated EnrichedTableMatch table_matches = 1;
+  repeated EnrichedColumnMatch unmatched_columns = 2;
+  repeated string warnings = 3;
+  double overall_similarity_score = 4;
+}
+
+message MatchTablesEnrichedRequest {
+  repeated EnrichedTableMetadata source_tables = 1;
+  repeated EnrichedTableMetadata target_tables = 2;
+  MatchOptions options = 3;
+}
+
+message MatchTablesEnrichedResponse {
+  repeated EnrichedTableMatch matches = 1;
+  repeated string warnings = 2;
+  double overall_similarity_score = 3;
+}
+
+message MatchOptions {
+  double name_similarity_threshold = 1;
+  double poor_match_threshold = 2;
+  double name_weight = 3;
+  double type_weight = 4;
+  double classification_weight = 5;
+  double privileged_data_weight = 6;
+  double table_structure_weight = 7;
+  bool enable_cross_table_matching = 8;
+}
+
+message DetectRequest {
+  string schema_type = 1;
+  bytes schema = 2;
+  bool include_example_data = 3;
+}
+
+message DetectResponse {
+  repeated PrivilegedDataFinding findings = 1;
+  repeated string warnings = 2;
+}
+
+message PrivilegedDataFinding {
+  string table_name = 1;
+  string column_name = 2;
+  string data_type = 3;
+  string data_category = 4;
+  double confidence = 5;
+  string description = 6;
+  string example_value = 7;
+}
+
+message ColumnMetadata {
+  string name = 1;
+  string type = 2;
+  repeated string indexes = 3;
+  bool is_primary_key = 4;
+  bool is_foreign_key = 5;
+  bool is_nullable = 6;
+  bool is_array = 7;
+  bool is_auto_increment = 8;
+  string column_default = 9;
+  int32 varchar_length = 10;
+  int32 vector_dimension = 11;
+  string vector_distance_metric = 12;
+}
+
+message TableMetadata {
+  string engine = 1; // e.g. "postgres", "mongodb"
+  string schema = 2;
+  string name = 3;
+  repeated ColumnMetadata columns = 4;
+  map<string, string> properties = 5;
+  // e.g. {"partition_by":"time","ttl":"7d","vector_dim":"768"}
+  string table_type = 6;
+  repeated string clustering_keys = 7;
+  repeated string partition_keys = 8;
+  bool is_system_table = 9;
+  int64 estimated_rows = 10;
+  string access_pattern = 11; // read_heavy, write_heavy, append_only
+}
+
+message CategoryScore {
+  string category = 1; // e.g. "time_series"
+  double score = 2; // 0.0–1.0
+  string reason = 3; // explanation of why this category scored high
+}
+
+message ClassifyRequest {
+  TableMetadata metadata = 1;
+  int32 top_n = 2; // return top N categories (default: 3)
+  double threshold = 3; // minimum score threshold (default: 0.1)
+}
+
+message ClassifyResponse {
+  repeated CategoryScore scores = 1;
+  string primary_category = 2; // highest scoring category
+  double confidence = 3; // confidence in primary category
+}
+
+message AnalyzeSchemaEnrichedRequest {
+  string schema_type = 1;
+  bytes schema = 2;
+}
+
+message EnrichedColumnMetadata {
+  string name = 1;
+  string type = 2;
+  repeated string indexes = 3;
+  bool is_primary_key = 4;
+  bool is_foreign_key = 5;
+  bool is_nullable = 6;
+  bool is_array = 7;
+  bool is_auto_increment = 8;
+  string column_default = 9;
+  int32 varchar_length = 10;
+  int32 vector_dimension = 11;
+  string vector_distance_metric = 12;
+  
+  // Detection results
+  bool is_privileged_data = 13;
+  string data_category = 14;
+  double privileged_confidence = 15;
+  string privileged_description = 16;
+}
+
+message EnrichedTableMetadata {
+  string engine = 1;
+  string schema = 2;
+  string name = 3;
+  repeated EnrichedColumnMetadata columns = 4;
+  map<string, string> properties = 5;
+  string table_type = 6;
+  repeated string clustering_keys = 7;
+  repeated string partition_keys = 8;
+  bool is_system_table = 9;
+  int64 estimated_rows = 10;
+  string access_pattern = 11;
+  
+  // Classification results
+  string primary_category = 12;
+  double classification_confidence = 13;
+  repeated CategoryScore classification_scores = 14;
+}
+
+message AnalyzeSchemaEnrichedResponse {
+  repeated EnrichedTableMetadata tables = 1;
+  repeated string warnings = 2;
+}

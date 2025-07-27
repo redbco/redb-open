@@ -1,0 +1,3930 @@
+syntax = "proto3";
+
+package redbco.redbopen.core.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/core/v1;corev1";
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/any.proto";
+import "api/proto/common/v1/common.proto";
+
+// Mesh service for mesh management
+service MeshService {
+  rpc SeedMesh(SeedMeshRequest) returns (SeedMeshResponse);
+  rpc JoinMesh(JoinMeshRequest) returns (JoinMeshResponse);
+  rpc LeaveMesh(LeaveMeshRequest) returns (LeaveMeshResponse);
+  rpc ShowMesh(ShowMeshRequest) returns (ShowMeshResponse);
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc ShowNode(ShowNodeRequest) returns (ShowNodeResponse);
+  rpc ShowTopology(ShowTopologyRequest) returns (ShowTopologyResponse);
+  rpc ModifyMesh(ModifyMeshRequest) returns (ModifyMeshResponse);
+  rpc ModifyNode(ModifyNodeRequest) returns (ModifyNodeResponse);
+  rpc EvictNode(EvictNodeRequest) returns (EvictNodeResponse);
+  rpc AddMeshRoute(AddMeshRouteRequest) returns (AddMeshRouteResponse);
+  rpc ModifyMeshRoute(ModifyMeshRouteRequest) returns (ModifyMeshRouteResponse);
+  rpc DeleteMeshRoute(DeleteMeshRouteRequest) returns (DeleteMeshRouteResponse);
+}
+
+// Workspace service for workspace management
+service WorkspaceService {
+  rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse);
+  rpc ShowWorkspace(ShowWorkspaceRequest) returns (ShowWorkspaceResponse);
+  rpc AddWorkspace(AddWorkspaceRequest) returns (AddWorkspaceResponse);
+  rpc ModifyWorkspace(ModifyWorkspaceRequest) returns (ModifyWorkspaceResponse);
+  rpc DeleteWorkspace(DeleteWorkspaceRequest) returns (DeleteWorkspaceResponse);
+}
+
+// Satellite service for satellite management
+service SatelliteService {
+  rpc ListSatellites(ListSatellitesRequest) returns (ListSatellitesResponse);
+  rpc ShowSatellite(ShowSatelliteRequest) returns (ShowSatelliteResponse);
+  rpc AddSatellite(AddSatelliteRequest) returns (AddSatelliteResponse);
+  rpc ModifySatellite(ModifySatelliteRequest) returns (ModifySatelliteResponse);
+  rpc DeleteSatellite(DeleteSatelliteRequest) returns (DeleteSatelliteResponse);
+}
+
+// Anchor service for anchor management
+service AnchorService {
+  rpc ListAnchors(ListAnchorsRequest) returns (ListAnchorsResponse);
+  rpc ShowAnchor(ShowAnchorRequest) returns (ShowAnchorResponse);
+  rpc AddAnchor(AddAnchorRequest) returns (AddAnchorResponse);
+  rpc ModifyAnchor(ModifyAnchorRequest) returns (ModifyAnchorResponse);
+  rpc DeleteAnchor(DeleteAnchorRequest) returns (DeleteAnchorResponse);
+}
+
+// Region service for region management
+service RegionService {
+  rpc ListRegions(ListRegionsRequest) returns (ListRegionsResponse);
+  rpc ShowRegion(ShowRegionRequest) returns (ShowRegionResponse);
+  rpc AddRegion(AddRegionRequest) returns (AddRegionResponse);
+  rpc AddGlobalRegion(AddGlobalRegionRequest) returns (AddGlobalRegionResponse);
+  rpc ModifyRegion(ModifyRegionRequest) returns (ModifyRegionResponse);
+  rpc ModifyGlobalRegion(ModifyGlobalRegionRequest) returns (ModifyGlobalRegionResponse);
+  rpc DeleteRegion(DeleteRegionRequest) returns (DeleteRegionResponse);
+  rpc DeleteGlobalRegion(DeleteGlobalRegionRequest) returns (DeleteGlobalRegionResponse);
+}
+
+// Environment service for environment management
+service EnvironmentService {
+  rpc ListEnvironments(ListEnvironmentsRequest) returns (ListEnvironmentsResponse);
+  rpc ShowEnvironment(ShowEnvironmentRequest) returns (ShowEnvironmentResponse);
+  rpc AddEnvironment(AddEnvironmentRequest) returns (AddEnvironmentResponse);
+  rpc ModifyEnvironment(ModifyEnvironmentRequest) returns (ModifyEnvironmentResponse);
+  rpc DeleteEnvironment(DeleteEnvironmentRequest) returns (DeleteEnvironmentResponse);
+}
+
+// Instance service for instance management
+service InstanceService {
+  rpc ListInstances(ListInstancesRequest) returns (ListInstancesResponse);
+  rpc ShowInstance(ShowInstanceRequest) returns (ShowInstanceResponse);
+  rpc ConnectInstance(ConnectInstanceRequest) returns (ConnectInstanceResponse);
+  rpc ReconnectInstance(ReconnectInstanceRequest) returns (ReconnectInstanceResponse);
+  rpc ModifyInstance(ModifyInstanceRequest) returns (ModifyInstanceResponse);
+  rpc DisconnectInstance(DisconnectInstanceRequest) returns (DisconnectInstanceResponse);
+  rpc CreateDatabase(CreateDatabaseRequest) returns (CreateDatabaseResponse);
+}
+
+// Database service for database management
+service DatabaseService {
+  rpc ListDatabases(ListDatabasesRequest) returns (ListDatabasesResponse);
+  rpc ShowDatabase(ShowDatabaseRequest) returns (ShowDatabaseResponse);
+  rpc ConnectDatabase(ConnectDatabaseRequest) returns (ConnectDatabaseResponse);
+  rpc ConnectDatabaseWithInstance(ConnectDatabaseWithInstanceRequest) returns (ConnectDatabaseWithInstanceResponse);
+  rpc ReconnectDatabase(ReconnectDatabaseRequest) returns (ReconnectDatabaseResponse);
+  rpc ModifyDatabase(ModifyDatabaseRequest) returns (ModifyDatabaseResponse);
+  rpc DisconnectDatabase(DisconnectDatabaseRequest) returns (DisconnectDatabaseResponse);
+  rpc GetLatestStoredDatabaseSchema(GetLatestStoredDatabaseSchemaRequest) returns (GetLatestStoredDatabaseSchemaResponse);
+  rpc WipeDatabase(WipeDatabaseRequest) returns (WipeDatabaseResponse);
+  rpc DropDatabase(DropDatabaseRequest) returns (DropDatabaseResponse);
+
+  // Data transformation services
+  rpc TransformData(TransformDataRequest) returns (TransformDataResponse) {}
+  rpc TransformDataStream(TransformDataStreamRequest) returns (stream TransformDataStreamResponse) {}
+
+  // Internal services
+  rpc StoreDatabaseSchema(StoreDatabaseSchemaRequest) returns (StoreDatabaseSchemaResponse);
+  rpc StoreDatabaseTables(StoreDatabaseTablesRequest) returns (StoreDatabaseTablesResponse);
+  rpc GetDatabaseSchema(GetDatabaseSchemaRequest) returns (GetDatabaseSchemaResponse);
+  rpc GetDatabaseTables(GetDatabaseTablesRequest) returns (GetDatabaseTablesResponse);
+}
+
+// Repo service for repository management
+service RepoService {
+  rpc ListRepos(ListReposRequest) returns (ListReposResponse);
+  rpc ShowRepo(ShowRepoRequest) returns (ShowRepoResponse);
+  rpc AddRepo(AddRepoRequest) returns (AddRepoResponse);
+  rpc ModifyRepo(ModifyRepoRequest) returns (ModifyRepoResponse);
+  rpc CloneRepo(CloneRepoRequest) returns (CloneRepoResponse);
+  rpc DeleteRepo(DeleteRepoRequest) returns (DeleteRepoResponse);
+
+  // Anchor services
+  rpc CreateRepoByAnchor(CreateRepoByAnchorRequest) returns (CreateRepoByAnchorResponse);
+}
+
+// Branch service for branch management
+service BranchService {
+  rpc ShowBranch(ShowBranchRequest) returns (ShowBranchResponse);
+  rpc AttachBranch(AttachBranchRequest) returns (AttachBranchResponse);
+  rpc DetachBranch(DetachBranchRequest) returns (DetachBranchResponse);
+  rpc ModifyBranch(ModifyBranchRequest) returns (ModifyBranchResponse);
+  rpc DeleteBranch(DeleteBranchRequest) returns (DeleteBranchResponse);
+
+  rpc FindRepoAndBranchByDatabaseID(FindRepoAndBranchByDatabaseIDRequest) returns (FindRepoAndBranchByDatabaseIDResponse);
+}
+
+// Commit service for commit management
+service CommitService {
+  rpc ShowCommit(ShowCommitRequest) returns (ShowCommitResponse);
+  rpc BranchCommit(BranchCommitRequest) returns (BranchCommitResponse);
+  rpc MergeCommit(MergeCommitRequest) returns (MergeCommitResponse);
+  rpc DeployCommit(DeployCommitRequest) returns (DeployCommitResponse);
+
+  rpc CreateCommitByAnchor(CreateCommitByAnchorRequest) returns (CreateCommitByAnchorResponse);
+}
+
+// Mapping service for mapping management
+service MappingService {
+  rpc ListMappings(ListMappingsRequest) returns (ListMappingsResponse);
+  rpc ShowMapping(ShowMappingRequest) returns (ShowMappingResponse);
+  rpc AddDatabaseMapping(AddDatabaseMappingRequest) returns (AddMappingResponse);
+  rpc AddTableMapping(AddTableMappingRequest) returns (AddMappingResponse);
+  rpc AddEmptyMapping(AddEmptyMappingRequest) returns (AddMappingResponse);
+  rpc ModifyMapping(ModifyMappingRequest) returns (ModifyMappingResponse);
+  rpc DeleteMapping(DeleteMappingRequest) returns (DeleteMappingResponse);
+  rpc AttachMappingRule(AttachMappingRuleRequest) returns (AttachMappingRuleResponse);
+  rpc DetachMappingRule(DetachMappingRuleRequest) returns (DetachMappingRuleResponse);
+
+  // Mapping rule services
+  rpc ListMappingRules(ListMappingRulesRequest) returns (ListMappingRulesResponse);
+  rpc ShowMappingRule(ShowMappingRuleRequest) returns (ShowMappingRuleResponse);
+  rpc AddMappingRule(AddMappingRuleRequest) returns (AddMappingRuleResponse);
+  rpc ModifyMappingRule(ModifyMappingRuleRequest) returns (ModifyMappingRuleResponse);
+  rpc DeleteMappingRule(DeleteMappingRuleRequest) returns (DeleteMappingRuleResponse);
+}
+
+// Relationship service for relationship management
+service RelationshipService {
+  rpc ListRelationships(ListRelationshipsRequest) returns (ListRelationshipsResponse);
+  rpc ShowRelationship(ShowRelationshipRequest) returns (ShowRelationshipResponse);
+  rpc AddRelationship(AddRelationshipRequest) returns (AddRelationshipResponse);
+  rpc ModifyRelationship(ModifyRelationshipRequest) returns (ModifyRelationshipResponse);
+  rpc DeleteRelationship(DeleteRelationshipRequest) returns (DeleteRelationshipResponse);
+}
+
+// Transformation service for transformation management
+service TransformationService {
+  rpc ListTransformations(ListTransformationsRequest) returns (ListTransformationsResponse);
+  rpc ShowTransformation(ShowTransformationRequest) returns (ShowTransformationResponse);
+  rpc AddTransformation(AddTransformationRequest) returns (AddTransformationResponse);
+  rpc ModifyTransformation(ModifyTransformationRequest) returns (ModifyTransformationResponse);
+  rpc DeleteTransformation(DeleteTransformationRequest) returns (DeleteTransformationResponse);
+}
+
+// Policy service for policy management
+service PolicyService {
+  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
+  rpc ShowPolicy(ShowPolicyRequest) returns (ShowPolicyResponse);
+  rpc AddPolicy(AddPolicyRequest) returns (AddPolicyResponse);
+  rpc ModifyPolicy(ModifyPolicyRequest) returns (ModifyPolicyResponse);
+  rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
+}
+
+// MCP service for MCP management
+service MCPService {
+  // Server management
+  rpc ListMCPServers(ListMCPServersRequest) returns (ListMCPServersResponse);
+  rpc ShowMCPServer(ShowMCPServerRequest) returns (ShowMCPServerResponse);
+  rpc AddMCPServer(AddMCPServerRequest) returns (AddMCPServerResponse);
+  rpc ModifyMCPServer(ModifyMCPServerRequest) returns (ModifyMCPServerResponse);
+  rpc DeleteMCPServer(DeleteMCPServerRequest) returns (DeleteMCPServerResponse);
+
+  // Resource management
+  rpc ListMCPResources(ListMCPResourcesRequest) returns (ListMCPResourcesResponse);
+  rpc ShowMCPResource(ShowMCPResourceRequest) returns (ShowMCPResourceResponse);
+  rpc AddMCPResource(AddMCPResourceRequest) returns (AddMCPResourceResponse);
+  rpc ModifyMCPResource(ModifyMCPResourceRequest) returns (ModifyMCPResourceResponse);
+  rpc DeleteMCPResource(DeleteMCPResourceRequest) returns (DeleteMCPResourceResponse);
+  rpc AttachMCPResource(AttachMCPResourceRequest) returns (AttachMCPResourceResponse);
+  rpc DetachMCPResource(DetachMCPResourceRequest) returns (DetachMCPResourceResponse);
+
+  // Tool management
+  rpc ListMCPTools(ListMCPToolsRequest) returns (ListMCPToolsResponse);
+  rpc ShowMCPTool(ShowMCPToolRequest) returns (ShowMCPToolResponse);
+  rpc AddMCPTool(AddMCPToolRequest) returns (AddMCPToolResponse);
+  rpc ModifyMCPTool(ModifyMCPToolRequest) returns (ModifyMCPToolResponse);
+  rpc DeleteMCPTool(DeleteMCPToolRequest) returns (DeleteMCPToolResponse);
+  rpc AttachMCPTool(AttachMCPToolRequest) returns (AttachMCPToolResponse);
+  rpc DetachMCPTool(DetachMCPToolRequest) returns (DetachMCPToolResponse);
+
+  // Prompt management
+  rpc ListMCPPrompts(ListMCPPromptsRequest) returns (ListMCPPromptsResponse);
+  rpc ShowMCPPrompt(ShowMCPPromptRequest) returns (ShowMCPPromptResponse);
+  rpc AddMCPPrompt(AddMCPPromptRequest) returns (AddMCPPromptResponse);
+  rpc ModifyMCPPrompt(ModifyMCPPromptRequest) returns (ModifyMCPPromptResponse);
+  rpc DeleteMCPPrompt(DeleteMCPPromptRequest) returns (DeleteMCPPromptResponse);
+  rpc AttachMCPPrompt(AttachMCPPromptRequest) returns (AttachMCPPromptResponse);
+  rpc DetachMCPPrompt(DetachMCPPromptRequest) returns (DetachMCPPromptResponse);
+}
+
+// Tenant service for tenant management
+service TenantService {
+  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse);
+  rpc ShowTenant(ShowTenantRequest) returns (ShowTenantResponse);
+  rpc AddTenant(AddTenantRequest) returns (AddTenantResponse);
+  rpc ModifyTenant(ModifyTenantRequest) returns (ModifyTenantResponse);
+  rpc DeleteTenant(DeleteTenantRequest) returns (DeleteTenantResponse);
+}
+
+// User service for user management
+service UserService {
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc ShowUser(ShowUserRequest) returns (ShowUserResponse);
+  rpc AddUser(AddUserRequest) returns (AddUserResponse);
+  rpc ModifyUser(ModifyUserRequest) returns (ModifyUserResponse);
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+}
+
+// Token service for API token management
+service TokenService {
+  rpc ListTokens(ListTokensRequest) returns (ListTokensResponse);
+  rpc ShowToken(ShowTokenRequest) returns (ShowTokenResponse);
+  rpc AddToken(AddTokenRequest) returns (AddTokenResponse);
+  rpc ModifyToken(ModifyTokenRequest) returns (ModifyTokenResponse);
+  rpc DeleteToken(DeleteTokenRequest) returns (DeleteTokenResponse);
+}
+
+// Group service for group management
+service GroupService {
+  rpc ListGroups(ListGroupsRequest) returns (ListGroupsResponse);
+  rpc ShowGroup(ShowGroupRequest) returns (ShowGroupResponse);
+  rpc AddGroup(AddGroupRequest) returns (AddGroupResponse);
+  rpc ModifyGroup(ModifyGroupRequest) returns (ModifyGroupResponse);
+  rpc DeleteGroup(DeleteGroupRequest) returns (DeleteGroupResponse);
+}
+
+// Role service for role management
+service RoleService {
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
+  rpc ShowRole(ShowRoleRequest) returns (ShowRoleResponse);
+  rpc AddRole(AddRoleRequest) returns (AddRoleResponse);
+  rpc ModifyRole(ModifyRoleRequest) returns (ModifyRoleResponse);
+  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse);
+}
+
+// Permission service for permission management
+service PermissionService {
+  rpc ListPermissions(ListPermissionsRequest) returns (ListPermissionsResponse);
+  rpc ShowPermission(ShowPermissionRequest) returns (ShowPermissionResponse);
+  rpc AddPermission(AddPermissionRequest) returns (AddPermissionResponse);
+  rpc ModifyPermission(ModifyPermissionRequest) returns (ModifyPermissionResponse);
+  rpc DeletePermission(DeletePermissionRequest) returns (DeletePermissionResponse);
+}
+
+// Assignment service for user/group/role assignments
+service AssignmentService {
+  // User-Group assignments
+  rpc ListUserGroups(ListUserGroupsRequest) returns (ListUserGroupsResponse);
+  rpc AddUserGroup(AddUserGroupRequest) returns (AddUserGroupResponse);
+  rpc DeleteUserGroup(DeleteUserGroupRequest) returns (DeleteUserGroupResponse);
+
+  // User-Role assignments
+  rpc ListUserRoles(ListUserRolesRequest) returns (ListUserRolesResponse);
+  rpc AddUserRole(AddUserRoleRequest) returns (AddUserRoleResponse);
+  rpc DeleteUserRole(DeleteUserRoleRequest) returns (DeleteUserRoleResponse);
+
+  // Group-Role assignments
+  rpc ListGroupRoles(ListGroupRolesRequest) returns (ListGroupRolesResponse);
+  rpc AddGroupRole(AddGroupRoleRequest) returns (AddGroupRoleResponse);
+  rpc DeleteGroupRole(DeleteGroupRoleRequest) returns (DeleteGroupRoleResponse);
+
+  // Role-Permission assignments
+  rpc ListRolePermissions(ListRolePermissionsRequest) returns (ListRolePermissionsResponse);
+  rpc AddRolePermission(AddRolePermissionRequest) returns (AddRolePermissionResponse);
+  rpc DeleteRolePermission(DeleteRolePermissionRequest) returns (DeleteRolePermissionResponse);
+}
+
+// Authorization service for authorization analysis
+service AuthorizationService {
+  rpc ListUserPermissions(ListUserPermissionsRequest) returns (ListUserPermissionsResponse);
+  rpc ListGroupPermissions(ListGroupPermissionsRequest) returns (ListGroupPermissionsResponse);
+  rpc ListResourceAccess(ListResourceAccessRequest) returns (ListResourceAccessResponse);
+  rpc CheckPermission(CheckPermissionRequest) returns (CheckPermissionResponse);
+}
+
+// Template service for template management
+service TemplateService {
+  rpc ListRoleTemplates(ListRoleTemplatesRequest) returns (ListRoleTemplatesResponse);
+  rpc ShowRoleTemplate(ShowRoleTemplateRequest) returns (ShowRoleTemplateResponse);
+  rpc CreateRoleFromTemplate(CreateRoleFromTemplateRequest) returns (CreateRoleFromTemplateResponse);
+  rpc SaveRoleAsTemplate(SaveRoleAsTemplateRequest) returns (SaveRoleAsTemplateResponse);
+}
+
+// Audit service for audit and compliance
+service AuditService {
+  rpc ShowAuditLog(ShowAuditLogRequest) returns (ShowAuditLogResponse);
+  rpc ShowPermissionsReport(ShowPermissionsReportRequest) returns (ShowPermissionsReportResponse);
+  rpc ShowUnusedPermissions(ShowUnusedPermissionsRequest) returns (ShowUnusedPermissionsResponse);
+  rpc ShowOrphanedRoles(ShowOrphanedRolesRequest) returns (ShowOrphanedRolesResponse);
+}
+
+// Import/Export service for configuration management
+service ImportExportService {
+  rpc ExportAuthorization(ExportAuthorizationRequest) returns (ExportAuthorizationResponse);
+  rpc ImportAuthorization(ImportAuthorizationRequest) returns (ImportAuthorizationResponse);
+  rpc ExportUserPermissions(ExportUserPermissionsRequest) returns (ExportUserPermissionsResponse);
+  rpc ImportUserPermissions(ImportUserPermissionsRequest) returns (ImportUserPermissionsResponse);
+}
+
+// Mesh messages
+
+// The mesh object
+message Mesh {
+    string mesh_id = 1;
+    string mesh_name = 2;
+    string mesh_description = 3;
+    string public_key = 4;
+    bool allow_join = 5;
+    int32 node_count = 6;
+    redbco.redbopen.common.v1.Status status = 7;
+}
+
+// The node object
+message Node {
+    string node_id = 1;
+    string node_name = 2;
+    string node_description = 3;
+    string node_platform = 4;
+    string node_version = 5;
+    string region_id = 6;
+    string region_name = 7;
+    string public_key = 8;
+    string private_key = 9;
+    string ip_address = 10;
+    int32 port = 11;
+    redbco.redbopen.common.v1.Status status = 12;
+}
+
+// The topology object (route)
+message Topology {
+    string route_id = 1;
+    string source_node_id = 2;
+    string source_node_name = 3;
+    string source_region_name = 4;
+    string target_node_id = 5;
+    string target_node_name = 6;
+    string target_region_name = 7;
+    bool route_bidirectional = 8;
+    double route_latency = 9;
+    double route_bandwidth = 10;
+    int32 route_cost = 11;
+    redbco.redbopen.common.v1.Status status = 12;
+}
+
+// Seed a new mesh request
+message SeedMeshRequest {
+    string mesh_name = 1;
+    optional string mesh_description = 2;
+    string node_name = 3;
+    optional string node_description = 4;
+    optional bool allow_join = 5;
+    optional string join_key = 6;
+}
+
+// Seed a new mesh response
+message SeedMeshResponse {
+    string message = 1;
+    bool success = 2;
+    Mesh mesh = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Join an existing mesh request
+message JoinMeshRequest {
+    string mesh_id = 1;
+    string node_name = 2;
+    optional string node_description = 3;
+    optional string join_key = 4;
+}
+
+// Join an existing mesh response
+message JoinMeshResponse {
+    string message = 1;
+    bool success = 2;
+    Mesh mesh = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Leave a mesh request
+message LeaveMeshRequest {
+    string mesh_id = 1;
+    string node_id = 2;
+}
+
+// Leave a mesh response
+message LeaveMeshResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Show a mesh request
+message ShowMeshRequest {
+    string mesh_id = 1;
+}
+
+// Show a mesh response
+message ShowMeshResponse {
+    Mesh mesh = 1;
+}
+
+// Show all nodes in a mesh request
+message ListNodesRequest {
+    string mesh_id = 1;
+}
+
+// Show all nodes in a mesh response
+message ListNodesResponse {
+    repeated Node nodes = 1;
+}
+
+// Show a node in a mesh request
+message ShowNodeRequest {
+    string mesh_id = 1;
+    string node_id = 2;
+}
+
+// Show a node in a mesh response
+message ShowNodeResponse {
+    Node node = 1;
+}
+
+// Show the topology of a mesh request
+message ShowTopologyRequest {
+    string mesh_id = 1;
+}
+
+// Show the topology of a mesh response
+message ShowTopologyResponse {
+    repeated Topology topologies = 1;
+}
+
+// Modify a mesh request
+message ModifyMeshRequest {
+    string mesh_id = 1;
+    optional string mesh_name = 2;
+    optional string mesh_description = 3;
+    optional bool allow_join = 4;
+    optional string join_key = 5;
+}
+
+// Modify a mesh response
+message ModifyMeshResponse {
+    string message = 1;
+    bool success = 2;
+    Mesh mesh = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a node request
+message ModifyNodeRequest {
+    string mesh_id = 1;
+    string node_id = 2;
+    optional string node_name = 3;
+    optional string node_description = 4;
+    optional string region_id = 5;
+}
+
+// Modify a node response
+message ModifyNodeResponse {
+    string message = 1;
+    bool success = 2;
+    Node node = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Evict a node request
+message EvictNodeRequest {
+    string mesh_id = 1;
+    string node_id = 2;
+}
+
+// Evict a node response
+message EvictNodeResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Add a mesh route request
+message AddMeshRouteRequest {
+    string mesh_id = 1;
+    string source_node_id = 2;
+    string target_node_id = 3;
+    bool route_bidirectional = 4;
+    optional double route_latency = 5;
+    optional double route_bandwidth = 6;
+    optional int32 route_cost = 7;
+}
+
+// Add a mesh route response
+message AddMeshRouteResponse {
+    string message = 1;
+    bool success = 2;
+    Topology route = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a mesh route request
+message ModifyMeshRouteRequest {
+    string mesh_id = 1;
+    string source_node_id = 2;
+    string target_node_id = 3;
+    optional bool route_bidirectional = 4;
+    optional double route_latency = 5;
+    optional double route_bandwidth = 6;
+    optional int32 route_cost = 7;
+}
+
+// Modify a mesh route response
+message ModifyMeshRouteResponse {
+    string message = 1;
+    bool success = 2;
+    Topology route = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a mesh route request
+message DeleteMeshRouteRequest {
+    string mesh_id = 1;
+    string source_node_id = 2;
+    string target_node_id = 3;
+}
+
+// Delete a mesh route response
+message DeleteMeshRouteResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Workspace messages
+
+// The workspace object
+message Workspace {
+    string workspace_id = 1;
+    string workspace_name = 2;
+    string workspace_description = 3;
+    int32 instance_count = 4;
+    int32 database_count = 5;
+    int32 repo_count = 6;
+    int32 mapping_count = 9;
+    int32 relationship_count = 10;
+    string owner_id = 11;
+}
+
+// Show all workspaces request
+message ListWorkspacesRequest {
+    string tenant_id = 1;
+}
+
+// Show all workspaces response
+message ListWorkspacesResponse {
+    repeated Workspace workspaces = 1;
+}
+
+// Show a workspace request
+message ShowWorkspaceRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+}
+
+// Show a workspace response
+message ShowWorkspaceResponse {
+    Workspace workspace = 1;
+}
+
+// Add a workspace request
+message AddWorkspaceRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    optional string workspace_description = 3;
+    string owner_id = 4;
+}
+
+// Add a workspace response
+message AddWorkspaceResponse {
+    string message = 1;
+    bool success = 2;
+    Workspace workspace = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a workspace request
+message ModifyWorkspaceRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    optional string workspace_name_new = 3;
+    optional string workspace_description = 4;
+}
+
+// Modify a workspace response
+message ModifyWorkspaceResponse {
+    string message = 1;
+    bool success = 2;
+    Workspace workspace = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a workspace request
+message DeleteWorkspaceRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+}
+
+// Delete a workspace response
+message DeleteWorkspaceResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Satellite messages
+
+// The satellite object
+message Satellite {
+    string tenant_id = 1;
+    string satellite_id = 2;
+    string satellite_name = 3;
+    string satellite_description = 4;
+    string satellite_platform = 5;
+    string satellite_version = 6;
+    string ip_address = 7;
+    string node_id = 8;
+    redbco.redbopen.common.v1.Status status = 9;
+    string owner_id = 10;
+}
+
+
+// Show all satellites request
+message ListSatellitesRequest {
+    string tenant_id = 1;
+}
+
+// Show all satellites response
+message ListSatellitesResponse {
+    repeated Satellite satellites = 1;
+}
+
+// Show a satellite request
+message ShowSatelliteRequest {
+    string tenant_id = 1;
+    string satellite_id = 2;
+}
+
+// Show a satellite response
+message ShowSatelliteResponse {
+    Satellite satellite = 1;
+}
+
+// Add a satellite request
+message AddSatelliteRequest {
+    string tenant_id = 1;
+    string satellite_name = 2;
+    optional string satellite_description = 3;
+    string satellite_platform = 4;
+    string satellite_version = 5;
+    string ip_address = 6;
+    string node_id = 7;
+    string public_key = 8;
+    string private_key = 9;
+    string owner_id = 10;
+}
+
+// Add a satellite response
+message AddSatelliteResponse {
+    string message = 1;
+    bool success = 2;
+    Satellite satellite = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a satellite request
+message ModifySatelliteRequest {
+    string tenant_id = 1;
+    string satellite_id = 2;
+    optional string satellite_name = 3;
+    optional string satellite_description = 4;
+    optional string satellite_platform = 5;
+    optional string satellite_version = 6;
+    optional string ip_address = 7;
+    optional string node_id = 8;
+    optional string public_key = 9;
+    optional string private_key = 10;
+}
+
+// Modify a satellite response
+message ModifySatelliteResponse {
+    string message = 1;
+    bool success = 2;
+    Satellite satellite = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a satellite request
+message DeleteSatelliteRequest {
+    string tenant_id = 1;
+    string satellite_id = 2;
+}
+
+// Delete a satellite response
+message DeleteSatelliteResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Anchor messages
+
+// The anchor object
+message Anchor {
+    string tenant_id = 1;
+    string anchor_id = 2;
+    string anchor_name = 3;
+    string anchor_description = 4;
+    string anchor_platform = 5;
+    string anchor_version = 6;
+    string ip_address = 7;
+    string node_id = 8;
+    redbco.redbopen.common.v1.Status status = 9;
+    string owner_id = 10;
+}
+
+
+// Show all anchors request
+message ListAnchorsRequest {
+    string tenant_id = 1;
+}
+
+// Show all anchors response
+message ListAnchorsResponse {
+    repeated Anchor anchors = 1;
+}
+
+// Show an anchor request
+message ShowAnchorRequest {
+    string tenant_id = 1;
+    string anchor_id = 2;
+}
+
+// Show an anchor response
+message ShowAnchorResponse {
+    Anchor anchor = 1;
+}
+
+// Add an anchor request
+message AddAnchorRequest {
+    string tenant_id = 1;
+    string anchor_name = 2;
+    optional string anchor_description = 3;
+    string anchor_platform = 4;
+    string anchor_version = 5;
+    string ip_address = 6;
+    string node_id = 7;
+    string public_key = 8;
+    string private_key = 9;
+    string owner_id = 10;
+}
+
+// Add an anchor response
+message AddAnchorResponse {
+    string message = 1;
+    bool success = 2;
+    Anchor anchor = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify an anchor request
+message ModifyAnchorRequest {
+    string tenant_id = 1;
+    string anchor_id = 2;
+    optional string anchor_name = 3;
+    optional string anchor_description = 4;
+    optional string anchor_platform = 5;
+    optional string anchor_version = 6;
+    optional string ip_address = 7;
+    optional string node_id = 8;
+    optional string public_key = 9;
+    optional string private_key = 10;
+}
+
+// Modify an anchor response
+message ModifyAnchorResponse {
+    string message = 1;
+    bool success = 2;
+    Anchor anchor = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete an anchor request
+message DeleteAnchorRequest {
+    string tenant_id = 1;
+    string anchor_id = 2;
+}
+
+// Delete an anchor response
+message DeleteAnchorResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Region messages
+
+// The region object
+message Region {
+    string region_id = 1;
+    string region_name = 2;
+    string region_description = 3;
+    string region_location = 4;
+    double region_latitude = 5;
+    double region_longitude = 6;
+    string region_type = 7;
+    int32 node_count = 8;
+    int32 instance_count = 9;
+    int32 database_count = 10;
+    redbco.redbopen.common.v1.Status status = 11;
+    bool global_region = 12;
+    string created = 13;
+    string updated = 14;
+}
+
+// Show all regions request
+message ListRegionsRequest {
+    string tenant_id = 1;
+}
+
+// Show all regions response
+message ListRegionsResponse {
+    repeated Region regions = 1;
+}
+
+// Show a region request
+message ShowRegionRequest {
+    string tenant_id = 1;
+    string region_name = 2;
+}
+
+// Show a region response
+message ShowRegionResponse {
+    Region region = 1;
+}
+
+// Add a region request
+message AddRegionRequest {
+    string tenant_id = 1;
+    string region_name = 2;
+    string region_type = 3;
+    optional string region_description = 4;
+    optional string region_location = 5;
+    optional double region_latitude = 6;
+    optional double region_longitude = 7;
+}
+
+// Add a region response
+message AddRegionResponse {
+    string message = 1;
+    bool success = 2;
+    Region region = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Add a global region request
+message AddGlobalRegionRequest {
+    string region_name = 1;
+    string region_type = 2;
+    optional string region_description = 3;
+    optional string region_location = 4;
+    optional double region_latitude = 5;
+    optional double region_longitude = 6;
+}
+
+// Add a global region response
+message AddGlobalRegionResponse {
+    string message = 1;
+    bool success = 2;
+    Region region = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a region request
+message ModifyRegionRequest {
+    string tenant_id = 1;
+    string region_name = 2;
+    optional string region_name_new = 3;
+    optional string region_description = 4;
+    optional string region_location = 5;
+    optional double region_latitude = 6;
+    optional double region_longitude = 7;
+}
+
+// Modify a region response
+message ModifyRegionResponse {
+    string message = 1;
+    bool success = 2;
+    Region region = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a global region request
+message ModifyGlobalRegionRequest {
+    string region_name = 1;
+    optional string region_name_new = 2;
+    optional string region_description = 3;
+    optional string region_location = 4;
+    optional double region_latitude = 5;
+    optional double region_longitude = 6;
+}
+
+// Modify a global region response
+message ModifyGlobalRegionResponse {
+    string message = 1;
+    bool success = 2;
+    Region region = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a region request
+message DeleteRegionRequest {
+    string tenant_id = 1;
+    string region_name = 2;
+}
+
+// Delete a region response
+message DeleteRegionResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Delete a global region request
+message DeleteGlobalRegionRequest {
+    string region_name = 1;
+}
+
+// Delete a global region response
+message DeleteGlobalRegionResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+
+// Environment messages
+
+// The environment object
+message Environment {
+    string environment_id = 1;
+    string environment_name = 2;
+    string environment_description = 3;
+    bool environment_is_production = 4;
+    int32 environment_criticality = 5;
+    int32 environment_priority = 6;
+    int32 instance_count = 7;
+    int32 database_count = 8;
+    redbco.redbopen.common.v1.Status status = 9;
+    string owner_id = 10;
+    string created = 11;
+    string updated = 12;
+}
+
+// Show all environments request
+message ListEnvironmentsRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+}
+
+// Show all environments response
+message ListEnvironmentsResponse {
+    repeated Environment environments = 1;
+}
+
+// Show an environment request
+message ShowEnvironmentRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string environment_name = 3;
+}
+
+// Show an environment response
+message ShowEnvironmentResponse {
+    Environment environment = 1;
+}
+
+// Add an environment request
+message AddEnvironmentRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string environment_name = 3;
+    optional string environment_description = 4;
+    optional bool environment_is_production = 5;
+    optional int32 environment_criticality = 6;
+    optional int32 environment_priority = 7;
+    string owner_id = 8;
+}
+
+// Add an environment response
+message AddEnvironmentResponse {
+    string message = 1;
+    bool success = 2;
+    Environment environment = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify an environment request
+message ModifyEnvironmentRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string environment_name = 3;
+    optional string environment_name_new = 4;
+    optional string environment_description = 5;
+    optional bool environment_is_production = 6;
+    optional int32 environment_criticality = 7;
+    optional int32 environment_priority = 8;
+}
+
+// Modify an environment response
+message ModifyEnvironmentResponse {
+    string message = 1;
+    bool success = 2;
+    Environment environment = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+
+// Delete an environment request
+message DeleteEnvironmentRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string environment_name = 3;
+}
+
+
+// Delete an environment response
+message DeleteEnvironmentResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Instance messages
+
+// The instance object
+message Instance {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string environment_id = 3;
+    string instance_id = 4;
+    string instance_name = 5;
+    string instance_description = 6;
+    string instance_type = 7;
+    string instance_vendor = 8;
+    string instance_version = 9;
+    string instance_unique_identifier = 10;
+    string connected_to_node_id = 11;
+    string instance_host = 12;
+    int32 instance_port = 13;
+    string instance_username = 14;
+    string instance_password = 15;
+    string instance_system_db_name = 16;
+    bool instance_enabled = 17;
+    bool instance_ssl = 18;
+    string instance_ssl_mode = 19;
+    string instance_ssl_cert = 20;
+    string instance_ssl_key = 21;
+    string instance_ssl_root_cert = 22;
+    google.protobuf.Struct instance_metadata = 23;
+    repeated string policy_ids = 24;
+    string owner_id = 25;
+    string instance_status_message = 26;
+    redbco.redbopen.common.v1.Status status = 27;
+    string created = 28;
+    string updated = 29;
+}
+
+// Show all instances request
+message ListInstancesRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+}
+
+// Show all instances response
+message ListInstancesResponse {
+    repeated Instance instances = 1;
+}
+
+// Show an instance request
+message ShowInstanceRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string instance_name = 3;
+}
+
+// Show an instance response
+message ShowInstanceResponse {
+    Instance instance = 1;
+}
+
+// Connect an instance request
+message ConnectInstanceRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string instance_name = 3;
+    string instance_description = 4;
+    string instance_type = 5;
+    string instance_vendor = 6;
+    string host = 7;
+    int32 port = 8;
+    string username = 9;
+    string password = 10;
+    optional string node_id = 11;
+    optional bool enabled = 12;
+    optional bool ssl = 13;
+    optional string ssl_mode = 14;
+    optional string ssl_cert = 15;
+    optional string ssl_key = 16;
+    optional string ssl_root_cert = 17;
+    optional string environment_id = 18;
+    string owner_id = 19;
+}
+
+// Connect an instance response
+message ConnectInstanceResponse {
+    string message = 1;
+    bool success = 2;
+    Instance instance = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Reconnect an instance request
+message ReconnectInstanceRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string instance_name = 3;
+}
+
+// Reconnect an instance response
+message ReconnectInstanceResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Modify an instance request
+message ModifyInstanceRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string instance_name = 3;
+    optional string instance_name_new = 4;
+    optional string instance_description = 5;
+    optional string instance_type = 6;
+    optional string instance_vendor = 7;
+    optional string host = 8;
+    optional int32 port = 9;
+    optional string username = 10;
+    optional string password = 11;
+    optional bool enabled = 12;
+    optional bool ssl = 13;
+    optional string ssl_mode = 14;
+    optional string ssl_cert = 15;
+    optional string ssl_key = 16;
+    optional string ssl_root_cert = 17;
+    optional string environment_id = 18;
+    optional string node_id = 19;
+}
+
+// Modify an instance response
+message ModifyInstanceResponse {
+    string message = 1;
+    bool success = 2;
+    Instance instance = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Disconnect an instance request
+message DisconnectInstanceRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string instance_name = 3;
+    optional bool delete_instance = 4;
+}
+
+// Disconnect an instance response
+message DisconnectInstanceResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Database messages
+
+// The database object
+message Database {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string environment_id = 3;
+    string connected_to_node_id = 4;
+    string instance_id = 5;
+    string instance_name = 6;
+    string database_id = 7;
+    string database_name = 8;
+    string database_description = 9;
+    string database_type = 10;
+    string database_vendor = 11;
+    string database_version = 12;
+    string database_username = 13;
+    string database_password = 14;
+    string database_db_name = 15;
+    bool database_enabled = 16;
+    repeated string policy_ids = 17;
+    string owner_id = 18;
+    string database_status_message = 19;
+    redbco.redbopen.common.v1.Status status = 20;
+    string created = 21;
+    string updated = 22;
+
+    // Schema and analysis
+    string database_schema = 23;
+    string database_tables = 24;
+    
+    // Instance connection details (inherited from parent instance)
+    string instance_host = 25;
+    int32 instance_port = 26;
+    string instance_ssl_mode = 27;
+    string instance_ssl_cert = 28;
+    string instance_ssl_key = 29;
+    string instance_ssl_root_cert = 30;
+    bool instance_ssl = 31;
+    string instance_status_message = 32;
+    string instance_status = 33;
+}
+
+// Show all databases request
+message ListDatabasesRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+}
+
+// Show all databases response
+message ListDatabasesResponse {
+    repeated Database databases = 1;
+}
+
+// Show a database request
+message ShowDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+}
+
+// Show a database response
+message ShowDatabaseResponse {
+    Database database = 1;
+}
+
+// Connect a database request
+message ConnectDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+    string database_description = 4;
+    string database_type = 5;
+    string database_vendor = 6;
+    string host = 7;
+    int32 port = 8;
+    string username = 9;
+    string password = 10;
+    string db_name = 11;
+    optional string node_id = 12;
+    optional bool enabled = 13;
+    optional bool ssl = 14;
+    optional string ssl_mode = 15;
+    optional string ssl_cert = 16;
+    optional string ssl_key = 17;
+    optional string ssl_root_cert = 18;
+    optional string environment_id = 19;
+    string owner_id = 20;
+}
+
+// Connect a database response
+message ConnectDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    Database database = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Connect a database request
+message ConnectDatabaseWithInstanceRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string instance_name = 3;
+    string database_name = 4;
+    string database_description = 5;
+    string db_name = 6;
+    optional string username = 7;
+    optional string password = 8;
+    optional string node_id = 9;
+    optional bool enabled = 10;
+    optional string environment_id = 11;
+    string owner_id = 12;
+}
+
+// Connect a database response
+message ConnectDatabaseWithInstanceResponse {
+    string message = 1;
+    bool success = 2;
+    Database database = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Reconnect a database request
+message ReconnectDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+}
+
+// Reconnect a database response
+message ReconnectDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    Database database = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a database request
+message ModifyDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+    optional string database_name_new = 4;
+    optional string database_description = 5;
+    optional string database_type = 6;
+    optional string database_vendor = 7;
+    optional string host = 8;
+    optional int32 port = 9;
+    optional string username = 10;
+    optional string password = 11;
+    optional string db_name = 12;
+    optional bool enabled = 13;
+    optional bool ssl = 14;
+    optional string ssl_mode = 15;
+    optional string ssl_cert = 16;
+    optional string ssl_key = 17;
+    optional string ssl_root_cert = 18;
+    optional string environment_id = 19;
+    optional string node_id = 20;
+}
+
+// Modify a database response
+message ModifyDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    Database database = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Disconnect a database request
+message DisconnectDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+    optional bool delete_database_object = 4;
+    optional bool delete_repo = 5;
+}
+
+// Disconnect a database response
+message DisconnectDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Get the latest stored database schema request
+message GetLatestStoredDatabaseSchemaRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+}
+
+// Get the latest stored database schema response
+message GetLatestStoredDatabaseSchemaResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    google.protobuf.Any schema = 4;
+}
+
+// Wipe a database request
+message WipeDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+}
+
+// Wipe a database response
+message WipeDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Add a database to an instance request
+message CreateDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string instance_name = 3;
+    string database_name = 4;
+    string database_description = 5;
+    string db_name = 6;
+    optional string node_id = 7;
+    optional bool enabled = 8;
+    optional bool create_with_user = 9;
+    optional string database_username = 10;
+    optional string database_password = 11;
+    string owner_id = 12;
+}
+
+// Add a database to an instance response
+message CreateDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    Database database = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Drop a database request
+message DropDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+}
+
+// Drop a database response
+message DropDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Data transformation messages
+message TransformDataRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    string mode = 4;  // "append", "replace", "update"
+    bytes options = 5;  // JSON encoded options
+}
+
+message TransformDataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string source_database_name = 4;
+    string source_table_name = 5;
+    string target_database_name = 6;
+    string target_table_name = 7;
+    int64 rows_processed = 8;
+    int64 rows_transformed = 9;
+    int64 rows_inserted = 10;
+    int64 rows_updated = 11;
+    int64 rows_deleted = 12;
+}
+
+message TransformDataStreamRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    string mode = 4;  // "append", "replace", "update"
+    bytes options = 5;  // JSON encoded options
+}
+
+message TransformDataStreamResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string source_database_name = 4;
+    string source_table_name = 5;
+    string target_database_name = 6;
+    string target_table_name = 7;
+    int64 rows_processed = 8;
+    int64 rows_transformed = 9;
+    int64 rows_inserted = 10;
+    int64 rows_updated = 11;
+    int64 rows_deleted = 12;
+    bool is_complete = 13;
+}
+
+// Store database schema request
+message StoreDatabaseSchemaRequest {
+    string database_id = 1;
+    string schema = 2;
+}
+
+// Store database schema response
+message StoreDatabaseSchemaResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Store database tables request
+message StoreDatabaseTablesRequest {
+    string database_id = 1;
+    string tables = 2;
+}
+
+// Store database tables response
+message StoreDatabaseTablesResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Get database schema request
+message GetDatabaseSchemaRequest {
+    string database_id = 1;
+}
+
+// Get database schema response
+message GetDatabaseSchemaResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string schema = 4;
+}
+
+// Get database tables request
+message GetDatabaseTablesRequest {
+    string database_id = 1;
+}
+
+// Get database tables response
+message GetDatabaseTablesResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string tables = 4;
+}
+
+// Repo messages
+
+// The repo object
+message Repo {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string repo_id = 3;
+    string repo_name = 4;
+    string repo_description = 5;
+    string owner_id = 6;
+}
+
+// The repo object
+message FullRepo {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string repo_id = 3;
+    string repo_name = 4;
+    string repo_description = 5;
+    string owner_id = 6;
+    repeated Branch branches = 7;
+}
+
+
+// Show all repos request
+message ListReposRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+}
+
+// Show all repos response
+message ListReposResponse {
+    repeated Repo repos = 1;
+}
+
+// Show a repo request
+message ShowRepoRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+}
+
+// Show a repo response
+message ShowRepoResponse {
+    FullRepo repo = 1;
+}
+
+// Add a repo request
+message AddRepoRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string repo_description = 4;
+    string owner_id = 5;
+}
+
+// Add a repo response
+message AddRepoResponse {
+    string message = 1;
+    bool success = 2;
+    Repo repo = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a repo request
+message ModifyRepoRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    optional string repo_name_new = 4;
+    optional string repo_description = 5;
+}
+
+// Modify a repo response
+message ModifyRepoResponse {
+    string message = 1;
+    bool success = 2;
+    Repo repo = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Clone a repo request
+message CloneRepoRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string clone_repo_name = 4;
+    string clone_repo_description = 5;
+    string owner_id = 6;
+}
+
+// Clone a repo response
+message CloneRepoResponse {
+    string message = 1;
+    bool success = 2;
+    Repo repo = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a repo request
+message DeleteRepoRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    bool force = 4;
+}
+
+// Delete a repo response
+message DeleteRepoResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Create a repo by anchor request
+message CreateRepoByAnchorRequest {
+    string database_id = 1;
+    string repo_name = 2;
+    string repo_description = 3;
+}
+
+// Create a repo by anchor response
+message CreateRepoByAnchorResponse {
+    string message = 1;
+    bool success = 2;
+    string repo_id = 3;
+    string branch_id = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// Find repo and branch by database id request
+message FindRepoAndBranchByDatabaseIDRequest {
+    string database_id = 1;
+}
+
+// Find repo and branch by database id response
+message FindRepoAndBranchByDatabaseIDResponse {
+    string message = 1;
+    bool success = 2;
+    string repo_id = 3;
+    string branch_id = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// Create a commit by anchor request   
+message CreateCommitByAnchorRequest {
+    string branch_id = 1;
+    string commit_message = 2;
+    bool is_head = 3;
+    string schema_type = 4;
+    string schema_structure = 5;
+}
+
+// Create a commit by anchor response
+message CreateCommitByAnchorResponse {
+    string message = 1;
+    bool success = 2;
+    string commit_id = 3;
+    string branch_id = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// Branch messages
+
+// The branch object
+message Branch {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string repo_id = 3;
+    string branch_id = 4;
+    string branch_name = 5;
+    string parent_branch_id = 6;
+    string parent_branch_name = 7;
+    bool connected_to_database = 8;
+    string database_id = 9;
+    repeated Branch branches = 10;
+    repeated Commit commits = 11;
+    redbco.redbopen.common.v1.Status status = 12;
+}
+
+
+// Show a branch request
+message ShowBranchRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string branch_name = 4;
+}
+
+// Show a branch response
+message ShowBranchResponse {
+    Branch branch = 1;
+}
+
+// Attach a branch to a database request
+message AttachBranchRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string branch_name = 4;
+    string database_name = 5;
+}
+
+// Attach a branch to a database response
+message AttachBranchResponse {
+    string message = 1;
+    bool success = 2;
+    Branch branch = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Detach a branch from a database request
+message DetachBranchRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string branch_name = 4;
+}
+
+// Detach a branch from a database response
+message DetachBranchResponse {
+    string message = 1;
+    bool success = 2;
+    Branch branch = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a branch request
+message ModifyBranchRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string branch_name = 4;
+    optional string branch_name_new = 5;
+}
+
+// Modify a branch response
+message ModifyBranchResponse {
+    string message = 1;
+    bool success = 2;
+    Branch branch = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a branch request
+message DeleteBranchRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string branch_name = 4;
+    bool force = 5;
+}
+
+// Delete a branch response
+message DeleteBranchResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Commit messages
+
+// The commit object
+message Commit {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string repo_id = 3;
+    string branch_id = 4;
+    string commit_id = 5;
+    string commit_code = 6;
+    bool is_head = 7;
+    string commit_message = 8;
+    string schema_type = 9;
+    string schema_structure = 10;
+    string commit_date = 11;
+}
+
+
+// Show a commit request
+message ShowCommitRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string branch_name = 4;
+    string commit_code = 5;
+}
+
+// Show a commit response
+message ShowCommitResponse {
+    Commit commit = 1;
+}
+
+// Branch a commit to a new branch request
+message BranchCommitRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string branch_name = 4;
+    string commit_code = 5;
+    string new_branch_name = 6;
+}
+
+// Branch a commit to a new branch response
+message BranchCommitResponse {
+    string message = 1;
+    bool success = 2;
+    Commit commit = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Merge a commit to the parent branch request
+message MergeCommitRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string branch_name = 4;
+    string commit_code = 5;
+}
+
+// Merge a commit to the parent branch response
+message MergeCommitResponse {
+    string message = 1;
+    bool success = 2;
+    Commit commit = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Deploy a commit request
+message DeployCommitRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string branch_name = 4;
+    string commit_code = 5;
+}
+
+// Deploy a commit response
+message DeployCommitResponse {
+    string message = 1;
+    bool success = 2;
+    Commit commit = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Mapping messages
+
+// The mapping object
+message Mapping {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string mapping_id = 3;
+    string mapping_name = 4;
+    string mapping_description = 5;
+    string mapping_type = 6;
+    string policy_id = 7;
+    repeated MappingRule mapping_rules = 8;
+    string owner_id = 9;
+    int32 mapping_rule_count = 10;
+}
+
+// Show a mapping request
+message ListMappingsRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+}
+
+// Show a mapping response
+message ListMappingsResponse {
+    repeated Mapping mappings = 1;
+}
+
+// Show a mapping request
+message ShowMappingRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+}
+
+// Show a mapping response
+message ShowMappingResponse {
+    Mapping mapping = 1;
+}
+
+// Add a database mapping request
+message AddDatabaseMappingRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    string mapping_description = 4;
+    string mapping_source_database_name = 5;
+    string mapping_target_database_name = 6;
+    optional string policy_id = 7;
+    string owner_id = 8;
+}
+
+// Add a table mapping request
+message AddTableMappingRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    string mapping_description = 4;
+    string mapping_source_database_name = 5;
+    string mapping_source_table_name = 6;
+    string mapping_target_database_name = 7;
+    string mapping_target_table_name = 8;
+    optional string policy_id = 9;
+    string owner_id = 10;
+}
+
+// Add a empty mapping request
+message AddEmptyMappingRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    string mapping_description = 4;
+    optional string policy_id = 5;
+    string owner_id = 6;
+}
+
+// Add a mapping response
+message AddMappingResponse {
+    string message = 1;
+    bool success = 2;
+    Mapping mapping = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a mapping request
+message ModifyMappingRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    optional string mapping_name_new = 4;
+    optional string mapping_description = 5;
+    optional string policy_id = 6;
+}
+
+// Modify a mapping response
+message ModifyMappingResponse {
+    string message = 1;
+    bool success = 2;
+    Mapping mapping = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a mapping request
+message DeleteMappingRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+}
+
+// Delete a mapping response
+message DeleteMappingResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Attach a mapping rule to a mapping request
+message AttachMappingRuleRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    string mapping_rule_name = 4;
+    optional int64 mapping_rule_order = 5;
+}
+
+// Attach a mapping rule to a mapping response
+message AttachMappingRuleResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Detach a mapping rule from a mapping request
+message DetachMappingRuleRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    string mapping_rule_name = 4;
+}
+
+// Detach a mapping rule from a mapping response
+message DetachMappingRuleResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+
+// Mapping rule messages
+
+// The mapping rule object
+message MappingRule {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string mapping_rule_id = 3;
+    string mapping_rule_name = 4;
+    string mapping_rule_description = 5;
+    string mapping_rule_metadata = 6;
+    repeated string mapping_names = 7;
+    string mapping_rule_source = 8;
+    string mapping_rule_target = 9;
+    string mapping_rule_transformation_id = 10;
+    string mapping_rule_transformation_name = 11;
+    string mapping_rule_transformation_options = 12;
+    string owner_id = 13;
+    int32 mapping_count = 14;
+    repeated Mapping mappings = 15;
+}
+
+// Add a mapping rule request
+message AddMappingRuleRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_rule_name = 3;
+    string mapping_rule_description = 4;
+    string mapping_rule_source = 5;
+    string mapping_rule_target = 6;
+    string mapping_rule_transformation_name = 7;
+    string mapping_rule_transformation_options = 8;
+    string mapping_rule_metadata = 9;
+    string owner_id = 10;
+}
+
+// Add a mapping rule response
+message AddMappingRuleResponse {
+    string message = 1;
+    bool success = 2;
+    MappingRule mapping_rule = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// List mapping rules request
+message ListMappingRulesRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+}
+
+// List mapping rules response
+message ListMappingRulesResponse {
+    repeated MappingRule mapping_rules = 1;
+}
+
+// Show a mapping rule request
+message ShowMappingRuleRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_rule_name = 3;
+}
+
+// Show a mapping rule response
+message ShowMappingRuleResponse {
+    MappingRule mapping_rule = 1;
+}
+
+// Modify a mapping rule request
+message ModifyMappingRuleRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_rule_name = 3;
+    optional string mapping_rule_name_new = 4;
+    optional string mapping_rule_description = 5;
+    optional string mapping_rule_source = 6;
+    optional string mapping_rule_target = 7;
+    optional string mapping_rule_transformation_name = 8;
+    optional string mapping_rule_transformation_options = 9;
+    optional string mapping_rule_metadata = 10;
+}
+
+// Modify a mapping rule response
+message ModifyMappingRuleResponse {
+    string message = 1;
+    bool success = 2;
+    MappingRule mapping_rule = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a mapping rule request
+message DeleteMappingRuleRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_rule_name = 3;
+}
+
+// Delete a mapping rule response
+message DeleteMappingRuleResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Relationship messages
+
+// The relationship object
+message Relationship {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string relationship_id = 3;
+    string relationship_name = 4;
+    string relationship_description = 5;
+    string relationship_type = 6;
+    string relationship_source_database_id = 7;
+    string relationship_source_table_name = 8;
+    string relationship_target_database_id = 9;
+    string relationship_target_table_name = 10;
+    string mapping_id = 11;
+    string policy_id = 12;
+    string status_message = 13;
+    redbco.redbopen.common.v1.Status status = 14;
+    string owner_id = 15;
+}
+
+// Show all relationships request
+message ListRelationshipsRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+}
+
+// Show all relationships response
+message ListRelationshipsResponse {
+    repeated Relationship relationships = 1;
+}
+
+// Show a relationship request
+message ShowRelationshipRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string relationship_name = 3;
+}
+
+// Show a relationship response
+message ShowRelationshipResponse {
+    Relationship relationship = 1;
+}
+
+// Add a relationship request
+message AddRelationshipRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string relationship_name = 3;
+    string relationship_description = 4;
+    string relationship_type = 5;
+    string relationship_source_database_id = 6;
+    string relationship_source_table_name = 7;
+    string relationship_target_database_id = 8;
+    string relationship_target_table_name = 9;
+    string mapping_id = 10;
+    string policy_id = 11;
+    string owner_id = 12;
+}
+
+// Add a relationship response
+message AddRelationshipResponse {
+    string message = 1;
+    bool success = 2;
+    Relationship relationship = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a relationship request
+message ModifyRelationshipRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string relationship_name = 3;
+    optional string relationship_name_new = 4;
+    optional string relationship_description = 5;
+    optional string relationship_type = 6;
+    optional string relationship_source_database_id = 7;
+    optional string relationship_source_table_name = 8;
+    optional string relationship_target_database_id = 9;
+    optional string relationship_target_table_name = 10;
+    optional string mapping_id = 11;
+    optional string policy_id = 12;
+}
+
+// Modify a relationship response
+message ModifyRelationshipResponse {
+    string message = 1;
+    bool success = 2;
+    Relationship relationship = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a relationship request
+message DeleteRelationshipRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string relationship_name = 3;
+}
+
+// Delete a relationship response
+message DeleteRelationshipResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Transformation messages
+
+// The transformation object
+message Transformation {
+    string tenant_id = 1;
+    string transformation_id = 2;
+    string transformation_name = 3;
+    string transformation_description = 4;
+    string transformation_type = 5;
+    string transformation_version = 6;
+    string transformation_function = 7;
+    string owner_id = 8;
+}
+
+// Show all transformations request
+message ListTransformationsRequest {
+    string tenant_id = 1;
+}
+
+// Show all transformations response
+message ListTransformationsResponse {
+    repeated Transformation transformations = 1;
+}
+
+// Show a transformation request
+message ShowTransformationRequest {
+    string tenant_id = 1;
+    string transformation_id = 2;
+}
+
+// Show a transformation response
+message ShowTransformationResponse {
+    Transformation transformation = 1;
+}
+
+// Add a transformation request
+message AddTransformationRequest {
+    string tenant_id = 1;
+    string transformation_name = 2;
+    string transformation_description = 3;
+    string transformation_type = 4;
+    string transformation_version = 5;
+    string transformation_function = 6;
+    string owner_id = 7;
+}
+
+// Add a transformation response
+message AddTransformationResponse {
+    string message = 1;
+    bool success = 2;
+    Transformation transformation = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a transformation request
+message ModifyTransformationRequest {
+    string tenant_id = 1;
+    string transformation_id = 2;
+    optional string transformation_name_new = 3;
+    optional string transformation_description = 4;
+    optional string transformation_type = 5;
+    optional string transformation_version = 6;
+    optional string transformation_function = 7;
+}
+
+// Modify a transformation response
+message ModifyTransformationResponse {
+    string message = 1;
+    bool success = 2;
+    Transformation transformation = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a transformation request
+message DeleteTransformationRequest {
+    string tenant_id = 1;
+    string transformation_id = 2;
+}
+
+// Delete a transformation response
+message DeleteTransformationResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Policy messages
+
+// The policy object
+message Policy {
+    string tenant_id = 1;
+    string policy_id = 2;
+    string policy_name = 3;
+    string policy_description = 4;
+    google.protobuf.Struct policy_object = 5;
+    string owner_id = 6;
+}
+
+// Show all policies request
+message ListPoliciesRequest {
+    string tenant_id = 1;
+}
+
+// Show all policies response
+message ListPoliciesResponse {
+    repeated Policy policies = 1;
+}
+
+// Show a policy request
+message ShowPolicyRequest {
+    string tenant_id = 1;
+    string policy_id = 2;
+}
+
+// Show a policy response
+message ShowPolicyResponse {
+    Policy policy = 1;
+}
+
+// Add a policy request
+message AddPolicyRequest {
+    string tenant_id = 1;
+    string policy_name = 2;
+    string policy_description = 3;
+    google.protobuf.Struct policy_object = 4;
+    string owner_id = 5;
+}
+
+// Add a policy response
+message AddPolicyResponse {
+    string message = 1;
+    bool success = 2;
+    Policy policy = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a policy request
+message ModifyPolicyRequest {
+    string tenant_id = 1;
+    string policy_id = 2;
+    optional string policy_name_new = 3;
+    optional string policy_description = 4;
+    optional google.protobuf.Struct policy_object = 5;
+}
+
+// Modify a policy response
+message ModifyPolicyResponse {
+    string message = 1;
+    bool success = 2;
+    Policy policy = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a policy request
+message DeletePolicyRequest {
+    string tenant_id = 1;
+    string policy_id = 2;
+}
+
+// Delete a policy response
+message DeletePolicyResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// MCP messages
+
+// The MCP server object
+message MCPServer {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string mcp_server_id = 3;
+    string mcp_server_name = 4;
+    string mcp_server_description = 5;
+    string host_type = 6;
+    string host = 7;
+    int32 port = 8;
+    bool enabled = 9;
+    repeated MCPResource mcp_resources = 10;
+    repeated MCPTool mcp_tools = 11;
+    repeated MCPPrompt mcp_prompts = 12;
+    string status_message = 13;
+    redbco.redbopen.common.v1.Status status = 14;
+    string owner_id = 15;
+}
+
+// Show all MCP servers request
+message ListMCPServersRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+}
+
+// Show all MCP servers response
+message ListMCPServersResponse {
+    repeated MCPServer mcp_servers = 1;
+}
+
+// Show a MCP server request
+message ShowMCPServerRequest {
+    string tenant_id = 1;
+    string mcp_server_id = 2;
+}
+
+// Show a MCP server response
+message ShowMCPServerResponse {
+    MCPServer mcp_server = 1;
+}
+
+// Add a MCP server request
+message AddMCPServerRequest {
+    string tenant_id = 1;
+    string mcp_server_name = 2;
+    string mcp_server_description = 3;
+    string host_type = 4;
+    string host = 5;
+    int32 port = 6;
+    string owner_id = 7;
+}
+
+// Add a MCP server response
+message AddMCPServerResponse {
+    string message = 1;
+    bool success = 2;
+    MCPServer mcp_server = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a MCP server request
+message ModifyMCPServerRequest {
+    string tenant_id = 1;
+    string mcp_server_id = 2;
+    optional string mcp_server_name = 3;
+    optional string mcp_server_description = 4;
+    optional string host_type = 5;
+    optional string host = 6;
+    optional int32 port = 7;
+}
+
+// Modify a MCP server response
+message ModifyMCPServerResponse {
+    string message = 1;
+    bool success = 2;
+    MCPServer mcp_server = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a MCP server request
+message DeleteMCPServerRequest {
+    string tenant_id = 1;
+    string mcp_server_id = 2;
+}
+
+// Delete a MCP server response
+message DeleteMCPServerResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// MCP resource messages
+
+// The MCP resource object
+message MCPResource {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string mcp_resource_id = 3;
+    string mcp_resource_name = 4;
+    string mcp_resource_description = 5;
+    string mcp_resource_uri = 6;
+    string mcp_resource_mime_type = 7;
+    bool require_authentication = 8;
+    google.protobuf.Struct mcp_resource_annotations = 9;
+    string cache_ttl = 10;
+    string visibility = 11;
+    string mapping_id = 12;
+    string owner_id = 13;
+}
+
+// Show all MCP resources request
+message ListMCPResourcesRequest {
+    string tenant_id = 1;
+}
+
+// Show all MCP resources response
+message ListMCPResourcesResponse {
+    repeated MCPResource mcp_resources = 1;
+}
+
+// Show a MCP resource request
+message ShowMCPResourceRequest {
+    string tenant_id = 1;
+    string mcp_resource_id = 2;
+}
+
+// Show a MCP resource response
+message ShowMCPResourceResponse {
+    MCPResource mcp_resource = 1;
+}
+
+// Add a MCP resource request
+message AddMCPResourceRequest {
+    string tenant_id = 1;
+    string mcp_resource_name = 2;
+    string mcp_resource_description = 3;
+    string mcp_resource_uri = 4;
+    string mcp_resource_mime_type = 5;
+    bool require_authentication = 6;
+    google.protobuf.Struct mcp_resource_annotations = 7;
+    string cache_ttl = 8;
+    string visibility = 9;
+    string mapping_id = 10;
+    string owner_id = 11;
+}
+
+// Add a MCP resource response
+message AddMCPResourceResponse {
+    string message = 1;
+    bool success = 2;
+    MCPResource mcp_resource = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a MCP resource request
+message ModifyMCPResourceRequest {
+    string tenant_id = 1;
+    string mcp_resource_id = 2;
+    optional string mcp_resource_name = 3;
+    optional string mcp_resource_description = 4;
+    optional string mcp_resource_uri = 5;
+    optional string mcp_resource_mime_type = 6;
+    optional bool require_authentication = 7;
+    optional google.protobuf.Struct mcp_resource_annotations = 8;
+    optional string cache_ttl = 9;
+    optional string visibility = 10;
+    optional string mapping_id = 11;
+}
+
+// Modify a MCP resource response
+message ModifyMCPResourceResponse {
+    string message = 1;
+    bool success = 2;
+    MCPResource mcp_resource = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a MCP resource request
+message DeleteMCPResourceRequest {
+    string tenant_id = 1;
+    string mcp_resource_id = 2;
+}
+
+// Delete a MCP resource response
+message DeleteMCPResourceResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Attach a MCP resource to a MCP server
+message AttachMCPResourceRequest {
+    string tenant_id = 1;
+    string mcp_resource_id = 2;
+    string mcp_server_id = 3;
+}
+
+// Attach a MCP resource to a MCP server response
+message AttachMCPResourceResponse {
+    string message = 1;
+    bool success = 2;
+    MCPServer mcp_server = 3;
+    MCPResource mcp_resource = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// Detach a MCP resource from a MCP server
+message DetachMCPResourceRequest {
+    string tenant_id = 1;
+    string mcp_resource_id = 2;
+    string mcp_server_id = 3;
+}
+
+// Detach a MCP resource from a MCP server response
+message DetachMCPResourceResponse {
+    string message = 1;
+    bool success = 2;
+    MCPServer mcp_server = 3;
+    MCPResource mcp_resource = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// MCP tool messages
+
+// The MCP tool object
+message MCPTool {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string mcp_tool_id = 3;
+    string mcp_tool_name = 4;
+    string mcp_tool_description = 5;
+    string mcp_tool_mime_type = 7;
+    string mcp_tool_category = 8;
+    string mcp_tool_operation = 9;
+    bool require_authentication = 10;
+    google.protobuf.Struct mcp_tool_annotations = 11;
+    string visibility = 12;
+    string mapping_id = 13;
+    string owner_id = 14;
+}
+
+// Show all MCP tools request
+message ListMCPToolsRequest {
+    string tenant_id = 1;
+}
+
+// Show all MCP tools response
+message ListMCPToolsResponse {
+    repeated MCPTool mcp_tools = 1;
+}
+
+// Show a MCP tool request
+message ShowMCPToolRequest {
+    string tenant_id = 1;
+    string mcp_tool_id = 2;
+}
+
+// Show a MCP tool response
+message ShowMCPToolResponse {
+    MCPTool mcp_tool = 1;
+}
+
+// Add a MCP tool request
+message AddMCPToolRequest {
+    string tenant_id = 1;
+    string mcp_tool_name = 2;
+    string mcp_tool_description = 3;
+    string mcp_tool_mime_type = 4;
+    string mcp_tool_category = 5;
+    string mcp_tool_operation = 6;
+    bool require_authentication = 7;
+    google.protobuf.Struct mcp_tool_annotations = 8;
+    string visibility = 9;
+    string mapping_id = 10;
+    string owner_id = 11;
+}
+
+// Add a MCP tool response
+message AddMCPToolResponse {
+    string message = 1;
+    bool success = 2;
+    MCPTool mcp_tool = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a MCP tool request
+message ModifyMCPToolRequest {
+    string tenant_id = 1;
+    string mcp_tool_id = 2;
+    optional string mcp_tool_name = 3;
+    optional string mcp_tool_description = 4;
+    optional string mcp_tool_mime_type = 5;
+    optional string mcp_tool_category = 6;
+    optional string mcp_tool_operation = 7;
+    optional bool require_authentication = 8;
+    optional google.protobuf.Struct mcp_tool_annotations = 9;
+    optional string visibility = 10;
+    optional string mapping_id = 11;
+}
+
+// Modify a MCP tool response
+message ModifyMCPToolResponse {
+    string message = 1;
+    bool success = 2;
+    MCPTool mcp_tool = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a MCP tool request
+message DeleteMCPToolRequest {
+    string tenant_id = 1;
+    string mcp_tool_id = 2;
+}
+
+// Delete a MCP tool response
+message DeleteMCPToolResponse {
+    string message = 1;
+    bool success = 2;
+    MCPTool mcp_tool = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Attach a MCP tool to a MCP server
+message AttachMCPToolRequest {
+    string tenant_id = 1;
+    string mcp_tool_id = 2;
+    string mcp_server_id = 3;
+}
+
+// Attach a MCP tool to a MCP server response
+message AttachMCPToolResponse {
+    string message = 1;
+    bool success = 2;
+    MCPServer mcp_server = 3;
+    MCPTool mcp_tool = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// Detach a MCP tool from a MCP server
+message DetachMCPToolRequest {
+    string tenant_id = 1;
+    string mcp_tool_id = 2;
+    string mcp_server_id = 3;
+}
+
+// Detach a MCP tool from a MCP server response
+message DetachMCPToolResponse {
+    string message = 1;
+    bool success = 2;
+    MCPServer mcp_server = 3;
+    MCPTool mcp_tool = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// MCP prompt messages
+
+// The MCP prompt object
+message MCPPrompt {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string mcp_prompt_id = 3;
+    string mcp_prompt_name = 4;
+    string mcp_prompt_description = 5;
+    string mcp_prompt_mime_type = 6;
+    string mcp_prompt_category = 7;
+    string mcp_prompt_template_content = 8;
+    string mcp_prompt_template_engine = 9;
+    string mcp_prompt_complexity = 10;
+    string mcp_prompt_output_type = 11;
+    bool require_authentication = 12;
+    google.protobuf.Struct mcp_prompt_annotations = 13;
+    string visibility = 14;
+    string mapping_id = 15;
+    string owner_id = 16;
+}
+
+// Show all MCP prompts request
+message ListMCPPromptsRequest {
+    string tenant_id = 1;
+}
+
+// Show all MCP prompts response
+message ListMCPPromptsResponse {
+    repeated MCPPrompt mcp_prompts = 1;
+}
+
+// Show a MCP prompt request
+message ShowMCPPromptRequest {
+    string tenant_id = 1;
+    string mcp_prompt_id = 2;
+}
+
+// Show a MCP prompt response
+message ShowMCPPromptResponse {
+    MCPPrompt mcp_prompt = 1;
+}
+
+// Add a MCP prompt request
+message AddMCPPromptRequest {
+    string tenant_id = 1;
+    string mcp_prompt_name = 2;
+    string mcp_prompt_description = 3;
+    string mcp_prompt_mime_type = 4;
+    string mcp_prompt_category = 5;
+    string mcp_prompt_template_content = 6;
+    string mcp_prompt_template_engine = 7;
+    string mcp_prompt_complexity = 8;
+    string mcp_prompt_output_type = 9;
+    bool require_authentication = 10;
+    google.protobuf.Struct mcp_prompt_annotations = 11;
+    string visibility = 12;
+    string mapping_id = 13;
+    string owner_id = 14;
+}
+
+// Add a MCP prompt response
+message AddMCPPromptResponse {
+    string message = 1;
+    bool success = 2;
+    MCPPrompt mcp_prompt = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a MCP prompt request
+message ModifyMCPPromptRequest {
+    string tenant_id = 1;
+    string mcp_prompt_id = 2;
+    optional string mcp_prompt_name = 3;
+    optional string mcp_prompt_description = 4;
+    optional string mcp_prompt_mime_type = 5;
+    optional string mcp_prompt_category = 6;
+    optional string mcp_prompt_template_content = 7;
+    optional string mcp_prompt_template_engine = 8;
+    optional string mcp_prompt_complexity = 9;
+    optional string mcp_prompt_output_type = 10;
+    optional bool require_authentication = 11;
+    optional google.protobuf.Struct mcp_prompt_annotations = 12;
+    optional string visibility = 13;
+    optional string mapping_id = 14;
+}
+
+// Modify a MCP prompt response
+message ModifyMCPPromptResponse {
+    string message = 1;
+    bool success = 2;
+    MCPPrompt mcp_prompt = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a MCP prompt request
+message DeleteMCPPromptRequest {
+    string tenant_id = 1;
+    string mcp_prompt_id = 2;
+}
+
+// Delete a MCP prompt response
+message DeleteMCPPromptResponse {
+    string message = 1;
+    bool success = 2;
+    MCPPrompt mcp_prompt = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Attach a MCP prompt to a MCP server
+message AttachMCPPromptRequest {
+    string tenant_id = 1;
+    string mcp_prompt_id = 2;
+    string mcp_server_id = 3;
+}
+
+// Attach a MCP prompt to a MCP server response
+message AttachMCPPromptResponse {
+    string message = 1;
+    bool success = 2;
+    MCPServer mcp_server = 3;
+    MCPPrompt mcp_prompt = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// Detach a MCP prompt from a MCP server
+message DetachMCPPromptRequest {
+    string tenant_id = 1;
+    string mcp_prompt_id = 2;
+    string mcp_server_id = 3;
+}
+
+// Detach a MCP prompt from a MCP server response
+message DetachMCPPromptResponse {
+    string message = 1;
+    bool success = 2;
+    MCPServer mcp_server = 3;
+    MCPPrompt mcp_prompt = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// Tenant messages
+
+// The tenant object
+message Tenant {
+    string tenant_id = 1;
+    string tenant_name = 2;
+    string tenant_description = 3;
+    string tenant_url = 4;
+}
+
+// Show all tenants request
+message ListTenantsRequest {}
+
+// Show all tenants response
+message ListTenantsResponse {
+    repeated Tenant tenants = 1;
+}
+
+// Show a tenant request
+message ShowTenantRequest {
+    string tenant_id = 1;
+}
+
+// Show a tenant response
+message ShowTenantResponse {
+    Tenant tenant = 1;
+}
+
+// Add a new tenant request
+message AddTenantRequest {
+    string tenant_name = 1;
+    string tenant_url = 2;
+    string tenant_description = 3;
+    string user_email = 4;
+    string user_password = 5;
+}
+
+// Add a new tenant response
+message AddTenantResponse {
+    string message = 1;
+    bool success = 2;
+    Tenant tenant = 3;
+}
+
+// Modify a tenant request
+message ModifyTenantRequest {
+    string tenant_id = 1;
+    optional string tenant_name = 2;
+    optional string tenant_url = 3;
+    optional string tenant_description = 4;
+}
+
+// Modify a tenant response
+message ModifyTenantResponse {
+    string message = 1;
+    bool success = 2;
+    Tenant tenant = 3;
+}
+
+// Delete a tenant request
+message DeleteTenantRequest {
+    string tenant_id = 1;
+}
+
+// Delete a tenant response
+message DeleteTenantResponse {
+    string message = 1;
+    bool success = 2;
+}
+
+// User messages
+
+// The user object
+message User {
+    string tenant_id = 1;
+    string user_id = 2;
+    string user_name = 3;
+    string user_email = 4;
+    string user_password = 5;
+    bool user_enabled = 6;
+}
+
+// Show all users request
+message ListUsersRequest {
+    string tenant_id = 1;
+}
+
+// Show all users response
+message ListUsersResponse {
+    repeated User users = 1;
+}
+
+// Show a user request
+message ShowUserRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+}
+
+// Show a user response
+message ShowUserResponse {
+    User user = 1;
+}
+
+// Add a user request
+message AddUserRequest {
+    string tenant_id = 1;
+    string user_name = 2;
+    string user_email = 3;
+    string user_password = 4;
+    optional bool user_enabled = 5;
+}
+
+// Add a user response
+message AddUserResponse {
+    string message = 1;
+    bool success = 2;
+    User user = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a user request
+message ModifyUserRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    optional string user_name = 3;
+    optional string user_email = 4;
+    optional string user_password = 5;
+    optional bool user_enabled = 6;
+}
+
+// Modify a user response
+message ModifyUserResponse {
+    string message = 1;
+    bool success = 2;
+    User user = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a user request
+message DeleteUserRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+}
+
+// Delete a user response
+message DeleteUserResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Token messages
+
+// The token object
+message Token {
+    string tenant_id = 1;
+    string user_id = 2;
+    string apitoken_id = 3;
+    string apitoken_name = 4;
+    string apitoken_description = 5;
+    string apitoken_key = 6;
+    bool apitoken_enabled = 7;
+    bool apitoken_auto_expires = 8;
+    int32 apitoken_expiry_time_days = 9;
+    string apitoken_key_cycled = 10;
+    string owner_id = 11;
+}
+
+// Show all tokens request
+message ListTokensRequest {
+    string tenant_id = 1;
+}
+
+// Show all tokens response
+message ListTokensResponse {
+    repeated Token tokens = 1;
+}
+
+// Show a token request
+message ShowTokenRequest {
+    string tenant_id = 1;
+    string apitoken_id = 2;
+}
+
+// Show a token response
+message ShowTokenResponse {
+    Token token = 1;
+}
+
+// Add a token request
+message AddTokenRequest {
+    string tenant_id = 1;
+    string apitoken_name = 2;
+    string apitoken_description = 3;
+    string apitoken_key = 4;
+    bool apitoken_enabled = 5;
+    optional bool apitoken_auto_expires = 6;
+    optional int32 apitoken_expiry_time_days = 7;
+    string owner_id = 8;
+}
+
+// Add a token response
+message AddTokenResponse {
+    string message = 1;
+    bool success = 2;
+    Token token = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify a token request
+message ModifyTokenRequest {
+    string tenant_id = 1;
+    string apitoken_id = 2;
+    optional string apitoken_name = 3;
+    optional string apitoken_description = 4;
+    optional string apitoken_key = 5;
+    optional bool apitoken_enabled = 6;
+    optional bool apitoken_auto_expires = 7;
+    optional int32 apitoken_expiry_time_days = 8;
+}
+
+// Modify a token response
+message ModifyTokenResponse {
+    string message = 1;
+    bool success = 2;
+    Token token = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete a token request
+message DeleteTokenRequest {
+    string tenant_id = 1;
+    string apitoken_id = 2;
+}
+
+// Delete a token response
+message DeleteTokenResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Group messages
+
+// Group object
+message Group {
+    string tenant_id = 1;
+    string group_id = 2;
+    string group_name = 3;
+    string group_description = 4;
+    string parent_group_id = 5;
+    string parent_group_name = 6;
+    int32 user_count = 7;
+    int32 role_count = 8;
+    repeated Group child_groups = 9;
+    string owner_id = 10;
+}
+
+message ListGroupsRequest {
+    string tenant_id = 1;
+}
+
+message ListGroupsResponse {
+    repeated Group groups = 1;
+}
+
+message ShowGroupRequest {
+    string tenant_id = 1;
+    string group_id = 2;
+}
+
+message ShowGroupResponse {
+    Group group = 1;
+}
+
+message AddGroupRequest {
+    string tenant_id = 1;
+    string group_name = 2;
+    optional string group_description = 3;
+    optional string parent_group_id = 4;
+    string owner_id = 5;
+}
+
+message AddGroupResponse {
+    string message = 1;
+    bool success = 2;
+    Group group = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message ModifyGroupRequest {
+    string tenant_id = 1;
+    string group_id = 2;
+    optional string group_name = 3;
+    optional string group_description = 4;
+    optional string parent_group_id = 5;
+}
+
+message ModifyGroupResponse {
+    string message = 1;
+    bool success = 2;
+    Group group = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message DeleteGroupRequest {
+    string tenant_id = 1;
+    string group_id = 2;
+}
+
+message DeleteGroupResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Role messages
+
+// Role object
+message Role {
+    string tenant_id = 1;
+    string role_id = 2;
+    string role_name = 3;
+    string role_description = 4;
+    int32 permission_count = 5;
+    int32 user_count = 6;
+    int32 group_count = 7;
+    repeated Permission permissions = 8;
+    string owner_id = 9;
+}
+
+message ListRolesRequest {
+    string tenant_id = 1;
+}
+
+message ListRolesResponse {
+    repeated Role roles = 1;
+}
+
+message ShowRoleRequest {
+    string tenant_id = 1;
+    string role_id = 2;
+}
+
+message ShowRoleResponse {
+    Role role = 1;
+}
+
+message AddRoleRequest {
+    string tenant_id = 1;
+    string role_name = 2;
+    optional string role_description = 3;
+    string owner_id = 4;
+}
+
+message AddRoleResponse {
+    string message = 1;
+    bool success = 2;
+    Role role = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message ModifyRoleRequest {
+    string tenant_id = 1;
+    string role_id = 2;
+    optional string role_name = 3;
+    optional string role_description = 4;
+}
+
+message ModifyRoleResponse {
+    string message = 1;
+    bool success = 2;
+    Role role = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message DeleteRoleRequest {
+    string tenant_id = 1;
+    string role_id = 2;
+}
+
+message DeleteRoleResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Permission messages
+
+// Permission object
+message Permission {
+    string tenant_id = 1;
+    string permission_id = 2;
+    string action = 3;
+    string resource = 4;
+    string scope = 5;
+    google.protobuf.Struct constraints = 6;
+    google.protobuf.Struct conditions = 7;
+    int32 role_count = 8;
+    string owner_id = 9;
+}
+
+message ListPermissionsRequest {
+    string tenant_id = 1;
+}
+
+message ListPermissionsResponse {
+    repeated Permission permissions = 1;
+}
+
+message ShowPermissionRequest {
+    string tenant_id = 1;
+    string permission_id = 2;
+}
+
+message ShowPermissionResponse {
+    Permission permission = 1;
+}
+
+message AddPermissionRequest {
+    string tenant_id = 1;
+    string action = 2;
+    string resource = 3;
+    string scope = 4;
+    optional google.protobuf.Struct constraints = 5;
+    optional google.protobuf.Struct conditions = 6;
+    string owner_id = 7;
+}
+
+message AddPermissionResponse {
+    string message = 1;
+    bool success = 2;
+    Permission permission = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message ModifyPermissionRequest {
+    string tenant_id = 1;
+    string permission_id = 2;
+    optional string action = 3;
+    optional string resource = 4;
+    optional string scope = 5;
+    optional google.protobuf.Struct constraints = 6;
+    optional google.protobuf.Struct conditions = 7;
+}
+
+message ModifyPermissionResponse {
+    string message = 1;
+    bool success = 2;
+    Permission permission = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message DeletePermissionRequest {
+    string tenant_id = 1;
+    string permission_id = 2;
+}
+
+message DeletePermissionResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Assignment messages
+
+// User-Group assignment object
+message UserGroup {
+    string user_id = 1;
+    string user_name = 2;
+    string group_id = 3;
+    string group_name = 4;
+    string granted_by = 5;
+    string granted_at = 6;
+    string owner_id = 7;
+}
+
+message ListUserGroupsRequest {
+    string tenant_id = 1;
+    optional string user_id = 2;
+}
+
+message ListUserGroupsResponse {
+    repeated UserGroup user_groups = 1;
+}
+
+message AddUserGroupRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    string group_id = 3;
+    string owner_id = 4;
+}
+
+message AddUserGroupResponse {
+    string message = 1;
+    bool success = 2;
+    UserGroup user_group = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message DeleteUserGroupRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    string group_id = 3;
+}
+
+message DeleteUserGroupResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// User-Role assignment object
+message UserRole {
+    string user_id = 1;
+    string user_name = 2;
+    string role_id = 3;
+    string role_name = 4;
+    string granted_by = 5;
+    string granted_at = 6;
+    string expires_at = 7;
+    string owner_id = 8;
+}
+
+message ListUserRolesRequest {
+    string tenant_id = 1;
+    optional string user_id = 2;
+}
+
+message ListUserRolesResponse {
+    repeated UserRole user_roles = 1;
+}
+
+message AddUserRoleRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    string role_id = 3;
+    optional string expires_at = 4;
+    string owner_id = 5;
+}
+
+message AddUserRoleResponse {
+    string message = 1;
+    bool success = 2;
+    UserRole user_role = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message DeleteUserRoleRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    string role_id = 3;
+}
+
+message DeleteUserRoleResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Group-Role assignment object
+message GroupRole {
+    string group_id = 1;
+    string group_name = 2;
+    string role_id = 3;
+    string role_name = 4;
+    string granted_by = 5;
+    string granted_at = 6;
+    string expires_at = 7;
+    string owner_id = 8;
+}
+
+message ListGroupRolesRequest {
+    string tenant_id = 1;
+    optional string group_id = 2;
+}
+
+message ListGroupRolesResponse {
+    repeated GroupRole group_roles = 1;
+}
+
+message AddGroupRoleRequest {
+    string tenant_id = 1;
+    string group_id = 2;
+    string role_id = 3;
+    optional string expires_at = 4;
+    string owner_id = 5;
+}
+
+message AddGroupRoleResponse {
+    string message = 1;
+    bool success = 2;
+    GroupRole group_role = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message DeleteGroupRoleRequest {
+    string tenant_id = 1;
+    string group_id = 2;
+    string role_id = 3;
+}
+
+message DeleteGroupRoleResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Role-Permission assignment object
+message RolePermission {
+    string role_id = 1;
+    string role_name = 2;
+    string permission_id = 3;
+    string action = 4;
+    string resource = 5;
+    string scope = 6;
+    string owner_id = 7;
+}
+
+message ListRolePermissionsRequest {
+    string tenant_id = 1;
+    optional string role_id = 2;
+}
+
+message ListRolePermissionsResponse {
+    repeated RolePermission role_permissions = 1;
+}
+
+message AddRolePermissionRequest {
+    string tenant_id = 1;
+    string role_id = 2;
+    string permission_id = 3;
+    string owner_id = 4;
+}
+
+message AddRolePermissionResponse {
+    string message = 1;
+    bool success = 2;
+    RolePermission role_permission = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message DeleteRolePermissionRequest {
+    string tenant_id = 1;
+    string role_id = 2;
+    string permission_id = 3;
+}
+
+message DeleteRolePermissionResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Effective user permission object
+message UserPermission {
+    string user_id = 1;
+    string user_name = 2;
+    string permission_id = 3;
+    string action = 4;
+    string resource = 5;
+    string scope = 6;
+    google.protobuf.Struct constraints = 7;
+    google.protobuf.Struct conditions = 8;
+    string source_type = 9; // "direct", "group", "role"
+    string source_id = 10;
+    string source_name = 11;
+}
+
+// Authorization messages
+message ListUserPermissionsRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+}
+
+message ListUserPermissionsResponse {
+    repeated UserPermission user_permissions = 1;
+}
+
+message ListGroupPermissionsRequest {
+    string tenant_id = 1;
+    string group_id = 2;
+}
+
+message ListGroupPermissionsResponse {
+    repeated Permission group_permissions = 1;
+}
+
+message ListResourceAccessRequest {
+    string tenant_id = 1;
+    string resource_type = 2;
+    optional string resource_id = 3;
+}
+
+message ListResourceAccessResponse {
+    repeated ResourceAccess resource_access = 1;
+}
+
+message CheckPermissionRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    string action = 3;
+    string resource_type = 4;
+    optional string resource_id = 5;
+}
+
+message CheckPermissionResponse {
+    bool allowed = 1;
+    string reason = 2;
+    repeated string matched_permissions = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Resource access object
+message ResourceAccess {
+    string resource_type = 1;
+    string resource_id = 2;
+    string resource_name = 3;
+    string user_id = 4;
+    string user_name = 5;
+    string action = 6;
+    string access_type = 7; // "direct", "inherited"
+    string source_id = 8;
+    string source_name = 9;
+}
+
+// Role template object
+message RoleTemplate {
+    string template_id = 1;
+    string template_name = 2;
+    string template_description = 3;
+    string template_category = 4;
+    repeated Permission template_permissions = 5;
+    google.protobuf.Struct template_metadata = 6;
+}
+
+// Template messages
+message ListRoleTemplatesRequest {
+    optional string category = 1;
+}
+
+message ListRoleTemplatesResponse {
+    repeated RoleTemplate role_templates = 1;
+}
+
+message ShowRoleTemplateRequest {
+    string template_id = 1;
+}
+
+message ShowRoleTemplateResponse {
+    RoleTemplate role_template = 1;
+}
+
+message CreateRoleFromTemplateRequest {
+    string tenant_id = 1;
+    string template_id = 2;
+    string role_name = 3;
+    optional string role_description = 4;
+    optional google.protobuf.Struct customizations = 5;
+}
+
+message CreateRoleFromTemplateResponse {
+    string message = 1;
+    bool success = 2;
+    Role role = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message SaveRoleAsTemplateRequest {
+    string tenant_id = 1;
+    string role_id = 2;
+    string template_name = 3;
+    optional string template_description = 4;
+    optional string template_category = 5;
+}
+
+message SaveRoleAsTemplateResponse {
+    string message = 1;
+    bool success = 2;
+    RoleTemplate role_template = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Audit log entry object
+message AuditLogEntry {
+    string audit_id = 1;
+    string tenant_id = 2;
+    string user_id = 3;
+    string user_name = 4;
+    string action = 5;
+    string resource_type = 6;
+    string resource_id = 7;
+    string resource_name = 8;
+    string target_user_id = 9;
+    string target_user_name = 10;
+    google.protobuf.Struct change_details = 11;
+    string timestamp = 12;
+    string ip_address = 13;
+    string user_agent = 14;
+    redbco.redbopen.common.v1.Status status = 15;
+}
+
+// Audit messages
+message ShowAuditLogRequest {
+    string tenant_id = 1;
+    optional string user_id = 2;
+    optional string action = 3;
+    optional string resource_type = 4;
+    optional string start_date = 5;
+    optional string end_date = 6;
+    optional int32 limit = 7;
+    optional int32 offset = 8;
+}
+
+message ShowAuditLogResponse {
+    repeated AuditLogEntry audit_entries = 1;
+    int32 total_count = 2;
+}
+
+message ShowPermissionsReportRequest {
+    string tenant_id = 1;
+    optional string report_type = 2; // "summary", "detailed", "compliance"
+}
+
+message ShowPermissionsReportResponse {
+    google.protobuf.Struct report_data = 1;
+    string report_format = 2;
+    string generated_at = 3;
+}
+
+message ShowUnusedPermissionsRequest {
+    string tenant_id = 1;
+}
+
+message ShowUnusedPermissionsResponse {
+    repeated Permission unused_permissions = 1;
+}
+
+message ShowOrphanedRolesRequest {
+    string tenant_id = 1;
+}
+
+message ShowOrphanedRolesResponse {
+    repeated Role orphaned_roles = 1;
+}
+
+// Authorization export configuration object
+message AuthorizationExport {
+    string export_id = 1;
+    string tenant_id = 2;
+    repeated Group groups = 3;
+    repeated Role roles = 4;
+    repeated Permission permissions = 5;
+    repeated UserGroup user_groups = 6;
+    repeated UserRole user_roles = 7;
+    repeated GroupRole group_roles = 8;
+    repeated RolePermission role_permissions = 9;
+    repeated RoleTemplate role_templates = 10;
+    google.protobuf.Struct export_metadata = 11;
+    string exported_at = 12;
+    string exported_by = 13;
+    string export_version = 14;
+}
+
+// User permissions export object
+message UserPermissionsExport {
+    string export_id = 1;
+    string tenant_id = 2;
+    string user_id = 3;
+    string user_name = 4;
+    repeated UserPermission user_permissions = 5;
+    repeated UserGroup user_groups = 6;
+    repeated UserRole user_roles = 7;
+    google.protobuf.Struct export_metadata = 8;
+    string exported_at = 9;
+    string exported_by = 10;
+    string export_version = 11;
+}
+
+// Import result object
+message ImportResult {
+    string operation = 1; // "create", "update", "skip", "error"
+    string object_type = 2; // "group", "role", "permission", etc.
+    string object_id = 3;
+    string object_name = 4;
+    string message = 5;
+    redbco.redbopen.common.v1.Status status = 6;
+}
+
+// Import summary object
+message ImportSummary {
+    int32 total_objects = 1;
+    int32 created_count = 2;
+    int32 updated_count = 3;
+    int32 skipped_count = 4;
+    int32 error_count = 5;
+    repeated ImportResult results = 6;
+    string import_duration = 7;
+}
+
+// Import/Export messages
+// Export authorization configuration
+message ExportAuthorizationRequest {
+    string tenant_id = 1;
+    optional bool include_groups = 2;
+    optional bool include_roles = 3;
+    optional bool include_permissions = 4;
+    optional bool include_assignments = 5;
+    optional bool include_templates = 6;
+    optional string export_format = 7; // "json", "yaml", "binary"
+    repeated string group_ids = 8; // Export specific groups only
+    repeated string role_ids = 9; // Export specific roles only
+}
+
+message ExportAuthorizationResponse {
+    string message = 1;
+    bool success = 2;
+    AuthorizationExport authorization_export = 3;
+    string export_data = 4; // Serialized export data
+    string export_format = 5;
+    string download_url = 6; // Optional download URL for large exports
+    redbco.redbopen.common.v1.Status status = 7;
+}
+
+// Export user permissions
+message ExportUserPermissionsRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    optional bool include_effective_permissions = 3;
+    optional bool include_group_memberships = 4;
+    optional bool include_role_assignments = 5;
+    optional string export_format = 6; // "json", "yaml", "binary"
+}
+
+message ExportUserPermissionsResponse {
+    string message = 1;
+    bool success = 2;
+    UserPermissionsExport user_permissions_export = 3;
+    string export_data = 4; // Serialized export data
+    string export_format = 5;
+    string download_url = 6; // Optional download URL
+    redbco.redbopen.common.v1.Status status = 7;
+}
+
+// Import authorization configuration
+message ImportAuthorizationRequest {
+    string tenant_id = 1;
+    string import_data = 2; // Serialized import data
+    optional string import_format = 3; // "json", "yaml", "binary"
+    optional bool dry_run = 4; // Preview import without applying changes
+    optional bool overwrite_existing = 5; // Whether to update existing objects
+    optional bool create_missing_dependencies = 6; // Auto-create referenced objects
+    repeated string import_types = 7; // "groups", "roles", "permissions", "assignments"
+    google.protobuf.Struct import_options = 8; // Additional import configuration
+}
+
+message ImportAuthorizationResponse {
+    string message = 1;
+    bool success = 2;
+    ImportSummary import_summary = 3;
+    repeated string warnings = 4;
+    repeated string errors = 5;
+    bool dry_run = 6;
+    redbco.redbopen.common.v1.Status status = 7;
+}
+
+// Import user permissions
+message ImportUserPermissionsRequest {
+    string tenant_id = 1;
+    string user_id = 2;
+    string import_data = 3; // Serialized import data
+    optional string import_format = 4; // "json", "yaml", "binary"
+    optional bool dry_run = 5; // Preview import without applying changes
+    optional bool overwrite_existing = 6; // Whether to update existing assignments
+    optional bool merge_permissions = 7; // Merge with existing vs replace
+    repeated string import_types = 8; // "groups", "roles", "permissions"
+    google.protobuf.Struct import_options = 9; // Additional import configuration
+}
+
+message ImportUserPermissionsResponse {
+    string message = 1;
+    bool success = 2;
+    ImportSummary import_summary = 3;
+    repeated string warnings = 4;
+    repeated string errors = 5;
+    bool dry_run = 6;
+    redbco.redbopen.common.v1.Status status = 7;
+}

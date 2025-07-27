@@ -1,0 +1,47 @@
+name: Lint
+
+# Phase 1: Single Maintainer Governance
+# This workflow provides basic linting functionality.
+# See CONTRIBUTING.md for governance evolution plan.
+
+on:
+  push:
+    branches: [ main, develop, release/*, hotfix/* ]
+  pull_request:
+    branches: [ main, develop, release/*, hotfix/* ]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+      
+      - name: Install dependencies
+        run: |
+          go mod download
+          go mod verify
+      
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+          args: --timeout=5m
+      
+      - name: Check formatting
+        run: |
+          # Check if code is properly formatted
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "Code is not formatted. Please run 'go fmt ./...'"
+            gofmt -s -l .
+            exit 1
+          fi
+      
+      - name: Run go vet
+        run: go vet ./... 

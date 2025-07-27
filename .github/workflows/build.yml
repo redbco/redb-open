@@ -1,0 +1,60 @@
+name: Build and Test
+
+# Phase 1: Single Maintainer Governance
+# This workflow provides basic build and test functionality.
+# See CONTRIBUTING.md for governance evolution plan.
+
+on:
+  push:
+    branches: [ main, develop, release/*, hotfix/* ]
+  pull_request:
+    branches: [ main, develop, release/*, hotfix/* ]
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+      
+      - name: Install dependencies
+        run: |
+          go mod download
+          go mod verify
+      
+      - name: Build
+        run: |
+          # Build the project using Makefile
+          if [ -f "Makefile" ]; then
+            make local
+          else
+            go build ./...
+          fi
+      
+      - name: Test
+        run: |
+          # Run tests
+          if [ -f "Makefile" ]; then
+            make test
+          else
+            go test -v ./...
+          fi
+      
+      - name: Lint
+        run: |
+          # Run linting
+          if [ -f "Makefile" ]; then
+            make lint
+          else
+            # Install golangci-lint if not available
+            if ! command -v golangci-lint &> /dev/null; then
+              curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.55.2
+            fi
+            golangci-lint run
+          fi 
