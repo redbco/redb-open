@@ -19,7 +19,7 @@ During Phase 1 governance, security vulnerabilities should be reported directly 
 
 #### **Primary Contact**
 - **Maintainer**: @tommihip
-- **Email**: [Maintainer email - to be added]
+- **Email**: tommi@redb.co
 - **GitHub Issues**: Use the "Security" label
 
 #### **Reporting Process**

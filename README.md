@@ -493,7 +493,7 @@ For detailed installation instructions, see the Installation Instructions sectio
 - **Documentation**: [Project Wiki](https://github.com/redbco/redb-open/wiki)
 - **Issues**: [GitHub Issues](https://github.com/redbco/redb-open/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/redbco/redb-open/discussions)
-- **Community**: [Discord/Slack/Forum] https://discord.gg/K3UkDYXG77
+- **Community**: [Discord] https://discord.gg/K3UkDYXG77
 
 ---
 
