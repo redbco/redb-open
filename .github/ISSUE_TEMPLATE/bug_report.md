@@ -137,13 +137,18 @@ assignees: ''
 ```
 
 ```bash
+# reDB Node version and build info
+./bin/redb-cli --version
+```
+
+```bash
 # Service status
-./bin/redb-cli status
+./bin/redb-cli auth status
 ```
 
 ```bash
 # Database connectivity test
-./bin/redb-cli test connection
+./bin/redb-cli instances list
 ```
 
 ## Additional Context

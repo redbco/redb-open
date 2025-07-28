@@ -135,7 +135,7 @@ func GetWorkspace(username string) (string, error) {
 func GetWorkspaceWithError(username string) (string, error) {
 	workspace, err := GetWorkspace(username)
 	if err != nil {
-		return "", fmt.Errorf("no workspace selected. Please select a workspace first using 'redb-cli select workspace <workspace-name>' or 'redb-cli list workspaces' to see available workspaces")
+		return "", fmt.Errorf("no workspace selected. Please select a workspace first using 'redb-cli select workspace <workspace-name>' or 'redb-cli workspaces list' to see available workspaces")
 	}
 	return workspace, nil
 }

@@ -140,7 +140,7 @@ No workspace selected. Use 'redb-cli select workspace <name>' to select one late
 redb@redb-demo:~$ 
 
 # Creating your first workspace
-redb@redb-demo:~$ ./bin/redb-cli add workspace
+redb@redb-demo:~$ ./bin/redb-cli workspaces add
 Workspace Name: demo
 Description (optional): reDB demo workspace
 Successfully created workspace 'demo' (ID: ws_0000019803D4CBCEBCA9C6AB2D)
@@ -336,28 +336,28 @@ The Anchor Service supports 27+ database types across 8 paradigms through specia
 The CLI provides commands organized into functional categories:
 
 ### Core Resource Management
-- **Authentication**: `auth login`, `auth logout`, `auth profile`, `auth status`, `change password`
-- **Tenants & Users**: Full CRUD operations for tenant and user management
-- **Workspaces & Environments**: Workspace creation, environment configuration
-- **Regions**: Global and tenant-specific region management
+- **Authentication**: `auth login`, `auth logout`, `auth profile`, `auth status`, `auth password`
+- **Tenants & Users**: `tenants list`, `tenants show`, `tenants add`, `tenants modify`, `tenants delete`
+- **Workspaces & Environments**: `workspaces list`, `workspaces show`, `workspaces add`, `workspaces modify`, `workspaces delete`
+- **Regions**: `regions list`, `regions show`, `regions add`, `regions modify`, `regions delete`
 
 ### Database Operations
-- **Instances**: `connect instance`, `list instances`, `show instance`, `modify instance`
-- **Databases**: `connect database`, `list databases`, `wipe database`, `clone table-data`
+- **Instances**: `instances connect`, `instances list`, `instances show`, `instances modify`
+- **Databases**: `databases connect`, `databases list`, `databases wipe`, `databases clone table-data`
 - **Schema Management**: Database schema inspection and modification
 
 ### Version Control & Schema
-- **Repositories**: `list repos`, `show repo`, `add repo`, `modify repo`
-- **Branches**: `show branch`, `attach branch`, `detach branch`
-- **Commits**: `show commit`, schema version management
+- **Repositories**: `repos list`, `repos show`, `repos add`, `repos modify`
+- **Branches**: `branches show`, `branches attach`, `branches detach`
+- **Commits**: `commits show`, schema version management
 
 ### Data Integration
-- **Mappings**: `list mappings`, `add table-mapping`, column-to-column relationship definitions
+- **Mappings**: `mappings list`, `mappings add table-mapping`, column-to-column relationship definitions
 - **Relationships**: Replication and migration relationship management
 - **Transformations**: Data transformation and obfuscation functions
 
 ### Mesh & Network
-- **Mesh Operations**: `seed mesh`, `join mesh`, `show topology`, node management
+- **Mesh Operations**: `mesh seed`, `mesh join`, `mesh show topology`, node management
 - **Satellites & Anchors**: Specialized node type management
 - **Routes**: Network topology and routing configuration
 
