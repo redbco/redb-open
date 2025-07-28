@@ -28,11 +28,22 @@ jobs:
           go mod download
           go mod verify
       
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v4
-        with:
-          version: latest
-          args: --timeout=5m
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.64.8
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+      
+      - name: Run golangci-lint on workspace modules
+        run: |
+          # Run linting on each module in the workspace
+          for module in cmd/cli cmd/supervisor pkg services/anchor services/clientapi services/core services/mcpserver services/mesh services/queryapi services/security services/serviceapi services/transformation services/unifiedmodel services/webhook; do
+            if [ -d "$module" ]; then
+              echo "Linting $module..."
+              cd "$module"
+              golangci-lint run --timeout=5m --allow-parallel-runners
+              cd - > /dev/null
+            fi
+          done
       
       - name: Check formatting
         run: |

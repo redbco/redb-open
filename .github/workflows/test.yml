@@ -30,26 +30,27 @@ jobs:
       
       - name: Run tests
         run: |
-          # Run tests with verbose output
-          if [ -f "Makefile" ]; then
-            make test
-          else
-            go test -v ./...
-          fi
+          # Run tests with verbose output for each workspace module
+          for module in cmd/cli cmd/supervisor pkg services/anchor services/clientapi services/core services/mcpserver services/mesh services/queryapi services/security services/serviceapi services/transformation services/unifiedmodel services/webhook; do
+            if [ -d "$module" ]; then
+              echo "Testing $module..."
+              cd "$module"
+              go test -v ./...
+              cd - > /dev/null
+            fi
+          done
       
       - name: Run tests with coverage
         run: |
-          # Run tests with coverage reporting
-          if [ -f "Makefile" ]; then
-            # If your Makefile has a coverage target
-            if grep -q "coverage:" Makefile; then
-              make coverage
-            else
+          # Run tests with coverage reporting for each workspace module
+          for module in cmd/cli cmd/supervisor pkg services/anchor services/clientapi services/core services/mcpserver services/mesh services/queryapi services/security services/serviceapi services/transformation services/unifiedmodel services/webhook; do
+            if [ -d "$module" ]; then
+              echo "Testing $module with coverage..."
+              cd "$module"
               go test -cover ./...
+              cd - > /dev/null
             fi
-          else
-            go test -cover ./...
-          fi
+          done
       
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
