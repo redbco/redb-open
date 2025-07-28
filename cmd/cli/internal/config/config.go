@@ -56,7 +56,7 @@ func Init(configFile string) error {
 
 	// Create config directory if it doesn't exist
 	configDir := filepath.Dir(configFile)
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func Init(configFile string) error {
 			return fmt.Errorf("failed to marshal default config: %v", err)
 		}
 
-		if err := os.WriteFile(configFile, data, 0644); err != nil {
+		if err := os.WriteFile(configFile, data, 0o600); err != nil {
 			return fmt.Errorf("failed to write default config file: %v", err)
 		}
 	}
@@ -158,13 +158,27 @@ func GetUsername() (string, error) {
 
 func ClearCredentials(username string) error {
 	// Clear all stored credentials for the user
-	keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, TokenKey))
-	keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, RefreshKey))
-	keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, SessionKey))
-	keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, HostnameKey))
-	keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, WorkspaceKey))
-	keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, TenantKey))
-	keyringManager.Delete(ServiceName, "current_user")
+	if err := keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, TokenKey)); err != nil {
+		return fmt.Errorf("failed to delete token: %v", err)
+	}
+	if err := keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, RefreshKey)); err != nil {
+		return fmt.Errorf("failed to delete refresh token: %v", err)
+	}
+	if err := keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, SessionKey)); err != nil {
+		return fmt.Errorf("failed to delete session: %v", err)
+	}
+	if err := keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, HostnameKey)); err != nil {
+		return fmt.Errorf("failed to delete hostname: %v", err)
+	}
+	if err := keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, WorkspaceKey)); err != nil {
+		return fmt.Errorf("failed to delete workspace: %v", err)
+	}
+	if err := keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, TenantKey)); err != nil {
+		return fmt.Errorf("failed to delete tenant: %v", err)
+	}
+	if err := keyringManager.Delete(ServiceName, "current_user"); err != nil {
+		return fmt.Errorf("failed to delete current user: %v", err)
+	}
 	return nil
 }
 

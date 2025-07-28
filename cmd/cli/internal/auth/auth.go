@@ -200,7 +200,7 @@ func Login(args []string) error {
 	if err == nil && storedTenantURL != "" {
 		// Use stored tenant URL
 		tenantURL = storedTenantURL
-		//fmt.Printf("Using stored tenant URL: %s\n", tenantURL)
+		// fmt.Printf("Using stored tenant URL: %s\n", tenantURL)
 	} else {
 		// Get tenant URL from command line or prompt
 		if len(args) > 3 && strings.HasPrefix(args[3], "--tenant=") {
@@ -218,13 +218,13 @@ func Login(args []string) error {
 
 	// Get optional session name
 	sessionName := "reDB CLI"
-	//var sessionName string
-	//fmt.Print("Session Name (optional, default: reDB CLI): ")
-	//sessionName, _ = reader.ReadString('\n')
-	//sessionName = strings.TrimSpace(sessionName)
-	//if sessionName == "" {
-	//	sessionName = "reDB CLI"
-	//}
+	// var sessionName string
+	// fmt.Print("Session Name (optional, default: reDB CLI): ")
+	// sessionName, _ = reader.ReadString('\n')
+	// sessionName = strings.TrimSpace(sessionName)
+	// if sessionName == "" {
+	// 	sessionName = "reDB CLI"
+	// }
 
 	// Get system information
 	platform, operatingSystem, deviceType := getSystemInfo()
@@ -260,7 +260,7 @@ func Login(args []string) error {
 	}
 
 	if err := config.StoreToken(username, loginResp.AccessToken); err != nil {
-		return fmt.Errorf("failed to store access token: %v", err)
+		return fmt.Errorf("failed to store token: %v", err)
 	}
 
 	if err := config.StoreRefreshToken(username, loginResp.RefreshToken); err != nil {
@@ -276,11 +276,11 @@ func Login(args []string) error {
 	}
 
 	if err := config.StoreTenant(username, tenantURL); err != nil {
-		return fmt.Errorf("failed to store tenant URL: %v", err)
+		return fmt.Errorf("failed to store tenant: %v", err)
 	}
 
 	fmt.Printf("Successfully logged in as %s\n", username)
-	//fmt.Printf("Tenant: %s\n", tenantURL)
+	// fmt.Printf("Tenant: %s\n", tenantURL)
 	fmt.Printf("Session: %s (ID: %s)\n", sessionName, loginResp.SessionID)
 
 	// Check if workspace is already selected
@@ -332,7 +332,10 @@ func Logout() error {
 
 			// Attempt to logout from server (ignore errors as we'll clear local credentials anyway)
 			var logoutResp LogoutResponse
-			client.Post(url, logoutReq, &logoutResp, false)
+			if err := client.Post(url, logoutReq, &logoutResp, false); err != nil {
+				// Log the error but don't fail the logout process
+				fmt.Printf("Warning: failed to logout from server: %v\n", err)
+			}
 		}
 	}
 
@@ -661,14 +664,14 @@ func Status() error {
 	var accessExpiry, refreshExpiry string
 	var accessExpiryTime, refreshExpiryTime time.Time
 
-	if accessClaims, err := parseJWTToken(accessToken); err == nil {
+	if accessClaims, parseErr := parseJWTToken(accessToken); parseErr == nil {
 		accessExpiryTime = time.Unix(accessClaims.Exp, 0)
 		accessExpiry = accessExpiryTime.Format("2006-01-02 15:04:05 MST")
 	} else {
 		accessExpiry = "Unable to parse"
 	}
 
-	if refreshClaims, err := parseJWTToken(refreshToken); err == nil {
+	if refreshClaims, parseErr := parseJWTToken(refreshToken); parseErr == nil {
 		refreshExpiryTime = time.Unix(refreshClaims.Exp, 0)
 		refreshExpiry = refreshExpiryTime.Format("2006-01-02 15:04:05 MST")
 	} else {

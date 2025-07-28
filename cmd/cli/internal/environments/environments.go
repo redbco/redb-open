@@ -30,8 +30,8 @@ type Environment struct {
 	Updated                 string `json:"updated"`
 }
 
-// EnvironmentsResponse wraps the API response for listing environments
-type EnvironmentsResponse struct {
+// Response wraps the API response for listing environments
+type Response struct {
 	Environments []Environment `json:"environments"`
 }
 
@@ -95,7 +95,7 @@ func ListEnvironments() error {
 	client := httpclient.GetClient()
 	url := fmt.Sprintf("%s/api/v1/workspaces/%s/environments", tenantURL, workspaceName)
 
-	var response EnvironmentsResponse
+	var response Response
 	if err := client.Get(url, &response, true); err != nil {
 		return fmt.Errorf("failed to get environments: %v", err)
 	}
@@ -327,23 +327,24 @@ func ModifyEnvironment(environmentName string, args []string) error {
 
 	// Parse command line arguments or prompt for input
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "--name=") {
+		switch {
+		case strings.HasPrefix(arg, "--name="):
 			updateReq.Name = strings.TrimPrefix(arg, "--name=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--description=") {
+		case strings.HasPrefix(arg, "--description="):
 			updateReq.Description = strings.TrimPrefix(arg, "--description=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--production=") {
+		case strings.HasPrefix(arg, "--production="):
 			updateReq.Production = strings.TrimPrefix(arg, "--production=") == "true"
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--criticality=") {
+		case strings.HasPrefix(arg, "--criticality="):
 			criticalityInt, err := strconv.Atoi(strings.TrimPrefix(arg, "--criticality="))
 			if err != nil {
 				return fmt.Errorf("invalid criticality. Must be an integer")
 			}
 			updateReq.Criticality = criticalityInt
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--priority=") {
+		case strings.HasPrefix(arg, "--priority="):
 			priorityInt, err := strconv.Atoi(strings.TrimPrefix(arg, "--priority="))
 			if err != nil {
 				return fmt.Errorf("invalid priority. Must be an integer")

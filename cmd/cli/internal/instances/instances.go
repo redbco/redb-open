@@ -45,8 +45,8 @@ type Instance struct {
 	Updated                  string   `json:"updated"`
 }
 
-// InstancesResponse wraps the API response for listing instances
-type InstancesResponse struct {
+// Response wraps the API response for listing instances
+type Response struct {
 	Instances []Instance `json:"instances"`
 }
 
@@ -147,7 +147,7 @@ func ListInstances() error {
 	client := httpclient.GetClient()
 	url := fmt.Sprintf("%s/api/v1/workspaces/%s/instances", tenantURL, workspaceName)
 
-	var instancesResponse InstancesResponse
+	var instancesResponse Response
 	if err := client.Get(url, &instancesResponse, true); err != nil {
 		return fmt.Errorf("failed to list instances: %v", err)
 	}
@@ -524,7 +524,7 @@ func ConnectInstance(args []string) error {
 }
 
 // ReconnectInstance reconnects an existing instance
-func ReconnectInstance(instanceName string, args []string) error {
+func ReconnectInstance(instanceName string, _ []string) error {
 	// Trim whitespace from instance name
 	instanceName = strings.TrimSpace(instanceName)
 	if instanceName == "" {
@@ -604,50 +604,51 @@ func ModifyInstance(instanceName string, args []string) error {
 
 	// Parse command line arguments or prompt for input
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "--name=") {
+		switch {
+		case strings.HasPrefix(arg, "--name="):
 			updateReq.InstanceNameNew = strings.TrimPrefix(arg, "--name=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--description=") {
+		case strings.HasPrefix(arg, "--description="):
 			updateReq.InstanceDescription = strings.TrimPrefix(arg, "--description=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--type=") {
+		case strings.HasPrefix(arg, "--type="):
 			updateReq.InstanceType = strings.TrimPrefix(arg, "--type=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--host=") {
+		case strings.HasPrefix(arg, "--host="):
 			updateReq.InstanceHost = strings.TrimPrefix(arg, "--host=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--port=") {
+		case strings.HasPrefix(arg, "--port="):
 			portInt, err := strconv.Atoi(strings.TrimPrefix(arg, "--port="))
 			if err != nil {
 				return fmt.Errorf("invalid port. Must be an integer")
 			}
 			updateReq.InstancePort = portInt
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--username=") {
+		case strings.HasPrefix(arg, "--username="):
 			updateReq.InstanceUsername = strings.TrimPrefix(arg, "--username=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--password=") {
+		case strings.HasPrefix(arg, "--password="):
 			updateReq.InstancePassword = strings.TrimPrefix(arg, "--password=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--node-id=") {
+		case strings.HasPrefix(arg, "--node-id="):
 			updateReq.ConnectedToNodeID = strings.TrimPrefix(arg, "--node-id=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--ssl=") {
+		case strings.HasPrefix(arg, "--ssl="):
 			updateReq.InstanceSSL = strings.TrimPrefix(arg, "--ssl=") == "true"
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--ssl-mode=") {
+		case strings.HasPrefix(arg, "--ssl-mode="):
 			updateReq.InstanceSSLMode = strings.TrimPrefix(arg, "--ssl-mode=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--ssl-cert=") {
+		case strings.HasPrefix(arg, "--ssl-cert="):
 			updateReq.InstanceSSLCert = strings.TrimPrefix(arg, "--ssl-cert=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--ssl-key=") {
+		case strings.HasPrefix(arg, "--ssl-key="):
 			updateReq.InstanceSSLKey = strings.TrimPrefix(arg, "--ssl-key=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--ssl-root-cert=") {
+		case strings.HasPrefix(arg, "--ssl-root-cert="):
 			updateReq.InstanceSSLRootCert = strings.TrimPrefix(arg, "--ssl-root-cert=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--environment-id=") {
+		case strings.HasPrefix(arg, "--environment-id="):
 			updateReq.EnvironmentID = strings.TrimPrefix(arg, "--environment-id=")
 			hasChanges = true
 		}

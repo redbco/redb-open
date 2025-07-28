@@ -24,8 +24,8 @@ type Workspace struct {
 	RelationshipCount int    `json:"relationship_count"`
 }
 
-// WorkspacesResponse wraps the API response for listing workspaces
-type WorkspacesResponse struct {
+// Response wraps the API response for listing workspaces
+type Response struct {
 	Workspaces []Workspace `json:"workspaces"`
 }
 
@@ -72,7 +72,7 @@ func ListWorkspaces() error {
 	client := httpclient.GetClient()
 	url := fmt.Sprintf("%s/api/v1/workspaces", tenantURL)
 
-	var response WorkspacesResponse
+	var response Response
 	if err := client.Get(url, &response, true); err != nil {
 		return fmt.Errorf("failed to get workspaces: %v", err)
 	}

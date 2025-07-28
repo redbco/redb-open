@@ -21,8 +21,8 @@ type Tenant struct {
 	URL         string `json:"tenant_url"`
 }
 
-// TenantsResponse wraps the API response for listing tenants
-type TenantsResponse struct {
+// Response wraps the API response for listing tenants
+type Response struct {
 	Tenants []Tenant `json:"tenants"`
 }
 
@@ -70,7 +70,7 @@ func ListTenants() error {
 	client := httpclient.GetClient()
 	url := fmt.Sprintf("%s/api/v1/tenants", serviceURL)
 
-	var response TenantsResponse
+	var response Response
 	if err := client.Get(url, &response, false); err != nil {
 		return fmt.Errorf("failed to get tenants: %v", err)
 	}

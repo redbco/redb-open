@@ -831,56 +831,57 @@ func ModifyDatabase(databaseName string, args []string) error {
 
 	// Parse command line arguments or prompt for input
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "--name=") {
+		switch {
+		case strings.HasPrefix(arg, "--name="):
 			updateReq["database_name_new"] = strings.TrimPrefix(arg, "--name=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--description=") {
+		case strings.HasPrefix(arg, "--description="):
 			updateReq["database_description"] = strings.TrimPrefix(arg, "--description=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--type=") {
+		case strings.HasPrefix(arg, "--type="):
 			updateReq["database_type"] = strings.TrimPrefix(arg, "--type=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--vendor=") {
+		case strings.HasPrefix(arg, "--vendor="):
 			updateReq["database_vendor"] = strings.TrimPrefix(arg, "--vendor=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--host=") {
+		case strings.HasPrefix(arg, "--host="):
 			updateReq["host"] = strings.TrimPrefix(arg, "--host=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--port=") {
+		case strings.HasPrefix(arg, "--port="):
 			portInt, err := strconv.Atoi(strings.TrimPrefix(arg, "--port="))
 			if err != nil {
 				return fmt.Errorf("invalid port. Must be an integer")
 			}
 			updateReq["port"] = portInt
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--username=") {
+		case strings.HasPrefix(arg, "--username="):
 			updateReq["username"] = strings.TrimPrefix(arg, "--username=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--password=") {
+		case strings.HasPrefix(arg, "--password="):
 			updateReq["password"] = strings.TrimPrefix(arg, "--password=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--db-name=") {
+		case strings.HasPrefix(arg, "--db-name="):
 			updateReq["db_name"] = strings.TrimPrefix(arg, "--db-name=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--node-id=") {
+		case strings.HasPrefix(arg, "--node-id="):
 			updateReq["node_id"] = strings.TrimPrefix(arg, "--node-id=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--ssl=") {
+		case strings.HasPrefix(arg, "--ssl="):
 			updateReq["ssl"] = strings.TrimPrefix(arg, "--ssl=") == "true"
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--ssl-mode=") {
+		case strings.HasPrefix(arg, "--ssl-mode="):
 			updateReq["ssl_mode"] = strings.TrimPrefix(arg, "--ssl-mode=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--ssl-cert=") {
+		case strings.HasPrefix(arg, "--ssl-cert="):
 			updateReq["ssl_cert"] = strings.TrimPrefix(arg, "--ssl-cert=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--ssl-key=") {
+		case strings.HasPrefix(arg, "--ssl-key="):
 			updateReq["ssl_key"] = strings.TrimPrefix(arg, "--ssl-key=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--ssl-root-cert=") {
+		case strings.HasPrefix(arg, "--ssl-root-cert="):
 			updateReq["ssl_root_cert"] = strings.TrimPrefix(arg, "--ssl-root-cert=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--environment-id=") {
+		case strings.HasPrefix(arg, "--environment-id="):
 			updateReq["environment_id"] = strings.TrimPrefix(arg, "--environment-id=")
 			hasChanges = true
 		}
@@ -1072,11 +1073,12 @@ func DeleteDatabase(databaseName string, args []string) error {
 	deleteDatabaseObject := false
 	deleteRepo := false
 	for _, arg := range args {
-		if arg == "--force" || arg == "-f" {
+		switch {
+		case arg == "--force" || arg == "-f":
 			force = true
-		} else if strings.HasPrefix(arg, "--delete-database-object=") {
+		case strings.HasPrefix(arg, "--delete-database-object="):
 			deleteDatabaseObject = strings.TrimPrefix(arg, "--delete-database-object=") == "true"
-		} else if strings.HasPrefix(arg, "--delete-repo=") {
+		case strings.HasPrefix(arg, "--delete-repo="):
 			deleteRepo = strings.TrimPrefix(arg, "--delete-repo=") == "true"
 		}
 	}
@@ -1310,7 +1312,7 @@ func ConnectDatabase(databaseName string, args []string) error {
 	return nil
 }
 
-func ReconnectDatabase(databaseName string, args []string) error {
+func ReconnectDatabase(databaseName string, _ []string) error {
 	databaseName = strings.TrimSpace(databaseName)
 	if databaseName == "" {
 		return fmt.Errorf("database name is required")
@@ -1355,7 +1357,7 @@ func DisconnectDatabase(databaseName string, args []string) error {
 	return DeleteDatabase(databaseName, args)
 }
 
-func WipeDatabase(databaseName string, args []string) error {
+func WipeDatabase(databaseName string, _ []string) error {
 	databaseName = strings.TrimSpace(databaseName)
 	if databaseName == "" {
 		return fmt.Errorf("database name is required")
@@ -1394,7 +1396,7 @@ func WipeDatabase(databaseName string, args []string) error {
 	return nil
 }
 
-func DropDatabase(databaseName string, args []string) error {
+func DropDatabase(databaseName string, _ []string) error {
 	databaseName = strings.TrimSpace(databaseName)
 	if databaseName == "" {
 		return fmt.Errorf("database name is required")
@@ -1433,7 +1435,7 @@ func DropDatabase(databaseName string, args []string) error {
 	return nil
 }
 
-func CloneTableData(mappingName string, args []string) error {
+func CloneTableData(mappingName string, _ []string) error {
 	mappingName = strings.TrimSpace(mappingName)
 	if mappingName == "" {
 		return fmt.Errorf("mapping name is required")

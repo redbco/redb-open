@@ -30,7 +30,7 @@ type BranchCommitRequest struct {
 }
 
 // parseRepoBranchCommit parses repo/branch/commit format and returns repo, branch, and commit names
-func parseRepoBranchCommit(repoBranchCommitStr string) (string, string, string, error) {
+func parseRepoBranchCommit(repoBranchCommitStr string) (repoName, branchName, commitCode string, err error) {
 	parts := strings.Split(repoBranchCommitStr, "/")
 	if len(parts) != 3 {
 		return "", "", "", fmt.Errorf("invalid format. Expected repo/branch/commit")
@@ -177,7 +177,7 @@ func BranchCommit(repoBranchCommitStr string, args []string) error {
 }
 
 // MergeCommit merges a commit to the parent branch
-func MergeCommit(repoBranchCommitStr string, args []string) error {
+func MergeCommit(repoBranchCommitStr string, _ []string) error {
 	repoName, branchName, commitCode, err := parseRepoBranchCommit(repoBranchCommitStr)
 	if err != nil {
 		return err
@@ -222,7 +222,7 @@ func MergeCommit(repoBranchCommitStr string, args []string) error {
 }
 
 // DeployCommit deploys a commit to the database attached to the branch
-func DeployCommit(repoBranchCommitStr string, args []string) error {
+func DeployCommit(repoBranchCommitStr string, _ []string) error {
 	repoName, branchName, commitCode, err := parseRepoBranchCommit(repoBranchCommitStr)
 	if err != nil {
 		return err

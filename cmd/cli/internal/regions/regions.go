@@ -30,8 +30,8 @@ type Region struct {
 	Updated       string  `json:"updated"`
 }
 
-// RegionsResponse wraps the API response for listing regions
-type RegionsResponse struct {
+// Response wraps the API response for listing regions
+type Response struct {
 	Regions []Region `json:"regions"`
 }
 
@@ -84,7 +84,7 @@ func ListRegions() error {
 	client := httpclient.GetClient()
 	url := fmt.Sprintf("%s/api/v1/regions", tenantURL)
 
-	var response RegionsResponse
+	var response Response
 	if err := client.Get(url, &response, true); err != nil {
 		return fmt.Errorf("failed to get regions: %v", err)
 	}
@@ -295,13 +295,14 @@ func ModifyRegion(regionName string, args []string) error {
 
 	// Parse command line arguments or prompt for input
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "--name=") {
+		switch {
+		case strings.HasPrefix(arg, "--name="):
 			updateReq.Name = strings.TrimPrefix(arg, "--name=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--description=") {
+		case strings.HasPrefix(arg, "--description="):
 			updateReq.Description = strings.TrimPrefix(arg, "--description=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--location=") {
+		case strings.HasPrefix(arg, "--location="):
 			updateReq.Location = strings.TrimPrefix(arg, "--location=")
 			hasChanges = true
 		}

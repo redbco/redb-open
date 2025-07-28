@@ -53,7 +53,7 @@ type DeleteBranchRequest struct {
 }
 
 // parseRepoBranch parses repo/branch format and returns repo and branch names
-func parseRepoBranch(repoBranchStr string) (string, string, error) {
+func parseRepoBranch(repoBranchStr string) (repoName, branchName string, err error) {
 	parts := strings.Split(repoBranchStr, "/")
 	if len(parts) != 2 {
 		return "", "", fmt.Errorf("invalid format. Expected repo/branch")
@@ -223,7 +223,7 @@ func AttachBranch(repoBranchStr string, args []string) error {
 }
 
 // DetachBranch detaches a branch from an attached database
-func DetachBranch(repoBranchStr string, args []string) error {
+func DetachBranch(repoBranchStr string, _ []string) error {
 	repoName, branchName, err := parseRepoBranch(repoBranchStr)
 	if err != nil {
 		return err

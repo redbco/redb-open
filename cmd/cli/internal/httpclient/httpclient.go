@@ -59,14 +59,14 @@ func (c *HTTPClient) makeRequest(method, url string, body interface{}, requireAu
 
 	// Add authentication if required and available
 	if requireAuth {
-		username, err := config.GetUsername()
-		if err != nil {
-			return nil, fmt.Errorf("authentication required but no user logged in: %v", err)
+		username, authErr := config.GetUsername()
+		if authErr != nil {
+			return nil, fmt.Errorf("authentication required but no user logged in: %v", authErr)
 		}
 
-		token, err := config.GetToken(username)
-		if err != nil {
-			return nil, fmt.Errorf("authentication required but no valid token found: %v", err)
+		token, authErr := config.GetToken(username)
+		if authErr != nil {
+			return nil, fmt.Errorf("authentication required but no valid token found: %v", authErr)
 		}
 
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -118,7 +118,7 @@ func (c *HTTPClient) Get(url string, result interface{}, requireAuth bool) error
 }
 
 // Post performs a POST request
-func (c *HTTPClient) Post(url string, body interface{}, result interface{}, requireAuth bool) error {
+func (c *HTTPClient) Post(url string, body, result interface{}, requireAuth bool) error {
 	resp, err := c.makeRequest("POST", url, body, requireAuth)
 	if err != nil {
 		return err
@@ -127,7 +127,7 @@ func (c *HTTPClient) Post(url string, body interface{}, result interface{}, requ
 }
 
 // Put performs a PUT request
-func (c *HTTPClient) Put(url string, body interface{}, result interface{}, requireAuth bool) error {
+func (c *HTTPClient) Put(url string, body, result interface{}, requireAuth bool) error {
 	resp, err := c.makeRequest("PUT", url, body, requireAuth)
 	if err != nil {
 		return err

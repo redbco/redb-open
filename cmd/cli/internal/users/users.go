@@ -22,8 +22,8 @@ type User struct {
 	UserEnabled bool   `json:"user_enabled"`
 }
 
-// UsersResponse wraps the API response for listing users
-type UsersResponse struct {
+// Response wraps the API response for listing users
+type Response struct {
 	Users []User `json:"users"`
 }
 
@@ -72,7 +72,7 @@ func ListUsers() error {
 	client := httpclient.GetClient()
 	url := fmt.Sprintf("%s/api/v1/users", tenantURL)
 
-	var response UsersResponse
+	var response Response
 	if err := client.Get(url, &response, true); err != nil {
 		return fmt.Errorf("failed to get users: %v", err)
 	}
@@ -200,7 +200,7 @@ func AddUser(args []string) error {
 	}
 
 	// Get optional enabled status
-	var userEnabled bool = true
+	userEnabled := true
 	if len(args) > 3 && strings.HasPrefix(args[3], "--enabled=") {
 		enabledStr := strings.TrimPrefix(args[3], "--enabled=")
 		if enabledStr == "false" {
@@ -266,16 +266,17 @@ func ModifyUser(userID string, args []string) error {
 
 	// Parse command line arguments or prompt for input
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "--name=") {
+		switch {
+		case strings.HasPrefix(arg, "--name="):
 			updateReq.UserName = strings.TrimPrefix(arg, "--name=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--email=") {
+		case strings.HasPrefix(arg, "--email="):
 			updateReq.UserEmail = strings.TrimPrefix(arg, "--email=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--password=") {
+		case strings.HasPrefix(arg, "--password="):
 			updateReq.UserPassword = strings.TrimPrefix(arg, "--password=")
 			hasChanges = true
-		} else if strings.HasPrefix(arg, "--enabled=") {
+		case strings.HasPrefix(arg, "--enabled="):
 			enabledStr := strings.TrimPrefix(arg, "--enabled=")
 			enabled := enabledStr == "true"
 			updateReq.UserEnabled = &enabled
