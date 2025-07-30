@@ -259,6 +259,11 @@ func GetMasterPasswordFromEnv() string {
 
 // GetDefaultKeyringPath returns the default keyring file path
 func GetDefaultKeyringPath() string {
+	// Check for environment variable override first
+	if path := os.Getenv("REDB_KEYRING_PATH"); path != "" {
+		return path
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "/tmp/redb-keyring.json"

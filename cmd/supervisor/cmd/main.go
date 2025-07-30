@@ -31,10 +31,11 @@ var (
 )
 
 var (
-	port           = flag.Int("port", 50000, "The supervisor port")
-	configFile     = flag.String("config", "config.yaml", "Configuration file path")
-	initializeFlag = flag.Bool("initialize", false, "Initialize the reDB node (database, keys, etc.)")
-	versionFlag    = flag.Bool("version", false, "Show version information and exit")
+	port               = flag.Int("port", 50000, "The supervisor port")
+	configFile         = flag.String("config", "config.yaml", "Configuration file path")
+	initializeFlag     = flag.Bool("initialize", false, "Initialize the reDB node (database, keys, etc.)")
+	autoInitializeFlag = flag.Bool("autoinitialize", false, "Auto-initialize the reDB node without prompts (for Docker/headless environments)")
+	versionFlag        = flag.Bool("version", false, "Show version information and exit")
 )
 
 func printVersionInfo() {
@@ -75,6 +76,23 @@ func main() {
 
 		log.Info("Node initialization completed successfully!")
 		os.Exit(0)
+	}
+
+	// Handle auto-initialization mode (headless)
+	if *autoInitializeFlag {
+		log.Info("Starting reDB node auto-initialization (headless mode)...")
+
+		// Create a timeout context for initialization (10 minutes should be enough)
+		initCtx, initCancel := context.WithTimeout(ctx, 10*time.Minute)
+		defer initCancel()
+
+		initializer := initialize.New(log)
+		if err := initializer.AutoInitialize(initCtx); err != nil {
+			log.Fatalf("Node auto-initialization failed: %v", err)
+		}
+
+		log.Info("Node auto-initialization completed successfully!")
+		// Don't exit - continue with normal supervisor startup
 	}
 
 	// Load configuration

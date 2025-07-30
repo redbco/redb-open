@@ -67,7 +67,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	// Initialize HTTP server
 	portStr := e.config.Get("services.queryapi.http_port") // Fixed: Use hyphenated name
 	if portStr == "" {
-		portStr = "8083" // Default HTTP port
+		portStr = "8082" // Default HTTP port
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {

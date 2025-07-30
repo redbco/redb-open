@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  # Main reDB Node service
+  redb-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: redb-node
+    command: ["/opt/redb/entrypoint.sh"]
+    ports:
+      # HTTP API ports (for CLI and external access)
+      - "8080:8080"  # clientapi (HTTP)
+      - "8081:8081"  # serviceapi (HTTP)
+      - "8082:8082"  # queryapi (HTTP)
+      # Internal gRPC ports (not exposed externally)
+      - "50000:50000"  # supervisor (internal)
+      - "50051:50051"  # security (internal)
+      - "50053:50053"  # unifiedmodel (internal)
+      - "50054:50054"  # transformation (internal)
+      - "50055:50055"  # anchor (internal)
+      - "50056:50056"  # mesh (internal)
+      - "50057:50057"  # serviceapi gRPC (internal)
+      - "50058:50058"  # queryapi gRPC (internal)
+      - "50059:50059"  # clientapi gRPC (internal)
+      - "50060:50060"  # webhook (internal)
+      - "50061:50061"  # mcpserver (internal)
+      - "50062:50062"  # core (internal)
+    environment:
+      # Database configuration (for external databases only)
+      # - REDB_POSTGRES_USER=postgres
+      # - REDB_POSTGRES_PASSWORD=postgres
+      # - REDB_POSTGRES_HOST=localhost
+      # - REDB_POSTGRES_PORT=5432
+      # - REDB_POSTGRES_DATABASE=postgres
+      # Keyring configuration for Docker
+      - REDB_KEYRING_PATH=/opt/redb/data/keyring.json
+    volumes:
+      # Persistent data storage
+      - redb_data:/opt/redb/data
+      - postgres_data:/var/lib/postgresql/data
+      - redis_data:/var/lib/redis
+      # Logs
+      - redb_logs:/opt/redb/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # CLI service for external access
+  redb-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+    container_name: redb-cli
+    environment:
+      # Point to the main node (using HTTP API port)
+      - REDB_NODE_URL=http://redb-node:8080
+    volumes:
+      # Mount config for CLI
+      - ./cli-config:/home/redb/.redb
+    depends_on:
+      - redb-node
+    profiles:
+      - cli
+    command: ["--help"]
+
+volumes:
+  redb_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  redb_logs:
+    driver: local
+
+networks:
+  default:
+    name: redb-network 

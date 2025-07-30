@@ -17,6 +17,15 @@ import (
 	"golang.org/x/term"
 )
 
+// AuthError represents an auth-specific error that should not show usage help
+type AuthError struct {
+	message string
+}
+
+func (e AuthError) Error() string {
+	return "❌ Error: " + e.message
+}
+
 type LoginRequest struct {
 	Username        string `json:"username"`
 	Password        string `json:"password"`
@@ -311,14 +320,14 @@ func Login(args []string) error {
 func Logout() error {
 	username, err := config.GetUsername()
 	if err != nil {
-		return fmt.Errorf("no user is currently logged in")
+		return AuthError{message: "no user is currently logged in"}
 	}
 
 	// Get refresh token for logout
 	refreshToken, err := config.GetRefreshToken(username)
 	if err != nil {
 		// If we can't get the refresh token, just clear local credentials
-		fmt.Println("Warning: Could not get refresh token for logout, clearing local credentials only")
+		fmt.Println("⚠️  Could not get refresh token for logout, clearing local credentials only")
 	} else {
 		// Call logout API endpoint with refresh token
 		tenantURL, err := config.GetTenantURL()
@@ -334,17 +343,17 @@ func Logout() error {
 			var logoutResp LogoutResponse
 			if err := client.Post(url, logoutReq, &logoutResp, false); err != nil {
 				// Log the error but don't fail the logout process
-				fmt.Printf("Warning: failed to logout from server: %v\n", err)
+				fmt.Printf("⚠️  %v\n", err)
 			}
 		}
 	}
 
 	// Clear local credentials
 	if err := config.ClearCredentials(username); err != nil {
-		return fmt.Errorf("failed to clear credentials: %v", err)
+		return AuthError{message: fmt.Sprintf("failed to clear credentials: %v", err)}
 	}
 
-	fmt.Printf("Successfully logged out %s\n", username)
+	fmt.Printf("✅ Successfully logged out %s\n", username)
 	return nil
 }
 
@@ -396,7 +405,7 @@ func ListSessions() error {
 	}
 
 	if len(sessionsResp.Sessions) == 0 {
-		fmt.Println("No active sessions found")
+		fmt.Println("ℹ️  No active sessions found")
 		return nil
 	}
 
@@ -431,7 +440,7 @@ func ListSessions() error {
 // LogoutSession logs out a specific session by session ID
 func LogoutSession(sessionID string) error {
 	if sessionID == "" {
-		return fmt.Errorf("session ID is required")
+		return AuthError{message: "session ID is required"}
 	}
 
 	tenantURL, err := config.GetTenantURL()
@@ -444,10 +453,10 @@ func LogoutSession(sessionID string) error {
 
 	var response LogoutSessionResponse
 	if err := client.Post(url, nil, &response, true); err != nil {
-		return fmt.Errorf("failed to logout session: %v", err)
+		return AuthError{message: fmt.Sprintf("failed to logout session: %v", err)}
 	}
 
-	fmt.Printf("Successfully logged out session: %s\n", sessionID)
+	fmt.Printf("✅ Successfully logged out session: %s\n", sessionID)
 	return nil
 }
 

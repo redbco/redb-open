@@ -143,8 +143,11 @@ func (m *Middleware) shouldSkipAuth(r *http.Request) bool {
 		return true
 	}
 
-	// Skip authentication for login endpoint
+	// Skip authentication for login and logout endpoints
 	if strings.HasSuffix(path, "/auth/login") && method == http.MethodPost {
+		return true
+	}
+	if strings.HasSuffix(path, "/auth/logout") && method == http.MethodPost {
 		return true
 	}
 

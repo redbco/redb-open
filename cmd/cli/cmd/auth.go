@@ -18,7 +18,12 @@ var loginCmd = &cobra.Command{
 	Short: "Login to reDB",
 	Long:  `Login to reDB by providing username, password, hostname, and optionally tenant.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return auth.Login(args)
+		err := auth.Login(args)
+		// Check if it's an AuthError and suppress usage help
+		if _, ok := err.(auth.AuthError); ok {
+			cmd.SilenceUsage = true
+		}
+		return err
 	},
 }
 
@@ -28,7 +33,12 @@ var logoutCmd = &cobra.Command{
 	Short: "Logout from reDB",
 	Long:  `Logout from reDB and clear authentication tokens.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return auth.Logout()
+		err := auth.Logout()
+		// Check if it's an AuthError and suppress usage help
+		if _, ok := err.(auth.AuthError); ok {
+			cmd.SilenceUsage = true
+		}
+		return err
 	},
 }
 
@@ -38,7 +48,12 @@ var statusCmd = &cobra.Command{
 	Short: "Show authentication status",
 	Long:  `Display the current authentication status and token information.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return auth.Status()
+		err := auth.Status()
+		// Check if it's an AuthError and suppress usage help
+		if _, ok := err.(auth.AuthError); ok {
+			cmd.SilenceUsage = true
+		}
+		return err
 	},
 }
 
@@ -48,7 +63,12 @@ var profileCmd = &cobra.Command{
 	Short: "Show user profile",
 	Long:  `Display the current user's profile information.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return auth.Profile()
+		err := auth.Profile()
+		// Check if it's an AuthError and suppress usage help
+		if _, ok := err.(auth.AuthError); ok {
+			cmd.SilenceUsage = true
+		}
+		return err
 	},
 }
 
@@ -58,7 +78,12 @@ var passwordCmd = &cobra.Command{
 	Short: "Change user password",
 	Long:  `Change the current user's password by providing old and new passwords.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return auth.ChangePassword(args)
+		err := auth.ChangePassword(args)
+		// Check if it's an AuthError and suppress usage help
+		if _, ok := err.(auth.AuthError); ok {
+			cmd.SilenceUsage = true
+		}
+		return err
 	},
 }
 
@@ -68,7 +93,12 @@ var sessionsCmd = &cobra.Command{
 	Short: "List all active sessions",
 	Long:  `Display all active sessions for the current user.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return auth.ListSessions()
+		err := auth.ListSessions()
+		// Check if it's an AuthError and suppress usage help
+		if _, ok := err.(auth.AuthError); ok {
+			cmd.SilenceUsage = true
+		}
+		return err
 	},
 }
 
@@ -79,7 +109,12 @@ var logoutSessionCmd = &cobra.Command{
 	Long:  `Logout a specific session by providing the session ID.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return auth.LogoutSession(args[0])
+		err := auth.LogoutSession(args[0])
+		// Check if it's an AuthError and suppress usage help
+		if _, ok := err.(auth.AuthError); ok {
+			cmd.SilenceUsage = true
+		}
+		return err
 	},
 }
 
@@ -90,7 +125,12 @@ var logoutAllCmd = &cobra.Command{
 	Long:  `Logout all sessions for the current user.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		excludeCurrent, _ := cmd.Flags().GetBool("keep-current")
-		return auth.LogoutAllSessions(excludeCurrent)
+		err := auth.LogoutAllSessions(excludeCurrent)
+		// Check if it's an AuthError and suppress usage help
+		if _, ok := err.(auth.AuthError); ok {
+			cmd.SilenceUsage = true
+		}
+		return err
 	},
 }
 
@@ -101,7 +141,12 @@ var updateSessionCmd = &cobra.Command{
 	Long:  `Update the name of a specific session by providing session ID and new name.`,
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return auth.UpdateSessionName(args[0], args[1])
+		err := auth.UpdateSessionName(args[0], args[1])
+		// Check if it's an AuthError and suppress usage help
+		if _, ok := err.(auth.AuthError); ok {
+			cmd.SilenceUsage = true
+		}
+		return err
 	},
 }
 
@@ -113,7 +158,12 @@ var selectWorkspaceCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if args[0] == "workspace" {
-			return auth.SelectWorkspace(args[1])
+			err := auth.SelectWorkspace(args[1])
+			// Check if it's an AuthError and suppress usage help
+			if _, ok := err.(auth.AuthError); ok {
+				cmd.SilenceUsage = true
+			}
+			return err
 		}
 		return nil
 	},
@@ -125,7 +175,12 @@ var changePasswordCmd = &cobra.Command{
 	Short: "Change user password",
 	Long:  `Change the current user's password by providing old and new passwords.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return auth.ChangePassword(args)
+		err := auth.ChangePassword(args)
+		// Check if it's an AuthError and suppress usage help
+		if _, ok := err.(auth.AuthError); ok {
+			cmd.SilenceUsage = true
+		}
+		return err
 	},
 }
 

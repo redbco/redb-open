@@ -61,6 +61,9 @@ func (s *Server) setupRoutes() {
 	// Health check endpoint
 	s.router.HandleFunc("/health", s.handleHealth).Methods(http.MethodGet)
 
+	// Initial setup endpoint (no authentication required)
+	s.router.HandleFunc("/api/v1/setup", s.handleInitialSetup).Methods(http.MethodPost)
+
 	// API v1 routes
 	apiV1 := s.router.PathPrefix("/api/v1").Subrouter()
 
@@ -85,6 +88,46 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleInitialSetup(w http.ResponseWriter, r *http.Request) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+
+	// Parse request body
+	var req struct {
+		TenantName        string `json:"tenant_name"`
+		TenantURL         string `json:"tenant_url"`
+		TenantDescription string `json:"tenant_description"`
+		UserEmail         string `json:"user_email"`
+		UserPassword      string `json:"user_password"`
+		WorkspaceName     string `json:"workspace_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.TenantName == "" || req.TenantURL == "" || req.UserEmail == "" || req.UserPassword == "" || req.WorkspaceName == "" {
+		http.Error(w, "Missing required fields: tenant_name, tenant_url, user_email, user_password, workspace_name", http.StatusBadRequest)
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Call the engine to perform initial setup
+	response, err := s.engine.PerformInitialSetup(ctx, req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Send response
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 

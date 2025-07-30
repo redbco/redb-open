@@ -16,13 +16,22 @@ type HTTPClient struct {
 }
 
 type APIError struct {
-	Status  int    `json:"status"`
-	Message string `json:"message"`
-	Code    string `json:"code"`
+	Status   int    `json:"status"`
+	Message  string `json:"message"`
+	Code     string `json:"code"`
+	ErrorMsg string `json:"error"`
 }
 
 func (e APIError) Error() string {
-	return fmt.Sprintf("API Error (%d): %s", e.Status, e.Message)
+	// Prioritize the most descriptive error message
+	message := e.Message
+	if message == "" {
+		message = e.ErrorMsg
+	}
+	if message == "" {
+		message = fmt.Sprintf("HTTP %d error", e.Status)
+	}
+	return message
 }
 
 // NewClient creates a new HTTP client with configuration

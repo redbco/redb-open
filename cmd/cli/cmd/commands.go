@@ -8,6 +8,9 @@ import (
 
 // setupCommands initializes all commands and their relationships
 func setupCommands() {
+	// Add setup command (for initial installation)
+	rootCmd.AddCommand(setupCmd)
+
 	// Add auth commands
 	rootCmd.AddCommand(authCmd)
 
