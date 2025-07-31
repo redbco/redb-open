@@ -283,6 +283,58 @@ func (s *Service) GetNode(ctx context.Context, meshID, nodeID string) (*Node, er
 	return &node, nil
 }
 
+// CreateNode creates a new node in the mesh
+func (s *Service) CreateNode(ctx context.Context, meshID, nodeName, nodeDescription, platform, version, ipAddress string, port int32, regionID *string) (*Node, error) {
+	s.logger.Infof("Creating node in database with name: %s for mesh: %s", nodeName, meshID)
+
+	// Check if node with the same name already exists
+	var exists bool
+	err := s.db.Pool().QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM nodes WHERE node_name = $1)", nodeName).Scan(&exists)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check node existence: %w", err)
+	}
+	if exists {
+		return nil, errors.New("node with this name already exists")
+	}
+
+	// Insert the node into the database
+	query := `
+		INSERT INTO nodes (node_name, node_description, node_platform, node_version, region_id, ip_address, port)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING node_id, node_name, node_description, node_platform, node_version, region_id, ip_address, port, status, created, updated
+	`
+
+	var node Node
+	err = s.db.Pool().QueryRow(ctx, query, nodeName, nodeDescription, platform, version, regionID, ipAddress, port).Scan(
+		&node.ID,
+		&node.Name,
+		&node.Description,
+		&node.Platform,
+		&node.Version,
+		&node.RegionID,
+		&node.IPAddress,
+		&node.Port,
+		&node.Status,
+		&node.Created,
+		&node.Updated,
+	)
+	if err != nil {
+		s.logger.Errorf("Failed to create node: %v", err)
+		return nil, err
+	}
+
+	// Get region name if region_id is provided
+	if regionID != nil && *regionID != "" {
+		var regionName string
+		err := s.db.Pool().QueryRow(ctx, "SELECT region_name FROM regions WHERE region_id = $1", *regionID).Scan(&regionName)
+		if err == nil {
+			node.RegionName = regionName
+		}
+	}
+
+	return &node, nil
+}
+
 // Helper function to get node count for a mesh
 func (s *Service) getNodeCount(ctx context.Context, meshID string) (int32, error) {
 	query := "SELECT COUNT(*) FROM nodes WHERE mesh_id = $1"

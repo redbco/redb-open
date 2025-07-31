@@ -8,6 +8,7 @@ import (
 
 	anchorv1 "github.com/redbco/redb-open/api/proto/anchor/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
+	meshv1 "github.com/redbco/redb-open/api/proto/mesh/v1"
 	unifiedmodelv1 "github.com/redbco/redb-open/api/proto/unifiedmodel/v1"
 	"github.com/redbco/redb-open/pkg/config"
 	"github.com/redbco/redb-open/pkg/database"
@@ -24,6 +25,7 @@ type Engine struct {
 	logger       *logger.Logger
 	umClient     unifiedmodelv1.UnifiedModelServiceClient
 	anchorClient anchorv1.AnchorServiceClient
+	meshClient   meshv1.ManagementServiceClient
 	state        struct {
 		sync.Mutex
 		isRunning         bool
@@ -151,6 +153,19 @@ func (e *Engine) Start(ctx context.Context) error {
 
 	e.anchorClient = anchorv1.NewAnchorServiceClient(anchorConn)
 
+	// Initialize mesh client
+	meshAddr := e.config.Get("services.mesh.grpc_address")
+	if meshAddr == "" {
+		meshAddr = "localhost:50054" // default mesh service port
+	}
+
+	meshConn, err := grpc.Dial(meshAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return fmt.Errorf("failed to connect to mesh service: %w", err)
+	}
+
+	e.meshClient = meshv1.NewManagementServiceClient(meshConn)
+
 	return nil
 }
 
@@ -242,4 +257,8 @@ func (e *Engine) GetUnifiedModelClient() unifiedmodelv1.UnifiedModelServiceClien
 
 func (e *Engine) GetAnchorClient() anchorv1.AnchorServiceClient {
 	return e.anchorClient
+}
+
+func (e *Engine) GetMeshClient() meshv1.ManagementServiceClient {
+	return e.meshClient
 }

@@ -45,13 +45,6 @@ func (s *meshService) SendMessage(ctx context.Context, req *meshv1.SendMessageRe
 	}, nil
 }
 
-// ReceiveMessage implements the ReceiveMessage RPC
-func (s *meshService) ReceiveMessage(req *meshv1.ReceiveMessageRequest, stream meshv1.MeshService_ReceiveMessageServer) error {
-	// TODO: Implement message receiving through the mesh node
-	// For now, just return an error
-	return status.Error(codes.Unimplemented, "not implemented")
-}
-
 // GetNodeStatus implements the GetNodeStatus RPC
 func (s *meshService) GetNodeStatus(ctx context.Context, req *meshv1.GetNodeStatusRequest) (*meshv1.GetNodeStatusResponse, error) {
 	conns := s.node.GetConnections()

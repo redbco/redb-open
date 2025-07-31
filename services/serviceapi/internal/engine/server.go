@@ -13,6 +13,7 @@ type Server struct {
 	engine        *Engine
 	router        *mux.Router
 	tenantHandler *TenantHandlers
+	meshHandler   *MeshHandlers
 }
 
 func NewServer(engine *Engine) *Server {
@@ -20,6 +21,7 @@ func NewServer(engine *Engine) *Server {
 		engine:        engine,
 		router:        mux.NewRouter(),
 		tenantHandler: NewTenantHandlers(engine),
+		meshHandler:   NewMeshHandlers(engine),
 	}
 	s.setupRoutes()
 	s.setupMiddleware()
@@ -74,6 +76,13 @@ func (s *Server) setupRoutes() {
 	tenants.HandleFunc("/{tenant_id}", s.tenantHandler.ShowTenant).Methods(http.MethodGet)
 	tenants.HandleFunc("/{tenant_id}", s.tenantHandler.ModifyTenant).Methods(http.MethodPut)
 	tenants.HandleFunc("/{tenant_id}", s.tenantHandler.DeleteTenant).Methods(http.MethodDelete)
+
+	// Mesh endpoints
+	mesh := apiV1.PathPrefix("/mesh").Subrouter()
+	mesh.HandleFunc("/seed", s.meshHandler.SeedMesh).Methods(http.MethodPost)
+	mesh.HandleFunc("/join", s.meshHandler.JoinMesh).Methods(http.MethodPost)
+	mesh.HandleFunc("/{mesh_id}", s.meshHandler.ShowMesh).Methods(http.MethodGet)
+	mesh.HandleFunc("/{mesh_id}/nodes", s.meshHandler.ListNodes).Methods(http.MethodGet)
 
 	// Legacy query endpoint (keep for backwards compatibility)
 	s.router.HandleFunc("/query", s.handleQuery).Methods(http.MethodPost)

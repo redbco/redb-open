@@ -9,9 +9,6 @@ service MeshService {
   // SendMessage sends a message to another node in the mesh
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
   
-  // ReceiveMessage establishes a stream to receive messages
-  rpc ReceiveMessage(ReceiveMessageRequest) returns (stream Message);
-  
   // GetNodeStatus returns the current status of the node
   rpc GetNodeStatus(GetNodeStatusRequest) returns (GetNodeStatusResponse);
 }
@@ -51,9 +48,11 @@ service ConsensusService {
 
 // SendMessageRequest represents a request to send a message
 message SendMessageRequest {
-  string to_node_id = 1;
-  bytes content = 2;
-  map<string, string> metadata = 3;
+  string from_node_id = 1;
+  string to_node_id = 2;
+  string message_type = 3;
+  bytes content = 4;
+  map<string, string> metadata = 5;
 }
 
 // SendMessageResponse represents the response to a send message request
@@ -61,21 +60,6 @@ message SendMessageResponse {
   string message_id = 1;
   bool success = 2;
   string error = 3;
-}
-
-// ReceiveMessageRequest represents a request to receive messages
-message ReceiveMessageRequest {
-  repeated string filters = 1;
-}
-
-// Message represents a message in the mesh network
-message Message {
-  string id = 1;
-  string from_node_id = 2;
-  string to_node_id = 3;
-  bytes content = 4;
-  map<string, string> metadata = 5;
-  int64 timestamp = 6;
 }
 
 // GetNodeStatusRequest represents a request for node status

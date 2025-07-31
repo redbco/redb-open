@@ -2,33 +2,71 @@ package messages
 
 import (
 	"encoding/json"
+	"time"
 )
 
-// Message represents a mesh network message
+// MessageVersion defines the protocol version
+const (
+	MessageVersionV1 = "1.0"
+)
+
+// MessagePriority defines message priority levels
+type MessagePriority uint8
+
+const (
+	PriorityLow    MessagePriority = 1
+	PriorityNormal MessagePriority = 2
+	PriorityHigh   MessagePriority = 3
+	PriorityUrgent MessagePriority = 4
+)
+
+// MessageHeader contains common message metadata
+type MessageHeader struct {
+	Version   string          `json:"version"`   // Protocol version
+	ID        string          `json:"id"`        // Unique message ID
+	Type      string          `json:"type"`      // Message type
+	From      string          `json:"from"`      // Sender node ID
+	To        string          `json:"to"`        // Target node ID (empty for broadcast)
+	Priority  MessagePriority `json:"priority"`  // Message priority
+	Timestamp int64           `json:"timestamp"` // Unix timestamp in nanoseconds
+	TTL       uint32          `json:"ttl"`       // Time to live in seconds
+	Sequence  uint64          `json:"sequence"`  // Message sequence number
+}
+
+// Message represents a mesh network message with unified framing
 type Message struct {
-	Type    string          `json:"type"`
-	From    string          `json:"from"`
-	To      string          `json:"to"`
-	Content json.RawMessage `json:"content"`
+	Header  MessageHeader   `json:"header"`
+	Payload json.RawMessage `json:"payload"`
 }
 
-// UnmarshalContent unmarshals the message content into the provided value
-func (m *Message) UnmarshalContent(v interface{}) error {
-	return json.Unmarshal(m.Content, v)
+// UnmarshalPayload unmarshals the message payload into the provided value
+func (m *Message) UnmarshalPayload(v interface{}) error {
+	return json.Unmarshal(m.Payload, v)
 }
 
-// ConsensusMessage represents a consensus-related message
-type ConsensusMessage struct {
-	Type    string          `json:"type"`
+// IsExpired checks if the message has exceeded its TTL
+func (m *Message) IsExpired() bool {
+	if m.Header.TTL == 0 {
+		return false // No expiration
+	}
+	return time.Now().Unix() > time.Unix(0, m.Header.Timestamp).Unix()+int64(m.Header.TTL)
+}
+
+// Age returns the age of the message in seconds
+func (m *Message) Age() float64 {
+	return time.Since(time.Unix(0, m.Header.Timestamp)).Seconds()
+}
+
+// ConsensusPayload represents the payload for consensus-related messages
+type ConsensusPayload struct {
+	SubType string          `json:"sub_type"` // request_vote, append_entries, heartbeat, config_change
 	Term    uint64          `json:"term"`
-	From    string          `json:"from"`
-	To      string          `json:"to"`
-	Content json.RawMessage `json:"content"`
+	Data    json.RawMessage `json:"data"`
 }
 
-// UnmarshalContent unmarshals the message content into the provided value
-func (m *ConsensusMessage) UnmarshalContent(v interface{}) error {
-	return json.Unmarshal(m.Content, v)
+// UnmarshalData unmarshals the consensus data into the provided value
+func (c *ConsensusPayload) UnmarshalData(v interface{}) error {
+	return json.Unmarshal(c.Data, v)
 }
 
 // RequestVoteMessage represents a vote request message
@@ -64,17 +102,15 @@ type ConfigChangeMessage struct {
 	Address string `json:"address,omitempty"`
 }
 
-// ManagementMessage represents a management-related message
-type ManagementMessage struct {
-	Type    string          `json:"type"`
-	From    string          `json:"from"`
-	To      string          `json:"to"`
-	Content json.RawMessage `json:"content"`
+// ManagementPayload represents the payload for management-related messages
+type ManagementPayload struct {
+	SubType string          `json:"sub_type"` // node_discovery, connection_management, topology_update, health_status
+	Data    json.RawMessage `json:"data"`
 }
 
-// UnmarshalContent unmarshals the message content into the provided value
-func (m *ManagementMessage) UnmarshalContent(v interface{}) error {
-	return json.Unmarshal(m.Content, v)
+// UnmarshalData unmarshals the management data into the provided value
+func (m *ManagementPayload) UnmarshalData(v interface{}) error {
+	return json.Unmarshal(m.Data, v)
 }
 
 // NodeDiscoveryMessage represents a node discovery message
@@ -95,9 +131,20 @@ type ConnectionManagementMessage struct {
 	Status  string `json:"status,omitempty"`
 }
 
+// RoutingPayload represents the payload for routing-related messages
+type RoutingPayload struct {
+	SubType string          `json:"sub_type"` // route_update, route_request, route_response
+	Data    json.RawMessage `json:"data"`
+}
+
+// UnmarshalData unmarshals the routing data into the provided value
+func (r *RoutingPayload) UnmarshalData(v interface{}) error {
+	return json.Unmarshal(r.Data, v)
+}
+
 // TopologyUpdateMessage represents a network topology update message
 type TopologyUpdateMessage struct {
-	Type      string            `json:"type"` // "add", "remove", "update"
+	Action    string            `json:"action"` // "add", "remove", "update"
 	NodeID    string            `json:"node_id"`
 	Address   string            `json:"address"`
 	Neighbors []string          `json:"neighbors"`

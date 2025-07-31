@@ -23,6 +23,9 @@ func setupCommands() {
 	// Add tenants commands
 	rootCmd.AddCommand(tenantsCmd)
 
+	// Add mesh commands
+	rootCmd.AddCommand(meshCmd)
+
 	// Add users commands
 	rootCmd.AddCommand(usersCmd)
 

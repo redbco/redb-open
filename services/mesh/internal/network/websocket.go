@@ -11,36 +11,40 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/redbco/redb-open/pkg/logger"
+	"github.com/redbco/redb-open/services/mesh/internal/messages"
 )
-
-// Message represents a message sent over WebSocket
-type Message struct {
-	Type    string          `json:"type"`
-	From    string          `json:"from"`
-	To      string          `json:"to"`
-	Content json.RawMessage `json:"content"`
-}
 
 // MessageHandler handles incoming WebSocket messages
 type MessageHandler interface {
-	HandleMessage(msg *Message) error
+	HandleMessage(msg *messages.Message) error
 }
 
 // Config holds the WebSocket server configuration
 type Config struct {
-	Address      string
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-	TLSConfig    *tls.Config
+	Address          string
+	ReadTimeout      time.Duration
+	WriteTimeout     time.Duration
+	TLSConfig        *tls.Config
+	MaxMessageSize   int64
+	PingInterval     time.Duration
+	PongTimeout      time.Duration
+	CompressionLevel int
 }
 
 // Connection represents a WebSocket connection to a peer
 type Connection struct {
-	ID        string
-	conn      *websocket.Conn
-	writeMu   sync.Mutex
-	logger    *logger.Logger
-	closeChan chan struct{}
+	ID         string
+	PeerID     string
+	Address    string
+	conn       *websocket.Conn
+	isOutbound bool
+	lastPing   time.Time
+	lastSeen   time.Time
+	status     string
+	mu         sync.RWMutex
+	writeChan  chan []byte
+	stopChan   chan struct{}
+	logger     *logger.Logger
 }
 
 // Server represents the WebSocket server
@@ -104,10 +108,16 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	connection := &Connection{
-		ID:        peerID,
-		conn:      conn,
-		logger:    s.logger,
-		closeChan: make(chan struct{}),
+		ID:         fmt.Sprintf("in-%s-%d", peerID, time.Now().UnixNano()),
+		PeerID:     peerID,
+		Address:    r.RemoteAddr,
+		conn:       conn,
+		isOutbound: false,
+		lastSeen:   time.Now(),
+		status:     "connected",
+		writeChan:  make(chan []byte, 100),
+		stopChan:   make(chan struct{}),
+		logger:     s.logger,
 	}
 
 	s.mu.Lock()
@@ -124,38 +134,53 @@ func (s *Server) handleConnection(conn *Connection) {
 	defer func() {
 		conn.conn.Close()
 		s.mu.Lock()
-		delete(s.connections, conn.ID)
+		delete(s.connections, conn.PeerID)
 		s.mu.Unlock()
-		close(conn.closeChan)
+		close(conn.stopChan)
 	}()
 
+	// Start write pump
+	go s.writePump(conn)
+
 	for {
-		_, message, err := conn.conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				s.logger.Errorf("Unexpected close error (peer_id: %s): %v", conn.ID, err)
-			}
+		select {
+		case <-conn.stopChan:
 			return
-		}
+		default:
+			_, messageData, err := conn.conn.ReadMessage()
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					s.logger.Errorf("Unexpected close error (peer_id: %s): %v", conn.PeerID, err)
+				}
+				return
+			}
 
-		var msg Message
-		if err := json.Unmarshal(message, &msg); err != nil {
-			s.logger.Errorf("Failed to unmarshal message (peer_id: %s): %v", conn.ID, err)
-			continue
-		}
+			var msg messages.Message
+			if err := json.Unmarshal(messageData, &msg); err != nil {
+				s.logger.Errorf("Failed to unmarshal message (peer_id: %s): %v", conn.PeerID, err)
+				continue
+			}
 
-		// Set the sender ID
-		msg.From = conn.ID
+			// Set the sender ID if not already set
+			if msg.Header.From == "" {
+				msg.Header.From = conn.PeerID
+			}
 
-		// Handle the message
-		if err := s.handler.HandleMessage(&msg); err != nil {
-			s.logger.Errorf("Failed to handle message (peer_id: %s): %v", conn.ID, err)
+			// Update last seen
+			conn.mu.Lock()
+			conn.lastSeen = time.Now()
+			conn.mu.Unlock()
+
+			// Handle the message
+			if err := s.handler.HandleMessage(&msg); err != nil {
+				s.logger.Errorf("Failed to handle message (peer_id: %s): %v", conn.PeerID, err)
+			}
 		}
 	}
 }
 
 // SendMessage sends a message to a specific peer
-func (s *Server) SendMessage(peerID string, msg *Message) error {
+func (s *Server) SendMessage(peerID string, msg *messages.Message) error {
 	s.mu.RLock()
 	conn, exists := s.connections[peerID]
 	s.mu.RUnlock()
@@ -169,14 +194,16 @@ func (s *Server) SendMessage(peerID string, msg *Message) error {
 		return fmt.Errorf("failed to marshal message: %v", err)
 	}
 
-	conn.writeMu.Lock()
-	defer conn.writeMu.Unlock()
-
-	return conn.conn.WriteMessage(websocket.TextMessage, data)
+	select {
+	case conn.writeChan <- data:
+		return nil
+	default:
+		return fmt.Errorf("write channel full for peer %s", peerID)
+	}
 }
 
 // BroadcastMessage sends a message to all connected peers
-func (s *Server) BroadcastMessage(msg *Message) error {
+func (s *Server) BroadcastMessage(msg *messages.Message) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -215,14 +242,114 @@ func (s *Server) GetConnections() map[string]*Connection {
 	return conns
 }
 
+// writePump handles writing messages to a WebSocket connection
+func (s *Server) writePump(conn *Connection) {
+	ticker := time.NewTicker(s.config.PingInterval)
+	defer func() {
+		ticker.Stop()
+		conn.conn.Close()
+	}()
+
+	for {
+		select {
+		case <-conn.stopChan:
+			return
+		case data := <-conn.writeChan:
+			conn.conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+			if err := conn.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+				s.logger.Errorf("Failed to write message to %s: %v", conn.PeerID, err)
+				return
+			}
+		case <-ticker.C:
+			conn.conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+			if err := conn.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				s.logger.Errorf("Failed to send ping to %s: %v", conn.PeerID, err)
+				return
+			}
+			conn.mu.Lock()
+			conn.lastPing = time.Now()
+			conn.mu.Unlock()
+		}
+	}
+}
+
+// ConnectToPeer establishes an outbound WebSocket connection to a peer
+func (s *Server) ConnectToPeer(peerID, address string) error {
+	s.mu.RLock()
+	if _, exists := s.connections[peerID]; exists {
+		s.mu.RUnlock()
+		return fmt.Errorf("connection to peer %s already exists", peerID)
+	}
+	s.mu.RUnlock()
+
+	// Create WebSocket URL
+	scheme := "ws"
+	if s.config.TLSConfig != nil {
+		scheme = "wss"
+	}
+	url := fmt.Sprintf("%s://%s/ws", scheme, address)
+
+	// Create dialer with TLS config
+	dialer := websocket.Dialer{
+		TLSClientConfig:  s.config.TLSConfig,
+		HandshakeTimeout: 45 * time.Second,
+	}
+
+	// Set headers
+	headers := http.Header{}
+	headers.Set("X-Peer-ID", peerID)
+
+	// Connect to peer
+	conn, _, err := dialer.Dial(url, headers)
+	if err != nil {
+		return fmt.Errorf("failed to connect to peer %s at %s: %v", peerID, address, err)
+	}
+
+	// Create connection wrapper
+	connection := &Connection{
+		ID:         fmt.Sprintf("out-%s-%d", peerID, time.Now().UnixNano()),
+		PeerID:     peerID,
+		Address:    address,
+		conn:       conn,
+		isOutbound: true,
+		lastSeen:   time.Now(),
+		status:     "connected",
+		writeChan:  make(chan []byte, 100),
+		stopChan:   make(chan struct{}),
+		logger:     s.logger,
+	}
+
+	// Configure connection
+	if s.config.MaxMessageSize > 0 {
+		conn.SetReadLimit(s.config.MaxMessageSize)
+	}
+	conn.SetPongHandler(func(appData string) error {
+		connection.mu.Lock()
+		connection.lastSeen = time.Now()
+		connection.mu.Unlock()
+		return nil
+	})
+
+	// Add to connections map
+	s.mu.Lock()
+	s.connections[peerID] = connection
+	s.mu.Unlock()
+
+	// Start connection handlers
+	go s.handleConnection(connection)
+
+	s.logger.Infof("Connected to peer %s at %s", peerID, address)
+	return nil
+}
+
 // Shutdown gracefully shuts down the WebSocket server
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for _, conn := range s.connections {
+		close(conn.stopChan)
 		conn.conn.Close()
-		<-conn.closeChan
 	}
 
 	return nil

@@ -2,13 +2,12 @@ package mesh
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/redbco/redb-open/pkg/logger"
-	"github.com/redbco/redb-open/services/mesh/internal/mesh/message"
+	"github.com/redbco/redb-open/services/mesh/internal/messages"
 	"github.com/redbco/redb-open/services/mesh/internal/mesh/router"
 	"github.com/redbco/redb-open/services/mesh/internal/storage"
 )
@@ -47,6 +46,7 @@ type Node struct {
 	connections map[string]*Connection
 	router      *router.Router
 	consensus   *Consensus
+	framer      *messages.MessageFramer
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -112,6 +112,9 @@ func NewNode(cfg Config, store storage.Interface, logger *logger.Logger) (*Node,
 		logger.Warnf("No storage available, consensus disabled for node %s", cfg.NodeID)
 	}
 
+	// Create message framer for the new protocol
+	framer := messages.NewMessageFramer(cfg.NodeID)
+
 	return &Node{
 		config:      cfg,
 		store:       store,
@@ -120,6 +123,7 @@ func NewNode(cfg Config, store storage.Interface, logger *logger.Logger) (*Node,
 		connections: make(map[string]*Connection),
 		router:      router,
 		consensus:   consensus,
+		framer:      framer,
 		ctx:         ctx,
 		cancel:      cancel,
 	}, nil
@@ -164,7 +168,18 @@ func (n *Node) messageLoop() {
 		case <-n.ctx.Done():
 			return
 		case msg := <-n.network.MessageChannel():
-			n.handleMessage(msg)
+			// Convert old message format to new format temporarily
+			// TODO: Update Network layer to use new message protocol
+			newMsg := &messages.Message{
+				Header: messages.MessageHeader{
+					Version:   messages.MessageVersionV1,
+					Type:      string(msg.Type),
+					From:      msg.From,
+					To:        msg.To,
+					Timestamp: msg.Timestamp.UnixNano(),
+				},
+			}
+			n.handleMessage(newMsg)
 		}
 	}
 }
@@ -179,65 +194,70 @@ func (n *Node) heartbeatLoop() {
 		case <-n.ctx.Done():
 			return
 		case <-ticker.C:
-			msg := message.Message{
-				Type:    message.HeartbeatMsg,
-				Payload: nil,
+			// Create heartbeat message using the new protocol
+			_, err := n.framer.CreateHeartbeatMessage("")
+			if err != nil {
+				n.logger.Error("Failed to create heartbeat message: %v", err)
+				continue
 			}
-			if err := n.network.Broadcast(string(msg.Type), msg.Payload); err != nil {
+			
+			// Convert to old format temporarily until Network layer is updated
+			if err := n.network.Broadcast("heartbeat", nil); err != nil {
 				n.logger.Error("Failed to broadcast heartbeat: %v", err)
 			}
 		}
 	}
 }
 
-// handleMessage processes a received message
-func (n *Node) handleMessage(msg message.Message) {
-	switch msg.Type {
-	case message.HeartbeatMsg:
+// handleMessage processes a received message using the new unified protocol
+func (n *Node) handleMessage(msg *messages.Message) {
+	// Validate the message
+	if err := messages.ValidateMessage(msg); err != nil {
+		n.logger.Error("Invalid message received: %v", err)
+		return
+	}
+
+	switch msg.Header.Type {
+	case "heartbeat":
 		n.handleHeartbeat(msg)
-	case message.ConsensusMsg:
+	case "consensus":
 		// TODO: Implement consensus message handling once the consensus protocol is fully implemented
 		n.logger.Debug("Received consensus message - handling not yet implemented")
-	case message.RouteUpdateMsg:
-		var update router.RouteUpdate
-		if err := json.Unmarshal(msg.Payload.([]byte), &update); err != nil {
-			n.logger.Error("Failed to parse route update: %v", err)
-			return
-		}
-
-		if err := n.router.HandleRouteUpdate(update); err != nil {
-			n.logger.Error("Failed to handle route update: %v", err)
-		}
-	case message.DataMsg:
+	case "routing":
+		n.handleRoutingMessage(msg)
+	case "data":
 		n.handleData(msg)
+	case "management":
+		n.handleManagementMessage(msg)
 	default:
-		n.logger.Warn("Unknown message type: %s", string(msg.Type))
+		n.logger.Warn("Unknown message type: %s", msg.Header.Type)
 	}
 }
 
 // handleHeartbeat processes a heartbeat message
-func (n *Node) handleHeartbeat(msg message.Message) {
+func (n *Node) handleHeartbeat(msg *messages.Message) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	// Update connection status
-	if conn, exists := n.connections[msg.From]; exists {
+	if conn, exists := n.connections[msg.Header.From]; exists {
 		conn.LastSeen = time.Now()
 		conn.Status = "connected"
 	}
 }
 
 // handleData processes a data message
-func (n *Node) handleData(msg message.Message) {
+func (n *Node) handleData(msg *messages.Message) {
 	// Forward message if not intended for this node
-	if msg.To != n.config.NodeID {
-		nextHop, err := n.router.GetNextHop(msg.To)
+	if msg.Header.To != "" && msg.Header.To != n.config.NodeID {
+		nextHop, err := n.router.GetNextHop(msg.Header.To)
 		if err != nil {
 			n.logger.Error("Failed to get next hop: %v", err)
 			return
 		}
 
-		if err := n.network.SendMessage(nextHop, string(message.DataMsg), msg.Payload); err != nil {
+		// Use old network interface temporarily
+		if err := n.network.SendMessage(nextHop, "data", msg.Payload); err != nil {
 			n.logger.Error("Failed to forward message: %v", err)
 		}
 		return
@@ -245,6 +265,61 @@ func (n *Node) handleData(msg message.Message) {
 
 	// Process message locally
 	// TODO: Implement message processing
+}
+
+// handleRoutingMessage processes routing messages
+func (n *Node) handleRoutingMessage(msg *messages.Message) {
+	var routingPayload messages.RoutingPayload
+	if err := msg.UnmarshalPayload(&routingPayload); err != nil {
+		n.logger.Error("Failed to unmarshal routing message: %v", err)
+		return
+	}
+
+	n.logger.Debugf("Processing routing message: (sub_type: %s, from: %s)",
+		routingPayload.SubType, msg.Header.From)
+
+	switch routingPayload.SubType {
+	case "route_update":
+		// Handle route updates
+		// TODO: Implement route update handling
+	case "route_request":
+		// Handle route requests
+		// TODO: Implement route request handling
+	case "route_response":
+		// Handle route responses
+		// TODO: Implement route response handling
+	default:
+		n.logger.Warn("Unknown routing sub-type: %s", routingPayload.SubType)
+	}
+}
+
+// handleManagementMessage processes management messages
+func (n *Node) handleManagementMessage(msg *messages.Message) {
+	var managementPayload messages.ManagementPayload
+	if err := msg.UnmarshalPayload(&managementPayload); err != nil {
+		n.logger.Error("Failed to unmarshal management message: %v", err)
+		return
+	}
+
+	n.logger.Debugf("Processing management message: (sub_type: %s, from: %s)",
+		managementPayload.SubType, msg.Header.From)
+
+	switch managementPayload.SubType {
+	case "node_discovery":
+		// Handle node discovery
+		// TODO: Implement node discovery handling
+	case "connection_management":
+		// Handle connection management
+		// TODO: Implement connection management handling
+	case "topology_update":
+		// Handle topology updates
+		// TODO: Implement topology update handling
+	case "health_status":
+		// Handle health status updates
+		// TODO: Implement health status handling
+	default:
+		n.logger.Warn("Unknown management sub-type: %s", managementPayload.SubType)
+	}
 }
 
 // GetID returns the node's ID

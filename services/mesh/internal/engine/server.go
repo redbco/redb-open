@@ -3,9 +3,12 @@ package engine
 import (
 	"context"
 	"fmt"
+	"time"
 
 	meshv1 "github.com/redbco/redb-open/api/proto/mesh/v1"
 	"github.com/redbco/redb-open/services/mesh/internal/consensus"
+	"github.com/redbco/redb-open/services/mesh/internal/mesh"
+	"github.com/redbco/redb-open/services/mesh/internal/security"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -50,14 +53,6 @@ func (s *Server) SendMessage(ctx context.Context, req *meshv1.SendMessageRequest
 	}, nil
 }
 
-func (s *Server) ReceiveMessage(req *meshv1.ReceiveMessageRequest, stream meshv1.MeshService_ReceiveMessageServer) error {
-	defer s.trackOperation()()
-
-	// TODO: Implement message receiving through the mesh node
-	// For now, just return an error
-	return status.Error(codes.Unimplemented, "not implemented")
-}
-
 func (s *Server) GetNodeStatus(ctx context.Context, req *meshv1.GetNodeStatusRequest) (*meshv1.GetNodeStatusResponse, error) {
 	defer s.trackOperation()()
 
@@ -93,11 +88,126 @@ func (s *Server) SeedMesh(ctx context.Context, req *meshv1.SeedMeshRequest) (*me
 		return nil, status.Error(codes.InvalidArgument, "node_id is required")
 	}
 
-	// TODO: Implement mesh seeding logic
-	// For now, return a success response with a placeholder token
+	logger := s.engine.GetLogger()
+	storage := s.engine.GetStorage()
+
+	if storage == nil {
+		return &meshv1.SeedMeshResponse{
+			Success: false,
+			Error:   "storage not available",
+		}, nil
+	}
+
+	logger.Infof("Seeding mesh runtime for mesh %s with node %s", req.MeshId, req.NodeId)
+
+	// Check if mesh already exists in persistent tables
+	existingMesh, err := storage.GetMeshInfo(ctx)
+	if err == nil && existingMesh != nil {
+		return &meshv1.SeedMeshResponse{
+			Success: false,
+			Error:   "mesh already exists on this node",
+		}, nil
+	}
+
+	// Verify the mesh and node exist in persistent tables (should be created by core service)
+	meshInfo, err := storage.GetMeshInfo(ctx)
+	if err != nil || meshInfo == nil {
+		return &meshv1.SeedMeshResponse{
+			Success: false,
+			Error:   "mesh not found in persistent storage - must be created via core service first",
+		}, nil
+	}
+
+	nodeInfo, err := storage.GetNodeInfo(ctx, req.NodeId)
+	if err != nil || nodeInfo == nil {
+		return &meshv1.SeedMeshResponse{
+			Success: false,
+			Error:   "node not found in persistent storage - must be created via core service first",
+		}, nil
+	}
+
+	// Create credential manager
+	credManager := security.NewCredentialManager(storage, logger)
+
+	// Generate mesh credentials
+	_, err = credManager.GenerateMeshCredentials(req.MeshId, req.NodeId)
+	if err != nil {
+		logger.Errorf("Failed to generate mesh credentials: %v", err)
+		return &meshv1.SeedMeshResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to generate credentials: %v", err),
+		}, nil
+	}
+
+	// Store runtime metadata only (not administrative data)
+	runtimeMeta := map[string]interface{}{
+		"initialization_time": time.Now(),
+		"seed_node":          true,
+		"runtime_state":      "initializing",
+	}
+
+	if err := storage.SaveConfig(ctx, "mesh_runtime_metadata", runtimeMeta); err != nil {
+		logger.Errorf("Failed to store runtime metadata: %v", err)
+		return &meshv1.SeedMeshResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to store runtime metadata: %v", err),
+		}, nil
+	}
+
+	// Store local identity for this node
+	localIdentity := map[string]interface{}{
+		"identity_id": req.NodeId,
+	}
+
+	if err := storage.SaveConfig(ctx, "local_identity", localIdentity); err != nil {
+		logger.Errorf("Failed to store local identity: %v", err)
+		return &meshv1.SeedMeshResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to store local identity: %v", err),
+		}, nil
+	}
+
+	// Generate mesh token for other nodes to join (simplified implementation)
+	token := fmt.Sprintf("mesh-token-%s-%d", req.MeshId, time.Now().Unix())
+
+	// Initialize mesh node with credentials
+	meshConfig := mesh.Config{
+		NodeID:        req.NodeId,
+		MeshID:        req.MeshId,
+		ListenAddress: ":8443", // Default WebSocket port
+		Heartbeat:     30 * time.Second,
+		Timeout:       60 * time.Second,
+	}
+
+	meshNode, err := mesh.NewNode(meshConfig, storage, logger)
+	if err != nil {
+		logger.Errorf("Failed to create mesh node: %v", err)
+		return &meshv1.SeedMeshResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create mesh node: %v", err),
+		}, nil
+	}
+
+	// Start the mesh node
+	if err := meshNode.Start(); err != nil {
+		logger.Errorf("Failed to start mesh node: %v", err)
+		return &meshv1.SeedMeshResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to start mesh node: %v", err),
+		}, nil
+	}
+
+	// Update engine state
+	s.engine.meshNode = meshNode
+	s.engine.state.Lock()
+	s.engine.state.initState = StateFullyConfigured
+	s.engine.state.Unlock()
+
+	logger.Infof("Successfully seeded mesh runtime for %s with node %s", req.MeshId, req.NodeId)
+
 	return &meshv1.SeedMeshResponse{
 		Success: true,
-		Token:   "seed-token-001", // TODO: Generate proper token
+		Token:   token,
 	}, nil
 }
 
@@ -116,8 +226,148 @@ func (s *Server) JoinMesh(ctx context.Context, req *meshv1.JoinMeshRequest) (*me
 		return nil, status.Error(codes.InvalidArgument, "token is required")
 	}
 
-	// TODO: Implement mesh joining logic
-	// For now, return a success response
+	if len(req.PeerAddresses) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "at least one peer address is required")
+	}
+
+	logger := s.engine.GetLogger()
+	storage := s.engine.GetStorage()
+
+	if storage == nil {
+		return &meshv1.JoinMeshResponse{
+			Success: false,
+			Error:   "storage not available",
+		}, nil
+	}
+
+	logger.Infof("Joining mesh runtime for mesh %s with node %s", req.MeshId, req.NodeId)
+
+	// Check if already part of a mesh
+	existingMesh, err := storage.GetMeshInfo(ctx)
+	if err == nil && existingMesh != nil {
+		return &meshv1.JoinMeshResponse{
+			Success: false,
+			Error:   "node is already part of a mesh",
+		}, nil
+	}
+
+	// Verify the mesh and node exist in persistent tables (should be created by core service)
+	meshInfo, err := storage.GetMeshInfo(ctx)
+	if err != nil || meshInfo == nil {
+		return &meshv1.JoinMeshResponse{
+			Success: false,
+			Error:   "mesh not found in persistent storage - must be created via core service first",
+		}, nil
+	}
+
+	nodeInfo, err := storage.GetNodeInfo(ctx, req.NodeId)
+	if err != nil || nodeInfo == nil {
+		return &meshv1.JoinMeshResponse{
+			Success: false,
+			Error:   "node not found in persistent storage - must be created via core service first",
+		}, nil
+	}
+
+	// Create credential manager
+	credManager := security.NewCredentialManager(storage, logger)
+
+	// Validate mesh token (simplified implementation)
+	expectedTokenPrefix := fmt.Sprintf("mesh-token-%s", req.MeshId)
+	if len(req.Token) < len(expectedTokenPrefix) || req.Token[:len(expectedTokenPrefix)] != expectedTokenPrefix {
+		logger.Errorf("Invalid mesh token: %s", req.Token)
+		return &meshv1.JoinMeshResponse{
+			Success: false,
+			Error:   "invalid mesh token",
+		}, nil
+	}
+
+	// Generate join credentials
+	_, err = credManager.GenerateJoinCredentials(req.MeshId, req.NodeId, req.Token)
+	if err != nil {
+		logger.Errorf("Failed to generate join credentials: %v", err)
+		return &meshv1.JoinMeshResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to generate credentials: %v", err),
+		}, nil
+	}
+
+	// Store runtime metadata only (not administrative data)
+	runtimeMeta := map[string]interface{}{
+		"initialization_time": time.Now(),
+		"seed_node":          false,
+		"runtime_state":      "joining",
+		"peer_addresses":     req.PeerAddresses,
+	}
+
+	if err := storage.SaveConfig(ctx, "mesh_runtime_metadata", runtimeMeta); err != nil {
+		logger.Errorf("Failed to store runtime metadata: %v", err)
+		return &meshv1.JoinMeshResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to store runtime metadata: %v", err),
+		}, nil
+	}
+
+	// Store local identity for this node
+	localIdentity := map[string]interface{}{
+		"identity_id": req.NodeId,
+	}
+
+	if err := storage.SaveConfig(ctx, "local_identity", localIdentity); err != nil {
+		logger.Errorf("Failed to store local identity: %v", err)
+		return &meshv1.JoinMeshResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to store local identity: %v", err),
+		}, nil
+	}
+
+	// Initialize mesh node with credentials
+	meshConfig := mesh.Config{
+		NodeID:        req.NodeId,
+		MeshID:        req.MeshId,
+		ListenAddress: ":8443", // Default WebSocket port
+		Heartbeat:     30 * time.Second,
+		Timeout:       60 * time.Second,
+	}
+
+	meshNode, err := mesh.NewNode(meshConfig, storage, logger)
+	if err != nil {
+		logger.Errorf("Failed to create mesh node: %v", err)
+		return &meshv1.JoinMeshResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create mesh node: %v", err),
+		}, nil
+	}
+
+	// Start the mesh node
+	if err := meshNode.Start(); err != nil {
+		logger.Errorf("Failed to start mesh node: %v", err)
+		return &meshv1.JoinMeshResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to start mesh node: %v", err),
+		}, nil
+	}
+
+	// Connect to peer nodes
+	for _, peerAddr := range req.PeerAddresses {
+		// Extract node ID from address (simplified - in production would be more robust)
+		peerID := fmt.Sprintf("peer-%s", peerAddr)
+
+		if err := meshNode.AddConnection(peerID); err != nil {
+			logger.Warnf("Failed to add connection to peer %s: %v", peerAddr, err)
+			// Continue with other peers
+		} else {
+			logger.Infof("Added connection to peer %s at %s", peerID, peerAddr)
+		}
+	}
+
+	// Update engine state
+	s.engine.meshNode = meshNode
+	s.engine.state.Lock()
+	s.engine.state.initState = StateFullyConfigured
+	s.engine.state.Unlock()
+
+	logger.Infof("Successfully joined mesh runtime for %s with node %s", req.MeshId, req.NodeId)
+
 	return &meshv1.JoinMeshResponse{
 		Success: true,
 	}, nil

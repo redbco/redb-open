@@ -20,68 +20,90 @@ func NewMessageValidator() *MessageValidator {
 
 // ValidateMessage validates a mesh network message
 func (v *MessageValidator) ValidateMessage(msg *Message) error {
-	// Check rate limiting
-	if !v.rateLimiter.Allow(msg.From) {
-		return fmt.Errorf("rate limit exceeded for node %s", msg.From)
+	// First validate the message structure
+	if err := ValidateMessage(msg); err != nil {
+		return fmt.Errorf("message structure validation failed: %w", err)
 	}
 
-	// Validate message fields
-	if msg.Type == "" {
-		return fmt.Errorf("message type is required")
-	}
-	if msg.From == "" {
-		return fmt.Errorf("message sender is required")
+	// Check rate limiting
+	if !v.rateLimiter.Allow(msg.Header.From) {
+		return fmt.Errorf("rate limit exceeded for node %s", msg.Header.From)
 	}
 
 	// Validate message type-specific fields
-	switch msg.Type {
+	switch msg.Header.Type {
 	case "routing":
 		return v.validateRoutingMessage(msg)
 	case "consensus":
 		return v.validateConsensusMessage(msg)
 	case "management":
 		return v.validateManagementMessage(msg)
+	case "heartbeat":
+		return v.validateHeartbeatMessage(msg)
+	case "data":
+		return v.validateDataMessage(msg)
 	default:
-		return fmt.Errorf("unknown message type: %s", msg.Type)
+		return fmt.Errorf("unknown message type: %s", msg.Header.Type)
 	}
 }
 
 // validateRoutingMessage validates routing messages
 func (v *MessageValidator) validateRoutingMessage(msg *Message) error {
-	// TODO: Implement routing message validation
-	return nil
+	var routingPayload RoutingPayload
+	if err := msg.UnmarshalPayload(&routingPayload); err != nil {
+		return fmt.Errorf("invalid routing message format: %w", err)
+	}
+
+	if routingPayload.SubType == "" {
+		return fmt.Errorf("routing sub-type is required")
+	}
+
+	switch routingPayload.SubType {
+	case "route_update":
+		return v.validateRouteUpdate(routingPayload)
+	case "route_request":
+		return v.validateRouteRequest(routingPayload)
+	case "route_response":
+		return v.validateRouteResponse(routingPayload)
+	default:
+		return fmt.Errorf("unknown routing sub-type: %s", routingPayload.SubType)
+	}
 }
 
 // validateConsensusMessage validates consensus messages
 func (v *MessageValidator) validateConsensusMessage(msg *Message) error {
-	var consensusMsg ConsensusMessage
-	if err := msg.UnmarshalContent(&consensusMsg); err != nil {
-		return fmt.Errorf("invalid consensus message format: %v", err)
+	var consensusPayload ConsensusPayload
+	if err := msg.UnmarshalPayload(&consensusPayload); err != nil {
+		return fmt.Errorf("invalid consensus message format: %w", err)
 	}
 
-	if consensusMsg.Term == 0 {
+	if consensusPayload.Term == 0 {
 		return fmt.Errorf("consensus term is required")
 	}
 
-	switch consensusMsg.Type {
+	if consensusPayload.SubType == "" {
+		return fmt.Errorf("consensus sub-type is required")
+	}
+
+	switch consensusPayload.SubType {
 	case "request_vote":
-		return v.validateRequestVote(consensusMsg)
+		return v.validateRequestVote(consensusPayload)
 	case "append_entries":
-		return v.validateAppendEntries(consensusMsg)
+		return v.validateAppendEntries(consensusPayload)
 	case "heartbeat":
-		return v.validateHeartbeat(consensusMsg)
+		return v.validateConsensusHeartbeat(consensusPayload)
 	case "config_change":
-		return v.validateConfigChange(consensusMsg)
+		return v.validateConfigChange(consensusPayload)
 	default:
-		return fmt.Errorf("unknown consensus message type: %s", consensusMsg.Type)
+		return fmt.Errorf("unknown consensus sub-type: %s", consensusPayload.SubType)
 	}
 }
 
 // validateRequestVote validates vote request messages
-func (v *MessageValidator) validateRequestVote(msg ConsensusMessage) error {
+func (v *MessageValidator) validateRequestVote(payload ConsensusPayload) error {
 	var voteReq RequestVoteMessage
-	if err := msg.UnmarshalContent(&voteReq); err != nil {
-		return fmt.Errorf("invalid vote request format: %v", err)
+	if err := payload.UnmarshalData(&voteReq); err != nil {
+		return fmt.Errorf("invalid vote request format: %w", err)
 	}
 
 	if voteReq.CandidateID == "" {
@@ -92,10 +114,10 @@ func (v *MessageValidator) validateRequestVote(msg ConsensusMessage) error {
 }
 
 // validateAppendEntries validates log replication messages
-func (v *MessageValidator) validateAppendEntries(msg ConsensusMessage) error {
+func (v *MessageValidator) validateAppendEntries(payload ConsensusPayload) error {
 	var appendReq AppendEntriesMessage
-	if err := msg.UnmarshalContent(&appendReq); err != nil {
-		return fmt.Errorf("invalid append entries format: %v", err)
+	if err := payload.UnmarshalData(&appendReq); err != nil {
+		return fmt.Errorf("invalid append entries format: %w", err)
 	}
 
 	if appendReq.LeaderID == "" {
@@ -105,11 +127,11 @@ func (v *MessageValidator) validateAppendEntries(msg ConsensusMessage) error {
 	return nil
 }
 
-// validateHeartbeat validates heartbeat messages
-func (v *MessageValidator) validateHeartbeat(msg ConsensusMessage) error {
+// validateConsensusHeartbeat validates consensus heartbeat messages
+func (v *MessageValidator) validateConsensusHeartbeat(payload ConsensusPayload) error {
 	var heartbeat AppendEntriesMessage
-	if err := msg.UnmarshalContent(&heartbeat); err != nil {
-		return fmt.Errorf("invalid heartbeat format: %v", err)
+	if err := payload.UnmarshalData(&heartbeat); err != nil {
+		return fmt.Errorf("invalid consensus heartbeat format: %w", err)
 	}
 
 	if heartbeat.LeaderID == "" {
@@ -120,10 +142,10 @@ func (v *MessageValidator) validateHeartbeat(msg ConsensusMessage) error {
 }
 
 // validateConfigChange validates configuration change messages
-func (v *MessageValidator) validateConfigChange(msg ConsensusMessage) error {
+func (v *MessageValidator) validateConfigChange(payload ConsensusPayload) error {
 	var configChange ConfigChangeMessage
-	if err := msg.UnmarshalContent(&configChange); err != nil {
-		return fmt.Errorf("invalid config change format: %v", err)
+	if err := payload.UnmarshalData(&configChange); err != nil {
+		return fmt.Errorf("invalid config change format: %w", err)
 	}
 
 	if configChange.Type == "" {
@@ -138,30 +160,34 @@ func (v *MessageValidator) validateConfigChange(msg ConsensusMessage) error {
 
 // validateManagementMessage validates management messages
 func (v *MessageValidator) validateManagementMessage(msg *Message) error {
-	var managementMsg ManagementMessage
-	if err := msg.UnmarshalContent(&managementMsg); err != nil {
-		return fmt.Errorf("invalid management message format: %v", err)
+	var managementPayload ManagementPayload
+	if err := msg.UnmarshalPayload(&managementPayload); err != nil {
+		return fmt.Errorf("invalid management message format: %w", err)
 	}
 
-	switch managementMsg.Type {
+	if managementPayload.SubType == "" {
+		return fmt.Errorf("management sub-type is required")
+	}
+
+	switch managementPayload.SubType {
 	case "node_discovery":
-		return v.validateNodeDiscovery(managementMsg)
+		return v.validateNodeDiscovery(managementPayload)
 	case "connection_management":
-		return v.validateConnectionManagement(managementMsg)
+		return v.validateConnectionManagement(managementPayload)
 	case "topology_update":
-		return v.validateTopologyUpdate(managementMsg)
+		return v.validateTopologyUpdate(managementPayload)
 	case "health_status":
-		return v.validateHealthStatus(managementMsg)
+		return v.validateHealthStatus(managementPayload)
 	default:
-		return fmt.Errorf("unknown management message type: %s", managementMsg.Type)
+		return fmt.Errorf("unknown management sub-type: %s", managementPayload.SubType)
 	}
 }
 
 // validateNodeDiscovery validates node discovery messages
-func (v *MessageValidator) validateNodeDiscovery(msg ManagementMessage) error {
+func (v *MessageValidator) validateNodeDiscovery(payload ManagementPayload) error {
 	var discoveryMsg NodeDiscoveryMessage
-	if err := msg.UnmarshalContent(&discoveryMsg); err != nil {
-		return fmt.Errorf("invalid node discovery format: %v", err)
+	if err := payload.UnmarshalData(&discoveryMsg); err != nil {
+		return fmt.Errorf("invalid node discovery format: %w", err)
 	}
 
 	if discoveryMsg.NodeID == "" {
@@ -175,44 +201,44 @@ func (v *MessageValidator) validateNodeDiscovery(msg ManagementMessage) error {
 }
 
 // validateConnectionManagement validates connection management messages
-func (v *MessageValidator) validateConnectionManagement(msg ManagementMessage) error {
+func (v *MessageValidator) validateConnectionManagement(payload ManagementPayload) error {
 	var connMsg ConnectionManagementMessage
-	if err := msg.UnmarshalContent(&connMsg); err != nil {
-		return fmt.Errorf("invalid connection management format: %v", err)
+	if err := payload.UnmarshalData(&connMsg); err != nil {
+		return fmt.Errorf("invalid connection management format: %w", err)
 	}
 
 	if connMsg.PeerID == "" {
 		return fmt.Errorf("peer ID is required")
 	}
-	if connMsg.Address == "" {
-		return fmt.Errorf("peer address is required")
+	if connMsg.Type != "status" && connMsg.Address == "" {
+		return fmt.Errorf("peer address is required for %s operations", connMsg.Type)
 	}
 
 	return nil
 }
 
 // validateTopologyUpdate validates network topology update messages
-func (v *MessageValidator) validateTopologyUpdate(msg ManagementMessage) error {
+func (v *MessageValidator) validateTopologyUpdate(payload ManagementPayload) error {
 	var topologyMsg TopologyUpdateMessage
-	if err := msg.UnmarshalContent(&topologyMsg); err != nil {
-		return fmt.Errorf("invalid topology update format: %v", err)
+	if err := payload.UnmarshalData(&topologyMsg); err != nil {
+		return fmt.Errorf("invalid topology update format: %w", err)
 	}
 
 	if topologyMsg.NodeID == "" {
 		return fmt.Errorf("node ID is required")
 	}
-	if topologyMsg.Address == "" {
-		return fmt.Errorf("node address is required")
+	if topologyMsg.Action != "remove" && topologyMsg.Address == "" {
+		return fmt.Errorf("node address is required for %s operations", topologyMsg.Action)
 	}
 
 	return nil
 }
 
 // validateHealthStatus validates health status update messages
-func (v *MessageValidator) validateHealthStatus(msg ManagementMessage) error {
+func (v *MessageValidator) validateHealthStatus(payload ManagementPayload) error {
 	var healthMsg HealthStatusMessage
-	if err := msg.UnmarshalContent(&healthMsg); err != nil {
-		return fmt.Errorf("invalid health status format: %v", err)
+	if err := payload.UnmarshalData(&healthMsg); err != nil {
+		return fmt.Errorf("invalid health status format: %w", err)
 	}
 
 	if healthMsg.NodeID == "" {
@@ -222,6 +248,40 @@ func (v *MessageValidator) validateHealthStatus(msg ManagementMessage) error {
 		return fmt.Errorf("health status is required")
 	}
 
+	return nil
+}
+
+// validateHeartbeatMessage validates heartbeat messages
+func (v *MessageValidator) validateHeartbeatMessage(msg *Message) error {
+	// Heartbeat messages typically have no payload or minimal payload
+	// Just validate that it's properly formed
+	return nil
+}
+
+// validateDataMessage validates data messages
+func (v *MessageValidator) validateDataMessage(msg *Message) error {
+	// Data messages should have a payload
+	if len(msg.Payload) == 0 {
+		return fmt.Errorf("data message payload cannot be empty")
+	}
+	return nil
+}
+
+// validateRouteUpdate validates route update messages
+func (v *MessageValidator) validateRouteUpdate(payload RoutingPayload) error {
+	// TODO: Implement route update validation based on routing protocol
+	return nil
+}
+
+// validateRouteRequest validates route request messages
+func (v *MessageValidator) validateRouteRequest(payload RoutingPayload) error {
+	// TODO: Implement route request validation based on routing protocol
+	return nil
+}
+
+// validateRouteResponse validates route response messages
+func (v *MessageValidator) validateRouteResponse(payload RoutingPayload) error {
+	// TODO: Implement route response validation based on routing protocol
 	return nil
 }
 
