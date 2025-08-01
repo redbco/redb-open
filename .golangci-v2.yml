@@ -1,0 +1,94 @@
+version: "2"
+run:
+  go: '1.23'
+  timeout: 5m
+linters:
+  enable:
+    - bodyclose
+    - gocyclo
+    - gosec
+    - nolintlint
+    - govet
+    - errcheck
+    - errname
+    - ineffassign
+    - unused
+    - staticcheck
+    - cyclop
+    - copyloopvar
+    - asasalint
+    - bidichk
+    - exhaustive
+    - gocognit
+    - gocritic
+    - iface
+    - lll
+    - whitespace
+    - zerologlint
+    - forcetypeassert
+    - makezero
+    - dogsled
+    - tparallel
+    - testifylint
+    - decorder
+    - fatcontext
+    - gosmopolitan
+    - revive
+    - unparam
+    - misspell
+  disable:
+    - err113
+  settings:
+    dupl:
+      threshold: 100
+    gocognit:
+      min-complexity: 20
+    gocyclo:
+      min-complexity: 15
+    cyclop:
+      max-complexity: 15
+    gocritic:
+      disabled-checks:
+        - exitAfterDefer
+    dogsled:
+      max-blank-identifiers: 2
+    govet:
+      enable:
+        - shadow
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintln
+        - fmt.Fprint
+        - fmt.Fprintf
+  exclusions:
+    generated: lax
+    rules:
+      - path: (.+)\.go$
+        text: error return value not checked
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - lll
+          - gocyclo
+          - dupl
+formatters:
+  enable:
+    - gofmt
+    - goimports
+    - golines
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/redbco/redb-open
+    golines:
+      max-len: 120
+  issues:
+    max-issues-per-linter: 0
+    max-same-issues: 0
