@@ -112,6 +112,14 @@ dev-tools:
 lint:
 	golangci-lint run ./...
 
+# Lint the code using golangci-lint v2
+.PHONY: lint-v2
+lint-v2:
+	@for d in ./cmd/* ./services/* ./pkg/* ; do \
+		echo "Linting $$d..."; \
+		golangci-lint run --config=.golangci-v2.yml $$d/... || exit 1; \
+	done
+
 # Build for multiple platforms
 .PHONY: build-all
 build-all: $(BUILD_DIR)
