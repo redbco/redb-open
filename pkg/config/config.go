@@ -37,11 +37,11 @@ func (c *Config) GetAll() map[string]string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	copy := make(map[string]string)
+	copied := make(map[string]string, len(c.values))
 	for k, v := range c.values {
-		copy[k] = v
+		copied[k] = v
 	}
-	return copy
+	return copied
 }
 
 // Update updates configuration values
