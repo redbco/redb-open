@@ -9,7 +9,8 @@ import (
 var reposCmd = &cobra.Command{
 	Use:   "repos",
 	Short: "Manage repositories",
-	Long:  `Commands for managing repositories including listing, showing details, adding, modifying, cloning, and deleting repositories.`,
+	Long: "Commands for managing repositories including listing, showing details, adding, modifying, cloning, " +
+		"and deleting repositories.",
 }
 
 // listReposCmd represents the list command
