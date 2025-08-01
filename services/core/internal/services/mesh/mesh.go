@@ -93,7 +93,7 @@ func (s *Service) Create(ctx context.Context, name, description string, allowJoi
 	}
 
 	// Get node count
-	mesh.NodeCount, _ = s.getNodeCount(ctx, mesh.ID)
+	mesh.NodeCount, _ = s.getNodeCount(ctx)
 
 	return &mesh, nil
 }
@@ -126,7 +126,7 @@ func (s *Service) Get(ctx context.Context, id string) (*Mesh, error) {
 	}
 
 	// Get node count
-	mesh.NodeCount, _ = s.getNodeCount(ctx, mesh.ID)
+	mesh.NodeCount, _ = s.getNodeCount(ctx)
 
 	return &mesh, nil
 }
@@ -175,7 +175,7 @@ func (s *Service) Update(ctx context.Context, id string, updates map[string]inte
 	}
 
 	// Get node count
-	mesh.NodeCount, _ = s.getNodeCount(ctx, mesh.ID)
+	mesh.NodeCount, _ = s.getNodeCount(ctx)
 
 	return &mesh, nil
 }
@@ -203,7 +203,7 @@ func (s *Service) GetNodes(ctx context.Context, meshID string) ([]*Node, error) 
 	s.logger.Infof("Listing nodes from database for mesh: %s", meshID)
 	query := `
 		SELECT n.node_id, n.node_name, n.node_description, n.node_platform, n.node_version, 
-		       COALESCE(n.region_id, ''), COALESCE(r.region_name, ''), n.ip_address, n.port, n.status, n.created, n.updated
+		       n.region_id, COALESCE(r.region_name, ''), n.ip_address, n.port, n.status, n.created, n.updated
 		FROM nodes n
 		LEFT JOIN regions r ON n.region_id = r.region_id
 		ORDER BY n.node_name
@@ -219,13 +219,14 @@ func (s *Service) GetNodes(ctx context.Context, meshID string) ([]*Node, error) 
 	var nodes []*Node
 	for rows.Next() {
 		var node Node
+		var regionIDScan *string
 		err := rows.Scan(
 			&node.ID,
 			&node.Name,
 			&node.Description,
 			&node.Platform,
 			&node.Version,
-			&node.RegionID,
+			&regionIDScan,
 			&node.RegionName,
 			&node.IPAddress,
 			&node.Port,
@@ -236,6 +237,14 @@ func (s *Service) GetNodes(ctx context.Context, meshID string) ([]*Node, error) 
 		if err != nil {
 			return nil, err
 		}
+
+		// Handle the region_id field properly
+		if regionIDScan != nil {
+			node.RegionID = *regionIDScan
+		} else {
+			node.RegionID = ""
+		}
+
 		nodes = append(nodes, &node)
 	}
 
@@ -251,20 +260,21 @@ func (s *Service) GetNode(ctx context.Context, meshID, nodeID string) (*Node, er
 	s.logger.Infof("Retrieving node from database with ID: %s in mesh: %s", nodeID, meshID)
 	query := `
 		SELECT n.node_id, n.node_name, n.node_description, n.node_platform, n.node_version, 
-		       COALESCE(n.region_id, ''), COALESCE(r.region_name, ''), n.ip_address, n.port, n.status, n.created, n.updated
+		       n.region_id, COALESCE(r.region_name, ''), n.ip_address, n.port, n.status, n.created, n.updated
 		FROM nodes n
 		LEFT JOIN regions r ON n.region_id = r.region_id
 		WHERE n.node_id = $1
 	`
 
 	var node Node
+	var regionIDScan *string
 	err := s.db.Pool().QueryRow(ctx, query, nodeID).Scan(
 		&node.ID,
 		&node.Name,
 		&node.Description,
 		&node.Platform,
 		&node.Version,
-		&node.RegionID,
+		&regionIDScan,
 		&node.RegionName,
 		&node.IPAddress,
 		&node.Port,
@@ -280,6 +290,68 @@ func (s *Service) GetNode(ctx context.Context, meshID, nodeID string) (*Node, er
 		return nil, err
 	}
 
+	// Handle the region_id field properly
+	if regionIDScan != nil {
+		node.RegionID = *regionIDScan
+	} else {
+		node.RegionID = ""
+	}
+
+	return &node, nil
+}
+
+// GetLocalNode retrieves the local node information from the database
+func (s *Service) GetLocalNode(ctx context.Context) (*Node, error) {
+	s.logger.Infof("Retrieving local node information from database")
+
+	query := `
+		SELECT n.node_id, n.node_name, n.node_description, n.node_platform, n.node_version, 
+		       n.region_id, n.ip_address, n.port, n.status, n.created, n.updated
+		FROM nodes n
+		JOIN localidentity li ON n.node_id = li.identity_id
+		LIMIT 1
+	`
+
+	var node Node
+	var regionIDScan *string
+	err := s.db.Pool().QueryRow(ctx, query).Scan(
+		&node.ID,
+		&node.Name,
+		&node.Description,
+		&node.Platform,
+		&node.Version,
+		&regionIDScan,
+		&node.IPAddress,
+		&node.Port,
+		&node.Status,
+		&node.Created,
+		&node.Updated,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, errors.New("local node not found - node may not be initialized")
+		}
+		s.logger.Errorf("Failed to get local node: %v", err)
+		return nil, fmt.Errorf("failed to get local node: %w", err)
+	}
+
+	// Handle the region_id field properly
+	if regionIDScan != nil {
+		node.RegionID = *regionIDScan
+	} else {
+		node.RegionID = ""
+	}
+
+	// Get region name if region_id is provided
+	if regionIDScan != nil && *regionIDScan != "" {
+		var regionName string
+		err := s.db.Pool().QueryRow(ctx, "SELECT region_name FROM regions WHERE region_id = $1", *regionIDScan).Scan(&regionName)
+		if err == nil {
+			node.RegionName = regionName
+		}
+	}
+
+	s.logger.Infof("Retrieved local node: %s (ID: %s)", node.Name, node.ID)
 	return &node, nil
 }
 
@@ -305,13 +377,14 @@ func (s *Service) CreateNode(ctx context.Context, meshID, nodeName, nodeDescript
 	`
 
 	var node Node
+	var regionIDScan *string
 	err = s.db.Pool().QueryRow(ctx, query, nodeName, nodeDescription, platform, version, regionID, ipAddress, port).Scan(
 		&node.ID,
 		&node.Name,
 		&node.Description,
 		&node.Platform,
 		&node.Version,
-		&node.RegionID,
+		&regionIDScan,
 		&node.IPAddress,
 		&node.Port,
 		&node.Status,
@@ -323,10 +396,17 @@ func (s *Service) CreateNode(ctx context.Context, meshID, nodeName, nodeDescript
 		return nil, err
 	}
 
+	// Handle the region_id field properly
+	if regionIDScan != nil {
+		node.RegionID = *regionIDScan
+	} else {
+		node.RegionID = ""
+	}
+
 	// Get region name if region_id is provided
-	if regionID != nil && *regionID != "" {
+	if regionIDScan != nil && *regionIDScan != "" {
 		var regionName string
-		err := s.db.Pool().QueryRow(ctx, "SELECT region_name FROM regions WHERE region_id = $1", *regionID).Scan(&regionName)
+		err := s.db.Pool().QueryRow(ctx, "SELECT region_name FROM regions WHERE region_id = $1", *regionIDScan).Scan(&regionName)
 		if err == nil {
 			node.RegionName = regionName
 		}
@@ -335,11 +415,69 @@ func (s *Service) CreateNode(ctx context.Context, meshID, nodeName, nodeDescript
 	return &node, nil
 }
 
+// UpdateMeshStatus updates the status of the mesh
+func (s *Service) UpdateMeshStatus(ctx context.Context, meshID, status string) error {
+	s.logger.Infof("Updating mesh status to: %s", status)
+
+	_, err := s.db.Pool().Exec(ctx, `
+		UPDATE mesh 
+		SET status = $1, updated = CURRENT_TIMESTAMP
+		WHERE mesh_id = $2
+	`, status, meshID)
+	if err != nil {
+		s.logger.Errorf("Failed to update mesh status: %v", err)
+		return fmt.Errorf("failed to update mesh status: %w", err)
+	}
+
+	s.logger.Infof("Successfully updated mesh status to: %s", status)
+	return nil
+}
+
+// UpdateNodeStatus updates the status of a specific node
+func (s *Service) UpdateNodeStatus(ctx context.Context, nodeID, status string) error {
+	s.logger.Infof("Updating node %s status to: %s", nodeID, status)
+
+	_, err := s.db.Pool().Exec(ctx, `
+		UPDATE nodes 
+		SET status = $1, updated = CURRENT_TIMESTAMP
+		WHERE node_id = $2
+	`, status, nodeID)
+	if err != nil {
+		s.logger.Errorf("Failed to update node status: %v", err)
+		return fmt.Errorf("failed to update node status: %w", err)
+	}
+
+	s.logger.Infof("Successfully updated node %s status to: %s", nodeID, status)
+	return nil
+}
+
+// UpdateAllNodesStatus updates the status of all nodes
+func (s *Service) UpdateAllNodesStatus(ctx context.Context, status string) error {
+	s.logger.Infof("Updating all nodes status to: %s", status)
+
+	_, err := s.db.Pool().Exec(ctx, `
+		UPDATE nodes 
+		SET status = $1, updated = CURRENT_TIMESTAMP
+	`, status)
+	if err != nil {
+		s.logger.Errorf("Failed to update all nodes status: %v", err)
+		return fmt.Errorf("failed to update all nodes status: %w", err)
+	}
+
+	s.logger.Infof("Successfully updated all nodes status to: %s", status)
+	return nil
+}
+
+// SetNodeAsJoining sets the local node status to JOINING when mesh is being seeded
+func (s *Service) SetNodeAsJoining(ctx context.Context, nodeID string) error {
+	return s.UpdateNodeStatus(ctx, nodeID, "STATUS_JOINING")
+}
+
 // Helper function to get node count for a mesh
-func (s *Service) getNodeCount(ctx context.Context, meshID string) (int32, error) {
-	query := "SELECT COUNT(*) FROM nodes WHERE mesh_id = $1"
+func (s *Service) getNodeCount(ctx context.Context) (int32, error) {
+	query := "SELECT COUNT(*) FROM nodes WHERE status = 'STATUS_ACTIVE'"
 	var count int32
-	err := s.db.Pool().QueryRow(ctx, query, meshID).Scan(&count)
+	err := s.db.Pool().QueryRow(ctx, query).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get node count: %w", err)
 	}

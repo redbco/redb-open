@@ -60,3 +60,63 @@ func (s *meshService) GetNodeStatus(ctx context.Context, req *meshv1.GetNodeStat
 		State:          meshv1.NodeState_NODE_STATE_RUNNING, // TODO: Implement proper state tracking
 	}, nil
 }
+
+// AddConnection implements the AddConnection RPC
+func (s *meshService) AddConnection(ctx context.Context, req *meshv1.AddConnectionRequest) (*meshv1.AddConnectionResponse, error) {
+	if req.PeerId == "" {
+		return nil, status.Error(codes.InvalidArgument, "peer_id is required")
+	}
+
+	if req.Address == "" {
+		return nil, status.Error(codes.InvalidArgument, "address is required")
+	}
+
+	err := s.node.AddConnection(req.PeerId)
+	if err != nil {
+		return &meshv1.AddConnectionResponse{
+			Success: false,
+			Error:   err.Error(),
+		}, nil
+	}
+
+	return &meshv1.AddConnectionResponse{
+		Success: true,
+	}, nil
+}
+
+// RemoveConnection implements the RemoveConnection RPC
+func (s *meshService) RemoveConnection(ctx context.Context, req *meshv1.RemoveConnectionRequest) (*meshv1.RemoveConnectionResponse, error) {
+	if req.PeerId == "" {
+		return nil, status.Error(codes.InvalidArgument, "peer_id is required")
+	}
+
+	err := s.node.RemoveConnection(req.PeerId)
+	if err != nil {
+		return &meshv1.RemoveConnectionResponse{
+			Success: false,
+			Error:   err.Error(),
+		}, nil
+	}
+
+	return &meshv1.RemoveConnectionResponse{
+		Success: true,
+	}, nil
+}
+
+// ListConnections implements the ListConnections RPC
+func (s *meshService) ListConnections(ctx context.Context, req *meshv1.ListConnectionsRequest) (*meshv1.ListConnectionsResponse, error) {
+	conns := s.node.GetConnections()
+	connections := make([]*meshv1.Connection, 0, len(conns))
+
+	for peerID, conn := range conns {
+		connections = append(connections, &meshv1.Connection{
+			PeerId:   peerID,
+			Status:   conn.Status,
+			LastSeen: 0, // TODO: Implement last seen tracking
+		})
+	}
+
+	return &meshv1.ListConnectionsResponse{
+		Connections: connections,
+	}, nil
+}

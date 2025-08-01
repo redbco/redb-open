@@ -93,7 +93,7 @@ func FromGlobalConfig(cfg *config.Config) PostgreSQLConfig {
 		Port:              5432,
 		Database:          "redb",
 		SSLMode:           "disable",
-		MaxConnections:    10,
+		MaxConnections:    40,
 		ConnectionTimeout: 5 * time.Second,
 	}
 }

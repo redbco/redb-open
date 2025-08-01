@@ -25,7 +25,7 @@ type Engine struct {
 	logger       *logger.Logger
 	umClient     unifiedmodelv1.UnifiedModelServiceClient
 	anchorClient anchorv1.AnchorServiceClient
-	meshClient   meshv1.ManagementServiceClient
+	meshClient   meshv1.MeshServiceClient
 	state        struct {
 		sync.Mutex
 		isRunning         bool
@@ -156,7 +156,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	// Initialize mesh client
 	meshAddr := e.config.Get("services.mesh.grpc_address")
 	if meshAddr == "" {
-		meshAddr = "localhost:50054" // default mesh service port
+		meshAddr = "localhost:50056" // default mesh service port
 	}
 
 	meshConn, err := grpc.Dial(meshAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -164,7 +164,7 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to mesh service: %w", err)
 	}
 
-	e.meshClient = meshv1.NewManagementServiceClient(meshConn)
+	e.meshClient = meshv1.NewMeshServiceClient(meshConn)
 
 	return nil
 }
@@ -259,6 +259,6 @@ func (e *Engine) GetAnchorClient() anchorv1.AnchorServiceClient {
 	return e.anchorClient
 }
 
-func (e *Engine) GetMeshClient() meshv1.ManagementServiceClient {
+func (e *Engine) GetMeshClient() meshv1.MeshServiceClient {
 	return e.meshClient
 }

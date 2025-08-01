@@ -60,14 +60,48 @@ func NewPostgresStorageWithGlobalConfig(ctx context.Context, globalConfig *confi
 	// Use FromGlobalConfig to get the standard database configuration
 	dbConfig := database.FromGlobalConfig(globalConfig)
 
+	logger.Infof("Creating PostgreSQL storage with config: host=%s, port=%d, database=%s",
+		dbConfig.Host, dbConfig.Port, dbConfig.Database)
+
 	// Create database instance using shared package
 	db, err := database.New(ctx, dbConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PostgreSQL instance: %w", err)
 	}
 
+	// Check if the pool is properly initialized
+	pool := db.Pool()
+	if pool == nil {
+		return nil, fmt.Errorf("database pool is nil after creation")
+	}
+
 	logger.Info("PostgreSQL storage initialized successfully: (host: %s, port: %d, database: %s)",
 		dbConfig.Host, dbConfig.Port, dbConfig.Database)
+
+	return &PostgresStorage{
+		db:     db,
+		logger: logger,
+		config: Config{Type: "postgres"},
+	}, nil
+}
+
+// NewPostgresStorageWithDatabase creates a new PostgreSQL storage instance using an existing database connection
+func NewPostgresStorageWithDatabase(db *database.PostgreSQL, logger *logger.Logger) (*PostgresStorage, error) {
+	if logger == nil {
+		return nil, fmt.Errorf("logger is required")
+	}
+
+	if db == nil {
+		return nil, fmt.Errorf("database connection is required")
+	}
+
+	// Check if the pool is properly initialized
+	pool := db.Pool()
+	if pool == nil {
+		return nil, fmt.Errorf("database pool is nil")
+	}
+
+	logger.Info("PostgreSQL storage initialized with existing database connection")
 
 	return &PostgresStorage{
 		db:     db,
@@ -474,12 +508,21 @@ func (s *PostgresStorage) SaveConfig(ctx context.Context, key string, value inte
 		return fmt.Errorf("key cannot be empty")
 	}
 
+	if s.db == nil {
+		return fmt.Errorf("database instance not available")
+	}
+
+	pool := s.db.Pool()
+	if pool == nil {
+		return fmt.Errorf("database pool not available")
+	}
+
 	valueBytes, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("failed to marshal value: %w", err)
 	}
 
-	_, err = s.db.Pool().Exec(ctx, `
+	_, err = pool.Exec(ctx, `
 		INSERT INTO mesh_runtime_config (key, value)
 		VALUES ($1, $2)
 		ON CONFLICT (key) DO UPDATE SET
@@ -498,6 +541,10 @@ func (s *PostgresStorage) SaveConfig(ctx context.Context, key string, value inte
 func (s *PostgresStorage) GetConfig(ctx context.Context, key string) (interface{}, error) {
 	if key == "" {
 		return nil, fmt.Errorf("key cannot be empty")
+	}
+
+	if s.db == nil || s.db.Pool() == nil {
+		return nil, fmt.Errorf("database connection not available")
 	}
 
 	var valueBytes []byte
@@ -581,6 +628,10 @@ func (s *PostgresStorage) Close() error {
 // Mesh initialization operations
 
 func (s *PostgresStorage) GetLocalIdentity(ctx context.Context) (*LocalIdentity, error) {
+	if s.db == nil || s.db.Pool() == nil {
+		return nil, fmt.Errorf("database connection not available")
+	}
+
 	var identity LocalIdentity
 	err := s.db.Pool().QueryRow(ctx, `
 		SELECT identity_id FROM localidentity LIMIT 1

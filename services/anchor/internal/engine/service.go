@@ -70,9 +70,29 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 func (s *Service) Stop(ctx context.Context, gracePeriod time.Duration) error {
-	if s.engine != nil {
-		return s.engine.Stop(ctx)
+	if s.logger != nil {
+		s.logger.Info("Received stop command")
 	}
+
+	if s.engine != nil {
+		if s.logger != nil {
+			s.logger.Info("Stopping anchor engine")
+		}
+		if err := s.engine.Stop(ctx); err != nil {
+			if s.logger != nil {
+				s.logger.Errorf("Failed to stop anchor engine: %v", err)
+			}
+			return err
+		}
+		if s.logger != nil {
+			s.logger.Info("Anchor engine stopped successfully")
+		}
+	}
+
+	if s.logger != nil {
+		s.logger.Info("Stop command completed")
+	}
+
 	return nil
 }
 

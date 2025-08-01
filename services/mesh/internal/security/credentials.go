@@ -1,6 +1,7 @@
 package security
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -41,7 +42,7 @@ func NewCredentialManager(storage storage.Interface, logger *logger.Logger) *Cre
 }
 
 // GenerateMeshCredentials generates new credentials for seeding a mesh
-func (cm *CredentialManager) GenerateMeshCredentials(meshID, nodeID string) (*MeshCredentials, error) {
+func (cm *CredentialManager) GenerateMeshCredentials(ctx context.Context, meshID, nodeID string) (*MeshCredentials, error) {
 	cm.logger.Infof("Generating mesh credentials for node %s in mesh %s", nodeID, meshID)
 
 	// Generate CA certificate for the mesh
@@ -82,7 +83,7 @@ func (cm *CredentialManager) GenerateMeshCredentials(meshID, nodeID string) (*Me
 	}
 
 	// Store credentials
-	if err := cm.storeCredentials(credentials); err != nil {
+	if err := cm.storeCredentials(ctx, credentials); err != nil {
 		return nil, fmt.Errorf("failed to store credentials: %v", err)
 	}
 
@@ -156,11 +157,11 @@ func (cm *CredentialManager) LoadMeshCredentials(meshID, nodeID string) (*MeshCr
 }
 
 // GenerateJoinCredentials generates credentials for a node joining an existing mesh
-func (cm *CredentialManager) GenerateJoinCredentials(meshID, nodeID, meshToken string) (*MeshCredentials, error) {
+func (cm *CredentialManager) GenerateJoinCredentials(ctx context.Context, meshID, nodeID, meshToken string) (*MeshCredentials, error) {
 	cm.logger.Infof("Generating join credentials for node %s in mesh %s", nodeID, meshID)
 
 	// Load CA certificate from mesh token (simplified - in production this would involve secure token exchange)
-	caData, err := cm.storage.GetConfig(nil, fmt.Sprintf("mesh.%s.ca_certificate", meshID))
+	caData, err := cm.storage.GetConfig(ctx, fmt.Sprintf("mesh.%s.ca_certificate", meshID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to load CA certificate: %v", err)
 	}
@@ -204,7 +205,7 @@ func (cm *CredentialManager) GenerateJoinCredentials(meshID, nodeID, meshToken s
 	}
 
 	// Store credentials
-	if err := cm.storeCredentials(credentials); err != nil {
+	if err := cm.storeCredentials(ctx, credentials); err != nil {
 		return nil, fmt.Errorf("failed to store credentials: %v", err)
 	}
 
@@ -275,12 +276,12 @@ func (cm *CredentialManager) generateNodeCertificate(nodeID, meshID string, caCe
 			PostalCode:    []string{""},
 			CommonName:    fmt.Sprintf("reDB Node %s", nodeID),
 		},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour), // 1 year
-		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		DNSNames:     []string{nodeID, fmt.Sprintf("%s.%s", nodeID, meshID)},
-		IPAddresses:  []net.IP{},
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(365 * 24 * time.Hour), // 1 year
+		KeyUsage:    x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		DNSNames:    []string{nodeID, fmt.Sprintf("%s.%s", nodeID, meshID)},
+		IPAddresses: []net.IP{},
 	}
 
 	// If no CA key provided, create self-signed certificate
@@ -307,22 +308,22 @@ func (cm *CredentialManager) generateNodeCertificate(nodeID, meshID string, caCe
 }
 
 // storeCredentials stores credentials in the storage backend
-func (cm *CredentialManager) storeCredentials(creds *MeshCredentials) error {
+func (cm *CredentialManager) storeCredentials(ctx context.Context, creds *MeshCredentials) error {
 	// Store certificate
 	certPEM := cm.encodeCertificate(creds.Certificate)
-	if err := cm.storage.SaveConfig(nil, fmt.Sprintf("mesh.%s.node.%s.certificate", creds.MeshID, creds.NodeID), certPEM); err != nil {
+	if err := cm.storage.SaveConfig(ctx, fmt.Sprintf("mesh.%s.node.%s.certificate", creds.MeshID, creds.NodeID), certPEM); err != nil {
 		return fmt.Errorf("failed to store certificate: %v", err)
 	}
 
 	// Store private key
 	keyPEM := cm.encodePrivateKey(creds.PrivateKey)
-	if err := cm.storage.SaveConfig(nil, fmt.Sprintf("mesh.%s.node.%s.private_key", creds.MeshID, creds.NodeID), keyPEM); err != nil {
+	if err := cm.storage.SaveConfig(ctx, fmt.Sprintf("mesh.%s.node.%s.private_key", creds.MeshID, creds.NodeID), keyPEM); err != nil {
 		return fmt.Errorf("failed to store private key: %v", err)
 	}
 
 	// Store CA certificate
 	caCertPEM := cm.encodeCertificate(creds.CACert)
-	if err := cm.storage.SaveConfig(nil, fmt.Sprintf("mesh.%s.ca_certificate", creds.MeshID), caCertPEM); err != nil {
+	if err := cm.storage.SaveConfig(ctx, fmt.Sprintf("mesh.%s.ca_certificate", creds.MeshID), caCertPEM); err != nil {
 		return fmt.Errorf("failed to store CA certificate: %v", err)
 	}
 

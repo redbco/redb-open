@@ -601,6 +601,10 @@ func (s *BaseService) shutdown(ctx context.Context) error {
 		s.Logger.Errorf("Service implementation shutdown error: %v", err)
 	}
 
+	// Give supervisor time to send stop commands to all services before unregistering
+	s.Logger.Info("Waiting before unregistering to allow supervisor to send stop commands...")
+	time.Sleep(1 * time.Second)
+
 	// Unregister from supervisor (only if not in standalone mode)
 	if !s.standalone && s.ServiceID != "" && s.supervisorConn != nil {
 		req := &supervisorv1.UnregisterServiceRequest{

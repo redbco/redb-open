@@ -7,6 +7,7 @@ import (
 
 	supervisorv1 "github.com/redbco/redb-open/api/proto/supervisor/v1"
 	"github.com/redbco/redb-open/pkg/config"
+	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/health"
 	"github.com/redbco/redb-open/pkg/logger"
 	"google.golang.org/grpc"
@@ -18,6 +19,7 @@ type Service struct {
 	grpcServer *grpc.Server // Store the gRPC server until engine is created
 	standalone bool
 	logger     *logger.Logger
+	db         *database.PostgreSQL
 }
 
 func NewService(standalone bool) *Service {
@@ -58,8 +60,19 @@ func (s *Service) Initialize(ctx context.Context, cfg *config.Config) error {
 		// Add other configuration keys that require service restart
 	})
 
+	// Initialize database connection (same as core service)
+	dbConfig := database.FromGlobalConfig(cfg)
+	db, err := database.New(ctx, dbConfig)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	s.db = db
+
 	// Initialize the Mesh engine
 	s.engine = NewEngine(cfg, s.standalone)
+
+	// Set database connection on the engine
+	s.engine.SetDatabase(s.db)
 
 	// Pass the logger to the engine if available
 	if s.logger != nil {
@@ -79,9 +92,40 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 func (s *Service) Stop(ctx context.Context, gracePeriod time.Duration) error {
-	if s.engine != nil {
-		return s.engine.Stop(ctx)
+	if s.logger != nil {
+		s.logger.Info("Received stop command")
 	}
+
+	if s.engine != nil {
+		if s.logger != nil {
+			s.logger.Info("Stopping mesh engine")
+		}
+		if err := s.engine.Stop(ctx); err != nil {
+			if s.logger != nil {
+				s.logger.Errorf("Failed to stop mesh engine: %v", err)
+			}
+			return err
+		}
+		if s.logger != nil {
+			s.logger.Info("Mesh engine stopped successfully")
+		}
+	}
+
+	// Close database connection (synchronous since operations are now synchronous)
+	if s.db != nil {
+		if s.logger != nil {
+			s.logger.Info("Closing database connection")
+		}
+		s.db.Close()
+		if s.logger != nil {
+			s.logger.Info("Database connection closed")
+		}
+	}
+
+	if s.logger != nil {
+		s.logger.Info("Stop command completed")
+	}
+
 	return nil
 }
 
@@ -115,6 +159,7 @@ func (s *Service) HealthChecks() map[string]health.CheckFunc {
 	return map[string]health.CheckFunc{
 		"grpc_server":      s.checkGRPCServer,
 		"engine":           s.checkEngine,
+		"database":         s.checkDatabase,
 		"storage":          s.checkStorage,
 		"mesh_node":        s.checkMeshNode,
 		"consensus_groups": s.checkConsensusGroups,
@@ -133,6 +178,20 @@ func (s *Service) checkEngine() error {
 		return fmt.Errorf("service not initialized")
 	}
 	return s.engine.CheckHealth()
+}
+
+func (s *Service) checkDatabase() error {
+	if s.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	// Test database connection
+	ctx := context.Background()
+	if err := s.db.Pool().Ping(ctx); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Service) checkStorage() error {

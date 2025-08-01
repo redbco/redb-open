@@ -242,8 +242,14 @@ func (e *Engine) Stop(ctx context.Context) error {
 			e.logger.Info("Stopping watchers...")
 		}
 		e.watcherCancel()
-		// Give watchers a moment to shutdown gracefully
-		time.Sleep(100 * time.Millisecond)
+		// Give watchers time to shutdown gracefully (increased from 100ms to 2 seconds)
+		if e.logger != nil {
+			e.logger.Info("Waiting for watchers to shutdown...")
+		}
+		time.Sleep(2 * time.Second)
+		if e.logger != nil {
+			e.logger.Info("Watchers shutdown completed")
+		}
 	}
 
 	// Update connection statuses before disconnecting (only in non-standalone mode)
@@ -253,40 +259,60 @@ func (e *Engine) Stop(ctx context.Context) error {
 		dbManager := globalState.GetDatabaseManager()
 
 		if configRepo != nil && dbManager != nil {
-			// Update all instance statuses to STATUS_DISCONNECTED
+			if e.logger != nil {
+				e.logger.Info("Updating database and instance statuses during shutdown...")
+			}
+
+			// Use a short timeout for shutdown operations
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			// Update all instance statuses to STATUS_DISCONNECTED (synchronous)
 			for _, instanceID := range dbManager.GetAllInstanceClientIDs() {
-				if err := configRepo.UpdateInstanceConnectionStatus(ctx, instanceID, false, "Service shutdown"); err != nil {
+				if err := configRepo.UpdateInstanceConnectionStatus(shutdownCtx, instanceID, false, "Service shutdown"); err != nil {
 					if e.logger != nil {
 						e.logger.Error("Failed to update instance %s status during shutdown: %v", instanceID, err)
 					}
+				} else if e.logger != nil {
+					e.logger.Infof("Successfully updated instance %s status to DISCONNECTED", instanceID)
 				}
 			}
 
-			// Update all database statuses to STATUS_DISCONNECTED
+			// Update all database statuses to STATUS_DISCONNECTED (synchronous)
 			for _, databaseID := range dbManager.GetAllDatabaseClientIDs() {
-				if err := configRepo.UpdateDatabaseConnectionStatus(ctx, databaseID, false, "Service shutdown"); err != nil {
+				if err := configRepo.UpdateDatabaseConnectionStatus(shutdownCtx, databaseID, false, "Service shutdown"); err != nil {
 					if e.logger != nil {
 						e.logger.Error("Failed to update database %s status during shutdown: %v", databaseID, err)
 					}
+				} else if e.logger != nil {
+					e.logger.Infof("Successfully updated database %s status to DISCONNECTED", databaseID)
 				}
 			}
-		}
 
-		// Disconnect all instances
-		for _, id := range dbManager.GetAllInstanceClientIDs() {
-			if err := dbManager.DisconnectInstance(id); err != nil {
-				if e.logger != nil {
-					e.logger.Error("Failed to disconnect instance %s during shutdown: %v", id, err)
+			// Disconnect all instances (synchronous)
+			for _, id := range dbManager.GetAllInstanceClientIDs() {
+				if err := dbManager.DisconnectInstance(id); err != nil {
+					if e.logger != nil {
+						e.logger.Error("Failed to disconnect instance %s during shutdown: %v", id, err)
+					}
+				} else if e.logger != nil {
+					e.logger.Infof("Successfully disconnected instance %s", id)
 				}
 			}
-		}
 
-		// Disconnect all databases
-		for _, id := range dbManager.GetAllDatabaseClientIDs() {
-			if err := dbManager.DisconnectDatabase(id); err != nil {
-				if e.logger != nil {
-					e.logger.Error("Failed to disconnect database %s during shutdown: %v", id, err)
+			// Disconnect all databases (synchronous)
+			for _, id := range dbManager.GetAllDatabaseClientIDs() {
+				if err := dbManager.DisconnectDatabase(id); err != nil {
+					if e.logger != nil {
+						e.logger.Error("Failed to disconnect database %s during shutdown: %v", id, err)
+					}
+				} else if e.logger != nil {
+					e.logger.Infof("Successfully disconnected database %s", id)
 				}
+			}
+
+			if e.logger != nil {
+				e.logger.Info("Database and instance disconnections completed")
 			}
 		}
 	}
@@ -298,8 +324,16 @@ func (e *Engine) Stop(ctx context.Context) error {
 	if e.umConn != nil {
 		e.umConn.Close()
 	}
+
+	// Close database connection (synchronous since operations are now synchronous)
 	if e.database != nil {
+		if e.logger != nil {
+			e.logger.Info("Closing database connection")
+		}
 		e.database.Close()
+		if e.logger != nil {
+			e.logger.Info("Database connection closed")
+		}
 	}
 
 	return nil

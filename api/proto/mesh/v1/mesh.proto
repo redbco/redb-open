@@ -6,30 +6,24 @@ option go_package = "github.com/redbco/redb-open/api/proto/mesh/v1;meshv1";
 
 // MeshService provides the core mesh networking functionality
 service MeshService {
+  // StartMesh starts the mesh runtime based on persistent configuration
+  rpc StartMesh(StartMeshRequest) returns (StartMeshResponse);
+    
+  // AddConnection adds a new connection to another node
+  rpc AddConnection(AddConnectionRequest) returns (AddConnectionResponse);
+  
+  // RemoveConnection removes a connection to another node
+  rpc RemoveConnection(RemoveConnectionRequest) returns (RemoveConnectionResponse);
+  
+  // ListConnections returns all current connections
+  rpc ListConnections(ListConnectionsRequest) returns (ListConnectionsResponse);
+
   // SendMessage sends a message to another node in the mesh
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
   
   // GetNodeStatus returns the current status of the node
   rpc GetNodeStatus(GetNodeStatusRequest) returns (GetNodeStatusResponse);
 }
-
-// ManagementService provides administrative functionality for the mesh network
-service ManagementService {
-    // SeedMesh initializes a new mesh network
-    rpc SeedMesh(SeedMeshRequest) returns (SeedMeshResponse);
-    
-    // JoinMesh allows a node to join an existing mesh network
-    rpc JoinMesh(JoinMeshRequest) returns (JoinMeshResponse);
-    
-    // AddConnection adds a new connection to another node
-    rpc AddConnection(AddConnectionRequest) returns (AddConnectionResponse);
-    
-    // RemoveConnection removes a connection to another node
-    rpc RemoveConnection(RemoveConnectionRequest) returns (RemoveConnectionResponse);
-    
-    // ListConnections returns all current connections
-    rpc ListConnections(ListConnectionsRequest) returns (ListConnectionsResponse);
-  }
 
   // ConsensusService provides consensus-related functionality
 service ConsensusService {
@@ -83,32 +77,23 @@ enum NodeState {
   NODE_STATE_STOPPED = 5;
 } 
 
-// SeedMeshRequest represents a request to initialize a new mesh network
-message SeedMeshRequest {
+// StartMeshRequest represents a request to start the mesh runtime
+message StartMeshRequest {
+  // Optional: specific mesh_id to start (if not provided, uses the mesh from persistent storage)
   string mesh_id = 1;
+  // Optional: specific node_id to start (if not provided, uses the local node from persistent storage)
   string node_id = 2;
+  // Optional: configuration overrides
   map<string, string> config = 3;
 }
   
-// SeedMeshResponse represents the response to a seed mesh request
-message SeedMeshResponse {
+// StartMeshResponse represents the response to a start mesh request
+message StartMeshResponse {
   bool success = 1;
   string error = 2;
-  string token = 3;
-}
-  
-// JoinMeshRequest represents a request to join a mesh network
-message JoinMeshRequest {
-  string mesh_id = 1;
-  string node_id = 2;
-  string token = 3;
-  repeated string peer_addresses = 4;
-}
-  
-// JoinMeshResponse represents the response to a join mesh request
-message JoinMeshResponse {
-  bool success = 1;
-  string error = 2;
+  string mesh_id = 3;
+  string node_id = 4;
+  string status = 5;
 }
   
 // AddConnectionRequest represents a request to add a connection

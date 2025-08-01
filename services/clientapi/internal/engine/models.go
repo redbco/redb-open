@@ -32,6 +32,9 @@ const (
 	StatusDebug         Status = "debug"
 	StatusTrace         Status = "trace"
 	StatusEmpty         Status = "empty"
+	StatusJoining       Status = "joining"
+	StatusLeaving       Status = "leaving"
+	StatusSeeding       Status = "seeding"
 )
 
 // ErrorResponse represents an error response

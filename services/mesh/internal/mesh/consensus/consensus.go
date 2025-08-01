@@ -95,8 +95,23 @@ func (c *Consensus) Start() {
 
 // Stop gracefully shuts down the consensus protocol
 func (c *Consensus) Stop() {
+	if c.logger != nil {
+		c.logger.Info("Stopping consensus...")
+	}
+
+	// Cancel context to signal shutdown to all goroutines
 	c.cancel()
 	close(c.stopChan)
+
+	// Reduced wait time for faster shutdown
+	if c.logger != nil {
+		c.logger.Info("Waiting for consensus goroutines to shutdown...")
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	if c.logger != nil {
+		c.logger.Info("Consensus stopped successfully")
+	}
 }
 
 // runElectionTimer manages the election timeout

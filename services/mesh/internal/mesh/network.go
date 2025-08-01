@@ -109,17 +109,28 @@ func (n *Network) Close() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
+	// Signal all goroutines to stop FIRST
+	close(n.stopChan)
+
+	// Close the listener to stop accepting new connections
+	if err := n.listener.Close(); err != nil {
+		n.logger.Error("Failed to close listener: %v", err)
+	}
+
+	// Close all existing connections
 	for _, conn := range n.connections {
 		if err := conn.Close(); err != nil {
 			n.logger.Error("Failed to close connection: (error: %v)", err)
 		}
 	}
 
-	if err := n.listener.Close(); err != nil {
-		return fmt.Errorf("failed to close listener: %v", err)
+	// Close the message channel to unblock messageLoop
+	close(n.msgChan)
+
+	if n.logger != nil {
+		n.logger.Info("Network layer closed successfully")
 	}
 
-	close(n.stopChan)
 	return nil
 }
 

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/redbco/redb-open/pkg/logger"
-	"github.com/redbco/redb-open/services/mesh/internal/messages"
 	"github.com/redbco/redb-open/services/mesh/internal/mesh/router"
+	"github.com/redbco/redb-open/services/mesh/internal/messages"
 	"github.com/redbco/redb-open/services/mesh/internal/storage"
 )
 
@@ -150,15 +150,49 @@ func (n *Node) Start() error {
 
 // Stop stops the mesh node
 func (n *Node) Stop() error {
+	if n.logger != nil {
+		n.logger.Info("Stopping mesh node...")
+	}
+
+	// Cancel context to signal shutdown to all goroutines
 	n.cancel()
+
+	// Reduced wait time for faster shutdown
+	if n.logger != nil {
+		n.logger.Info("Waiting for mesh node goroutines to shutdown...")
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// Stop router with reduced timeouts
+	if n.logger != nil {
+		n.logger.Info("Stopping router...")
+	}
 	n.router.Stop()
 
 	// Only stop consensus if it's available
 	if n.consensus != nil {
+		if n.logger != nil {
+			n.logger.Info("Stopping consensus...")
+		}
 		n.consensus.Stop()
 	}
 
-	return n.network.Close()
+	// Close network
+	if n.logger != nil {
+		n.logger.Info("Closing network...")
+	}
+	if err := n.network.Close(); err != nil {
+		if n.logger != nil {
+			n.logger.Errorf("Failed to close network: %v", err)
+		}
+		return err
+	}
+
+	if n.logger != nil {
+		n.logger.Info("Mesh node stopped successfully")
+	}
+
+	return nil
 }
 
 // messageLoop processes incoming messages
@@ -166,8 +200,18 @@ func (n *Node) messageLoop() {
 	for {
 		select {
 		case <-n.ctx.Done():
+			if n.logger != nil {
+				n.logger.Info("Message loop shutting down due to context cancellation")
+			}
 			return
-		case msg := <-n.network.MessageChannel():
+		case msg, ok := <-n.network.MessageChannel():
+			if !ok {
+				// Channel closed, exit gracefully
+				if n.logger != nil {
+					n.logger.Info("Message loop shutting down due to channel closure")
+				}
+				return
+			}
 			// Convert old message format to new format temporarily
 			// TODO: Update Network layer to use new message protocol
 			newMsg := &messages.Message{
@@ -200,7 +244,7 @@ func (n *Node) heartbeatLoop() {
 				n.logger.Error("Failed to create heartbeat message: %v", err)
 				continue
 			}
-			
+
 			// Convert to old format temporarily until Network layer is updated
 			if err := n.network.Broadcast("heartbeat", nil); err != nil {
 				n.logger.Error("Failed to broadcast heartbeat: %v", err)
