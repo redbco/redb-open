@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -204,7 +205,7 @@ func (m *ServiceManager) StopService(ctx context.Context, serviceID string, forc
 
 		if _, err := svc.Controller.Stop(stopCtx, req); err != nil {
 			// During shutdown, various connection errors are expected if services are already stopping
-			if stopCtx.Err() == context.DeadlineExceeded {
+			if errors.Is(stopCtx.Err(), context.DeadlineExceeded) {
 				m.logger.Infof("Stop command to %s timed out (service may already be shutting down)", svc.Name)
 			} else if strings.Contains(err.Error(), "connection is closing") ||
 				strings.Contains(err.Error(), "Canceled") {

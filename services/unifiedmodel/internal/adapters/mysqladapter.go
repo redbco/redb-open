@@ -3,6 +3,7 @@ package adapters
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -629,7 +630,7 @@ func (a *MySQLAdapter) discoverPartitionInfo(table *models.MySQLTable) error {
 		&partitionInfo.SubPartitionBy,
 		&partitionInfo.SubPartitions,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil // Table is not partitioned
 	}
 	if err != nil {

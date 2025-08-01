@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -116,7 +117,7 @@ func getReplicationChanges(db *sql.DB, tableName string, since time.Time) ([]MyS
 		LIMIT 1`
 
 	err := db.QueryRow(query, tableName).Scan(&timestampColumn)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("error checking for timestamp column: %w", err)
 	}
 

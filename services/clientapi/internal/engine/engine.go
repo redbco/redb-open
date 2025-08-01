@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -187,7 +188,7 @@ func (e *Engine) Start(ctx context.Context) error {
 
 	// Start HTTP server
 	go func() {
-		if err := e.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := e.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			if e.logger != nil {
 				e.logger.Errorf("HTTP server error: %v", err)
 			}

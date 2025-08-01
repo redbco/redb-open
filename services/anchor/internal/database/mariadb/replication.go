@@ -2,6 +2,7 @@ package mariadb
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -119,7 +120,7 @@ func getReplicationChanges(db *sql.DB, tableName string, since time.Time) ([]Mar
 		LIMIT 1`
 
 	err := db.QueryRow(query, tableName).Scan(&timestampColumn)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("error checking for timestamp column: %w", err)
 	}
 

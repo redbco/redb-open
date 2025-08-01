@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -46,7 +47,7 @@ func (w *ConfigWatcher) Start(ctx context.Context) {
 
 			if err := w.checkConnectionHealth(ctx); err != nil {
 				// Don't log context cancellation errors as they're expected during shutdown
-				if ctx.Err() == nil && err != context.Canceled && err != context.DeadlineExceeded {
+				if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 					w.logger.Error("Failed to check connection health: %v", err)
 				}
 			}

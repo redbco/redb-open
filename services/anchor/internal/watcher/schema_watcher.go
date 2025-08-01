@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -295,7 +296,7 @@ func (w *SchemaWatcher) Start(ctx context.Context) {
 
 			if err != nil {
 				// Don't log context cancellation errors as they're expected during shutdown
-				if ctx.Err() == nil && err != context.Canceled && err != context.DeadlineExceeded {
+				if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 					if w.logger != nil {
 						w.logger.Errorf("Failed to check schema changes: %v", err)
 					}
