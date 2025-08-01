@@ -4,6 +4,9 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/redbco/redb-open/pkg/service"
 	"github.com/redbco/redb-open/services/queryapi/internal/engine"
@@ -16,6 +19,9 @@ var (
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	flag.Parse()
 
 	// Create service implementation
@@ -31,8 +37,8 @@ func main() {
 	)
 
 	// Run the service
-	ctx := context.Background()
 	if err := svc.Run(ctx); err != nil {
+		stop()
 		log.Fatalf("Failed to run service: %v", err)
 	}
 }
