@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -69,7 +70,7 @@ func (w *ReplicationWatcher) Start(ctx context.Context) {
 			}
 
 			if err := w.periodicReplicationHealthCheck(ctx); err != nil {
-				if ctx.Err() == nil && err != context.Canceled && err != context.DeadlineExceeded {
+				if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 					w.logger.Error("Failed periodic replication health check: %v", err)
 				}
 			}

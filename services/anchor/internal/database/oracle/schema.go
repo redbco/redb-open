@@ -3,6 +3,7 @@ package oracle
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -602,7 +603,7 @@ func discoverTablesAndColumns(db *sql.DB) (map[string]*common.TableInfo, []strin
 			}
 
 			tableInfo.Partitions = partitions
-		} else if err != sql.ErrNoRows {
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, fmt.Errorf("error checking if table %s is partitioned: %v", tableName, err)
 		}
 	}

@@ -2,6 +2,7 @@ package mariadb
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -344,7 +345,7 @@ func getConstraints(db *sql.DB, schema, table string) ([]common.Constraint, erro
 
 			var deleteRule, updateRule string
 			err := db.QueryRow(actionsQuery, schema, c.Name).Scan(&deleteRule, &updateRule)
-			if err != nil && err != sql.ErrNoRows {
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return nil, err
 			}
 

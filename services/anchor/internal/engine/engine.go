@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -208,7 +209,7 @@ func (e *Engine) getNodeIDFromDatabase(ctx context.Context) (string, error) {
 	row := e.database.Pool().QueryRow(ctx, query)
 	err := row.Scan(&nodeID)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			// No node ID exists yet - this might be the first startup
 			if e.logger != nil {
 				e.logger.Warn("No node ID found in localidentity table - service may need initialization")

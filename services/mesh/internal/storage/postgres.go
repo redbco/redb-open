@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -112,7 +113,7 @@ func (s *PostgresStorage) GetMessage(ctx context.Context, id string) (*Message, 
 	`, id).Scan(&msg.ID, &msg.From, &msg.To, &msg.Content, &msg.Timestamp)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("message not found: %s", id)
 		}
 		s.logger.Errorf("Failed to get message (ID: %s): %v", id, err)
@@ -174,7 +175,7 @@ func (s *PostgresStorage) GetState(ctx context.Context, key string) ([]byte, err
 	`, key).Scan(&value)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("state not found: %s", key)
 		}
 		s.logger.Errorf("Failed to get state (key: %s): %v", key, err)
@@ -241,7 +242,7 @@ func (s *PostgresStorage) GetNodeState(ctx context.Context, nodeID string) (inte
 	`, nodeID).Scan(&stateBytes)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("node state not found: %s", nodeID)
 		}
 		s.logger.Errorf("Failed to get node state (node ID: %s): %v", nodeID, err)
@@ -302,7 +303,7 @@ func (s *PostgresStorage) GetLog(ctx context.Context, index uint64) (interface{}
 	`, index).Scan(&entryBytes)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("log entry not found: %d", index)
 		}
 		s.logger.Errorf("Failed to get log (index: %d): %v", index, err)
@@ -403,7 +404,7 @@ func (s *PostgresStorage) GetRoute(ctx context.Context, destination string) (int
 	`, destination).Scan(&routeBytes)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("route not found: %s", destination)
 		}
 		s.logger.Errorf("Failed to get route (destination: %s): %v", destination, err)
@@ -505,7 +506,7 @@ func (s *PostgresStorage) GetConfig(ctx context.Context, key string) (interface{
 	`, key).Scan(&valueBytes)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("config not found: %s", key)
 		}
 		s.logger.Errorf("Failed to get config (key: %s): %v", key, err)
@@ -586,7 +587,7 @@ func (s *PostgresStorage) GetLocalIdentity(ctx context.Context) (*LocalIdentity,
 	`).Scan(&identity.IdentityID)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // No local identity found - this is a valid state
 		}
 		s.logger.Errorf("Failed to get local identity: %v", err)
@@ -607,7 +608,7 @@ func (s *PostgresStorage) GetMeshInfo(ctx context.Context) (*MeshInfo, error) {
 		&mesh.Created, &mesh.Updated)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // No mesh found - this is a valid state
 		}
 		s.logger.Errorf("Failed to get mesh info: %v", err)
@@ -632,7 +633,7 @@ func (s *PostgresStorage) GetNodeInfo(ctx context.Context, nodeID string) (*Node
 		&node.IPAddress, &node.Port, &node.Status, &node.Created, &node.Updated)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // Node not found
 		}
 		s.logger.Errorf("Failed to get node info (node ID: %s): %v", nodeID, err)
@@ -717,7 +718,7 @@ func (tx *PostgresTransaction) GetMessage(ctx context.Context, id string) (*Mess
 	`, id).Scan(&msg.ID, &msg.From, &msg.To, &msg.Content, &msg.Timestamp)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("message not found: %s", id)
 		}
 		tx.logger.Errorf("Failed to get message in transaction (ID: %s): %v", id, err)
@@ -759,7 +760,7 @@ func (tx *PostgresTransaction) GetState(ctx context.Context, key string) ([]byte
 	`, key).Scan(&value)
 
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("state not found: %s", key)
 		}
 		tx.logger.Errorf("Failed to get state in transaction (key: %s): %v", key, err)

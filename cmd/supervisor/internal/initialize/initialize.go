@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -869,7 +870,7 @@ func (i *Initializer) createLocalNode(ctx context.Context, creds *DatabaseCreden
 		nodeInfo.NodeName = existingNodeName
 		i.logger.Infof("Local node already exists: '%s' with ID '%s'", existingNodeName, existingNodeID)
 		return nil
-	} else if err != pgx.ErrNoRows {
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("failed to check for existing local node: %w", err)
 	}
 
