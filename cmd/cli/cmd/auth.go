@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"github.com/redbco/redb-open/cmd/cli/internal/auth"
 	"github.com/spf13/cobra"
 )
@@ -20,7 +21,8 @@ var loginCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := auth.Login(args)
 		// Check if it's an AuthError and suppress usage help
-		if _, ok := err.(auth.AuthError); ok {
+		var authError auth.AuthError
+		if errors.As(err, &authError) {
 			cmd.SilenceUsage = true
 		}
 		return err
@@ -35,7 +37,8 @@ var logoutCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := auth.Logout()
 		// Check if it's an AuthError and suppress usage help
-		if _, ok := err.(auth.AuthError); ok {
+		var authError auth.AuthError
+		if errors.As(err, &authError) {
 			cmd.SilenceUsage = true
 		}
 		return err
@@ -50,7 +53,8 @@ var statusCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := auth.Status()
 		// Check if it's an AuthError and suppress usage help
-		if _, ok := err.(auth.AuthError); ok {
+		var authError auth.AuthError
+		if errors.As(err, &authError) {
 			cmd.SilenceUsage = true
 		}
 		return err
@@ -65,7 +69,8 @@ var profileCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := auth.Profile()
 		// Check if it's an AuthError and suppress usage help
-		if _, ok := err.(auth.AuthError); ok {
+		var authError auth.AuthError
+		if errors.As(err, &authError) {
 			cmd.SilenceUsage = true
 		}
 		return err
@@ -80,7 +85,8 @@ var passwordCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := auth.ChangePassword(args)
 		// Check if it's an AuthError and suppress usage help
-		if _, ok := err.(auth.AuthError); ok {
+		var authError auth.AuthError
+		if errors.As(err, &authError) {
 			cmd.SilenceUsage = true
 		}
 		return err
@@ -95,7 +101,8 @@ var sessionsCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := auth.ListSessions()
 		// Check if it's an AuthError and suppress usage help
-		if _, ok := err.(auth.AuthError); ok {
+		var authError auth.AuthError
+		if errors.As(err, &authError) {
 			cmd.SilenceUsage = true
 		}
 		return err
@@ -111,7 +118,8 @@ var logoutSessionCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := auth.LogoutSession(args[0])
 		// Check if it's an AuthError and suppress usage help
-		if _, ok := err.(auth.AuthError); ok {
+		var authError auth.AuthError
+		if errors.As(err, &authError) {
 			cmd.SilenceUsage = true
 		}
 		return err
@@ -127,7 +135,8 @@ var logoutAllCmd = &cobra.Command{
 		excludeCurrent, _ := cmd.Flags().GetBool("keep-current")
 		err := auth.LogoutAllSessions(excludeCurrent)
 		// Check if it's an AuthError and suppress usage help
-		if _, ok := err.(auth.AuthError); ok {
+		var authError auth.AuthError
+		if errors.As(err, &authError) {
 			cmd.SilenceUsage = true
 		}
 		return err
@@ -143,7 +152,8 @@ var updateSessionCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := auth.UpdateSessionName(args[0], args[1])
 		// Check if it's an AuthError and suppress usage help
-		if _, ok := err.(auth.AuthError); ok {
+		var authError auth.AuthError
+		if errors.As(err, &authError) {
 			cmd.SilenceUsage = true
 		}
 		return err
@@ -160,7 +170,8 @@ var selectWorkspaceCmd = &cobra.Command{
 		if args[0] == "workspace" {
 			err := auth.SelectWorkspace(args[1])
 			// Check if it's an AuthError and suppress usage help
-			if _, ok := err.(auth.AuthError); ok {
+			var authError auth.AuthError
+			if errors.As(err, &authError) {
 				cmd.SilenceUsage = true
 			}
 			return err
@@ -177,7 +188,8 @@ var changePasswordCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := auth.ChangePassword(args)
 		// Check if it's an AuthError and suppress usage help
-		if _, ok := err.(auth.AuthError); ok {
+		var authError auth.AuthError
+		if errors.As(err, &authError) {
 			cmd.SilenceUsage = true
 		}
 		return err

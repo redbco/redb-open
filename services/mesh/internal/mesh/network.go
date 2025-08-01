@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -167,7 +168,8 @@ func (n *Network) handleConnection(conn net.Conn) {
 			// Read message
 			bytesRead, err := conn.Read(buffer)
 			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				var netErr net.Error
+				if errors.As(err, &netErr) && netErr.Timeout() {
 					continue
 				}
 				n.logger.Error("Failed to read message: (error: %v)", err)

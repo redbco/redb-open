@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -30,7 +31,8 @@ var setupCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := performInitialSetup()
 		// Check if it's a SetupError and suppress usage help
-		if _, ok := err.(SetupError); ok {
+		var setupError SetupError
+		if errors.As(err, &setupError) {
 			cmd.SilenceUsage = true
 		}
 		return err
