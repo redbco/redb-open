@@ -9,7 +9,8 @@ import (
 var databasesCmd = &cobra.Command{
 	Use:   "databases",
 	Short: "Manage databases",
-	Long:  `Commands for managing databases including listing, showing details, creating, modifying, connecting, reconnecting, disconnecting, wiping, dropping, and cloning table data.`,
+	Long: "Commands for managing databases including listing, showing details, creating, modifying, connecting, " +
+		"reconnecting, disconnecting, wiping, dropping, and cloning table data.",
 }
 
 // listDatabasesCmd represents the list command

@@ -27,7 +27,8 @@ func (e SetupError) Error() string {
 var setupCmd = &cobra.Command{
 	Use:   "setup",
 	Short: "Create initial tenant, user, and workspace",
-	Long:  `Create the first tenant, user, and workspace for a new reDB installation. This command is only available when no tenants exist in the system.`,
+	Long: "Create the first tenant, user, and workspace for a new reDB installation. " +
+		"This command is only available when no tenants exist in the system.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := performInitialSetup()
 		// Check if it's a SetupError and suppress usage help

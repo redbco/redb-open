@@ -9,7 +9,8 @@ import (
 var instancesCmd = &cobra.Command{
 	Use:   "instances",
 	Short: "Manage instances",
-	Long:  `Commands for managing instances including listing, showing details, connecting, modifying, reconnecting, and disconnecting instances.`,
+	Long: "Commands for managing instances including listing, showing details, connecting, modifying, reconnecting, " +
+		"and disconnecting instances.",
 }
 
 // listInstancesCmd represents the list command

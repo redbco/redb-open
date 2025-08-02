@@ -30,7 +30,8 @@ func printVersionInfo() {
 var rootCmd = &cobra.Command{
 	Use:   "redb-cli",
 	Short: "reDB Command Line Interface",
-	Long:  `A comprehensive CLI for managing reDB resources including authentication, regions, workspaces, databases, and more.`,
+	Long: "A comprehensive CLI for managing reDB resources including authentication, regions, workspaces, databases, " +
+		"and more.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Check if --version flag is set
 		if cmd.Flags().Lookup("version") != nil && cmd.Flags().Lookup("version").Changed {

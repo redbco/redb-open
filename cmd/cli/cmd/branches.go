@@ -9,7 +9,8 @@ import (
 var branchesCmd = &cobra.Command{
 	Use:   "branches",
 	Short: "Manage branches",
-	Long:  `Commands for managing branches including showing details, modifying, attaching, detaching, and deleting branches.`,
+	Long: "Commands for managing branches including showing details, modifying, attaching, detaching, " +
+		"and deleting branches.",
 }
 
 // showBranchCmd represents the show command

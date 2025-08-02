@@ -9,7 +9,8 @@ import (
 var environmentsCmd = &cobra.Command{
 	Use:   "environments",
 	Short: "Manage environments",
-	Long:  `Commands for managing environments including listing, showing details, adding, modifying, and deleting environments.`,
+	Long: "Commands for managing environments including listing, showing details, adding, modifying, " +
+		"and deleting environments.",
 }
 
 // listEnvironmentsCmd represents the list command

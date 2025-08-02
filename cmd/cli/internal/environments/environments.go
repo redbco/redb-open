@@ -117,9 +117,19 @@ func ListEnvironments() error {
 
 	fmt.Println()
 
+	headers := []string{
+		"Name", "Description", "Production", "Criticality", "Priority",
+		"Status", "Instances", "Databases", "Repositories", "Mappings", "Relationships",
+	}
+
+	underlines := make([]string, len(headers))
+	for i := range headers {
+		underlines[i] = strings.Repeat("-", len(headers[i]))
+	}
+
 	// Print header
-	fmt.Fprintln(w, "Name\tDescription\tProduction\tCriticality\tPriority\tStatus\tInstances\tDatabases\tRepositories\tMappings\tRelationships")
-	fmt.Fprintln(w, "----\t-----------\t----------\t-----------\t--------\t------\t---------\t---------\t------------\t--------\t-------------")
+	fmt.Fprintln(w, strings.Join(headers, "\t"))
+	fmt.Fprintln(w, strings.Join(underlines, "\t"))
 
 	// Print each environment
 	for _, environment := range environments {
