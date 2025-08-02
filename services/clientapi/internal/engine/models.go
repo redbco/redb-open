@@ -35,6 +35,7 @@ const (
 	StatusJoining       Status = "joining"
 	StatusLeaving       Status = "leaving"
 	StatusSeeding       Status = "seeding"
+	StatusOrphaned      Status = "orphaned"
 )
 
 // ErrorResponse represents an error response

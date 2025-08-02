@@ -46,7 +46,6 @@ type Engine struct {
 	config     *config.Config
 	grpcServer *grpc.Server
 	meshNode   *mesh.Node
-	network    *mesh.Network // Minimal network layer for Stage 1
 	storage    storage.Interface
 	logger     *logger.Logger
 	standalone bool
@@ -232,6 +231,9 @@ func (e *Engine) startMeshRuntime(ctx context.Context, initInfo *MeshInitInfo) e
 		}
 	}
 
+	// Note: Network layer is handled by the mesh node itself
+	// The mesh node will initialize its own WebSocket network on the configured port
+
 	// Initialize mesh node (with or without credentials)
 	meshConfig := mesh.Config{
 		NodeID:        initInfo.NodeInfo.NodeID,
@@ -283,9 +285,7 @@ func (e *Engine) startMeshRuntime(ctx context.Context, initInfo *MeshInitInfo) e
 
 	// Update engine state
 	e.meshNode = meshNode
-	e.state.Lock()
 	e.state.initState = StateFullyConfigured
-	e.state.Unlock()
 
 	e.logger.Infof("Successfully started mesh runtime for mesh %s with node %s",
 		initInfo.MeshInfo.MeshID, initInfo.NodeInfo.NodeID)
@@ -344,57 +344,15 @@ func (e *Engine) Start(ctx context.Context) error {
 		e.initInfo = initInfo
 		e.logger.Infof("Mesh service started - initialization state: %v", initInfo.State)
 
-		// STAGE 0: Prepare mesh runtime infrastructure (no network components yet)
+		// STAGE 1: Start full mesh runtime for fully configured meshes
 		if initInfo.State == StateFullyConfigured {
-			e.logger.Infof("Mesh is fully configured, preparing mesh runtime infrastructure (Stage 0)")
-			if err := e.prepareMeshRuntime(ctx, initInfo); err != nil {
-				e.logger.Warnf("Failed to prepare mesh runtime (continuing without mesh): %v", err)
+			e.logger.Infof("Mesh is fully configured, starting mesh runtime automatically")
+			if err := e.startMeshRuntime(ctx, initInfo); err != nil {
+				e.logger.Warnf("Failed to start mesh runtime (continuing without mesh): %v", err)
 				// Don't fail startup completely - mesh service can still function without runtime
 			}
 		}
 	}
-
-	return nil
-}
-
-// prepareMeshRuntime prepares the mesh runtime infrastructure (Stage 0)
-// This is the absolute minimum - just database status updates, no network components
-func (e *Engine) prepareMeshRuntime(ctx context.Context, initInfo *MeshInitInfo) error {
-	if initInfo.MeshInfo == nil || initInfo.NodeInfo == nil {
-		return fmt.Errorf("mesh info or node info is missing")
-	}
-
-	e.logger.Infof("Preparing mesh runtime infrastructure for node %s in mesh %s",
-		initInfo.NodeInfo.NodeID, initInfo.MeshInfo.MeshID)
-
-	// Update mesh and node statuses to HEALTHY (infrastructure ready)
-	if e.db != nil {
-		// Update mesh status to HEALTHY
-		_, err := e.db.Pool().Exec(ctx, `
-			UPDATE mesh 
-			SET status = $1, updated = CURRENT_TIMESTAMP
-			WHERE mesh_id = $2
-		`, "STATUS_HEALTHY", initInfo.MeshInfo.MeshID)
-		if err != nil {
-			e.logger.Warnf("Failed to update mesh status to HEALTHY: %v", err)
-		}
-
-		// Update local node status to HEALTHY
-		_, err = e.db.Pool().Exec(ctx, `
-			UPDATE nodes 
-			SET status = $1, updated = CURRENT_TIMESTAMP
-			WHERE node_id = $2
-		`, "STATUS_HEALTHY", initInfo.NodeInfo.NodeID)
-		if err != nil {
-			e.logger.Warnf("Failed to update node status to HEALTHY: %v", err)
-		}
-	}
-
-	// Update engine state to indicate infrastructure is ready
-	e.state.initState = StateFullyConfigured
-
-	e.logger.Infof("Successfully prepared mesh runtime infrastructure (Stage 0) for mesh %s with node %s",
-		initInfo.MeshInfo.MeshID, initInfo.NodeInfo.NodeID)
 
 	return nil
 }
@@ -496,9 +454,52 @@ func (e *Engine) Stop(ctx context.Context) error {
 		}
 	}
 
-	// Stage 0: No network components to stop (infrastructure only)
+	// Step 1: Stop all consensus groups (simplified handling)
+	e.groupsMutex.Lock()
+	for groupID := range e.consensusGroups {
+		if e.logger != nil {
+			e.logger.Infof("Stopping consensus group (group_id: %s)", groupID)
+		}
+		delete(e.consensusGroups, groupID)
+	}
+	e.groupsMutex.Unlock()
+
+	// Step 2: Stop mesh node with timeout
+	if e.meshNode != nil {
+		if e.logger != nil {
+			e.logger.Info("Stopping mesh node")
+		}
+
+		// Use timeout for mesh node shutdown to prevent hanging
+		meshNodeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		// Create a channel to signal completion
+		done := make(chan error, 1)
+		go func() {
+			done <- e.meshNode.Stop()
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil && e.logger != nil {
+				e.logger.Errorf("Failed to stop mesh node: %v", err)
+			} else if e.logger != nil {
+				e.logger.Info("Mesh node stopped successfully")
+			}
+		case <-meshNodeCtx.Done():
+			if e.logger != nil {
+				e.logger.Warn("Mesh node shutdown timed out, forcing stop")
+			}
+			// Force stop by canceling context
+			e.meshNode.CancelContext()
+		}
+	}
+
+	// Note: Network layer shutdown is handled by the mesh node itself
+
 	if e.logger != nil {
-		e.logger.Info("Mesh runtime infrastructure cleanup completed (Stage 0)")
+		e.logger.Info("Mesh runtime components cleanup completed")
 	}
 
 	// Close storage

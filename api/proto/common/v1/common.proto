@@ -36,6 +36,7 @@ enum Status {
     STATUS_JOINING = 25;
     STATUS_LEAVING = 26;
     STATUS_SEEDING = 27;
+    STATUS_ORPHANED = 28;
 }
 
 // ServiceInfo contains basic information about a service
