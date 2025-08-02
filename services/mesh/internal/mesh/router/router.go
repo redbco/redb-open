@@ -70,7 +70,22 @@ func (r *Router) Start() {
 
 // Stop gracefully shuts down the router
 func (r *Router) Stop() {
+	if r.Logger != nil {
+		r.Logger.Info("Stopping router...")
+	}
+
+	// Cancel context to signal shutdown to all goroutines
 	r.cancel()
+
+	// Reduced wait time for faster shutdown
+	if r.Logger != nil {
+		r.Logger.Info("Waiting for router goroutines to shutdown...")
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	if r.Logger != nil {
+		r.Logger.Info("Router stopped successfully")
+	}
 }
 
 // GetRoute returns the route for a destination

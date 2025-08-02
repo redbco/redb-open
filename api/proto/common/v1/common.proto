@@ -33,6 +33,10 @@ enum Status {
     STATUS_DEBUG = 22;
     STATUS_TRACE = 23;
     STATUS_EMPTY = 24;
+    STATUS_JOINING = 25;
+    STATUS_LEAVING = 26;
+    STATUS_SEEDING = 27;
+    STATUS_ORPHANED = 28;
 }
 
 // ServiceInfo contains basic information about a service

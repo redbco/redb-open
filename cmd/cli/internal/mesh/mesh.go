@@ -63,8 +63,6 @@ type ListNodesResponse struct {
 type SeedMeshRequest struct {
 	MeshName        string `json:"mesh_name"`
 	MeshDescription string `json:"mesh_description,omitempty"`
-	NodeName        string `json:"node_name"`
-	NodeDescription string `json:"node_description,omitempty"`
 	AllowJoin       bool   `json:"allow_join"`
 	JoinKey         string `json:"join_key,omitempty"`
 }
@@ -105,25 +103,8 @@ func SeedMesh(args []string) error {
 	}
 	meshDescription = strings.TrimSpace(meshDescription)
 
-	// Get node name
-	fmt.Print("Seed node name: ")
-	nodeName, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("failed to read node name: %v", err)
-	}
-	nodeName = strings.TrimSpace(nodeName)
-
-	if nodeName == "" {
-		return fmt.Errorf("node name cannot be empty")
-	}
-
-	// Get node description (optional)
-	fmt.Print("Node description (optional): ")
-	nodeDescription, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("failed to read node description: %v", err)
-	}
-	nodeDescription = strings.TrimSpace(nodeDescription)
+	// Note: Node details are retrieved from the existing local node in the database
+	// No need to prompt for node information
 
 	// Get allow join setting
 	fmt.Print("Allow other nodes to join? (y/n) [y]: ")
@@ -138,8 +119,6 @@ func SeedMesh(args []string) error {
 	seedReq := SeedMeshRequest{
 		MeshName:        meshName,
 		MeshDescription: meshDescription,
-		NodeName:        nodeName,
-		NodeDescription: nodeDescription,
 		AllowJoin:       allowJoin,
 	}
 
@@ -294,7 +273,7 @@ func ListNodes(meshID string) error {
 		if description == "" {
 			description = "-"
 		}
-		
+
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
 			node.ID,
 			node.Name,

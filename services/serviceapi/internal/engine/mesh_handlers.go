@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	"github.com/gorilla/mux"
+	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 )
 
 type MeshHandlers struct {
@@ -42,17 +42,11 @@ func (h *MeshHandlers) SeedMesh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "mesh_name is required", http.StatusBadRequest)
 		return
 	}
-	if req.NodeName == "" {
-		http.Error(w, "node_name is required", http.StatusBadRequest)
-		return
-	}
 
 	// Call core service
 	coreReq := &corev1.SeedMeshRequest{
 		MeshName:        req.MeshName,
 		MeshDescription: &req.MeshDescription,
-		NodeName:        req.NodeName,
-		NodeDescription: &req.NodeDescription,
 		AllowJoin:       &req.AllowJoin,
 		JoinKey:         &req.JoinKey,
 	}

@@ -44,10 +44,6 @@ func (mh *MeshHandlers) SeedMesh(w http.ResponseWriter, r *http.Request) {
 		mh.writeErrorResponse(w, http.StatusBadRequest, "mesh_name is required", "")
 		return
 	}
-	if req.NodeName == "" {
-		mh.writeErrorResponse(w, http.StatusBadRequest, "node_name is required", "")
-		return
-	}
 
 	// Log request
 	if mh.engine.logger != nil {
@@ -61,15 +57,11 @@ func (mh *MeshHandlers) SeedMesh(w http.ResponseWriter, r *http.Request) {
 	// Prepare gRPC request
 	grpcReq := &corev1.SeedMeshRequest{
 		MeshName: req.MeshName,
-		NodeName: req.NodeName,
 	}
 
 	// Set optional fields
 	if req.MeshDescription != "" {
 		grpcReq.MeshDescription = &req.MeshDescription
-	}
-	if req.NodeDescription != "" {
-		grpcReq.NodeDescription = &req.NodeDescription
 	}
 	if req.AllowJoin != nil {
 		grpcReq.AllowJoin = req.AllowJoin

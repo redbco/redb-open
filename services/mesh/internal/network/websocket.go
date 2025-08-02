@@ -55,6 +55,7 @@ type Server struct {
 	connections map[string]*Connection
 	handler     MessageHandler
 	mu          sync.RWMutex
+	httpServer  *http.Server // Add HTTP server reference for proper shutdown
 }
 
 // NewServer creates a new WebSocket server
@@ -78,7 +79,7 @@ func NewServer(cfg Config, handler MessageHandler, logger *logger.Logger) *Serve
 // Start starts the WebSocket server
 func (s *Server) Start() error {
 	http.HandleFunc("/ws", s.handleWebSocket)
-	server := &http.Server{
+	s.httpServer = &http.Server{
 		Addr:         s.config.Address,
 		TLSConfig:    s.config.TLSConfig,
 		ReadTimeout:  s.config.ReadTimeout,
@@ -87,10 +88,34 @@ func (s *Server) Start() error {
 
 	s.logger.Infof("Starting WebSocket server (address: %s)", s.config.Address)
 
-	if s.config.TLSConfig != nil {
-		return server.ListenAndServeTLS("", "")
+	// Start HTTP server in a goroutine so it doesn't block startup
+	started := make(chan error, 1)
+	go func() {
+		var err error
+		if s.config.TLSConfig != nil {
+			err = s.httpServer.ListenAndServeTLS("", "")
+		} else {
+			err = s.httpServer.ListenAndServe()
+		}
+
+		if err != nil && err != http.ErrServerClosed {
+			s.logger.Errorf("HTTP server error: %v", err)
+		}
+		started <- err
+	}()
+
+	// Give the server a moment to start and check for immediate errors
+	select {
+	case err := <-started:
+		if err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("failed to start HTTP server: %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		// Server started successfully (no immediate error)
+		s.logger.Infof("WebSocket server started successfully on %s", s.config.Address)
 	}
-	return server.ListenAndServe()
+
+	return nil
 }
 
 // handleWebSocket handles incoming WebSocket connections
@@ -347,9 +372,22 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// First, close all WebSocket connections to stop new messages
+	s.logger.Infof("Closing %d WebSocket connections", len(s.connections))
 	for _, conn := range s.connections {
 		close(conn.stopChan)
 		conn.conn.Close()
+	}
+	s.connections = make(map[string]*Connection) // Clear connections map
+
+	// Then shutdown the HTTP server gracefully
+	if s.httpServer != nil {
+		s.logger.Infof("Shutting down HTTP server")
+		if err := s.httpServer.Shutdown(ctx); err != nil {
+			s.logger.Errorf("Failed to shutdown HTTP server: %v", err)
+			return err
+		}
+		s.logger.Infof("HTTP server shutdown completed")
 	}
 
 	return nil

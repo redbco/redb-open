@@ -57,6 +57,14 @@ func convertStatus(grpcStatus commonv1.Status) Status {
 		return StatusTrace
 	case commonv1.Status_STATUS_EMPTY:
 		return StatusEmpty
+	case commonv1.Status_STATUS_JOINING:
+		return StatusJoining
+	case commonv1.Status_STATUS_LEAVING:
+		return StatusLeaving
+	case commonv1.Status_STATUS_SEEDING:
+		return StatusSeeding
+	case commonv1.Status_STATUS_ORPHANED:
+		return StatusOrphaned
 	default:
 		return StatusUnknown
 	}

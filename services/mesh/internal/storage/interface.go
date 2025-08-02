@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/redbco/redb-open/pkg/config"
+	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/logger"
 )
 
@@ -148,6 +150,26 @@ func NewStorage(ctx context.Context, config Config, logger *logger.Logger) (Inte
 	default:
 		return nil, fmt.Errorf("unsupported storage type: %s", config.Type)
 	}
+}
+
+// NewStorageWithGlobalConfig creates a new storage instance using global configuration
+func NewStorageWithGlobalConfig(ctx context.Context, globalConfig *config.Config, logger *logger.Logger) (Interface, error) {
+	if logger == nil {
+		return nil, fmt.Errorf("logger is required")
+	}
+
+	// Use the global config version for PostgreSQL
+	return NewPostgresStorageWithGlobalConfig(ctx, globalConfig, logger)
+}
+
+// NewStorageWithDatabase creates a new storage instance using an existing database connection
+func NewStorageWithDatabase(db *database.PostgreSQL, logger *logger.Logger) (Interface, error) {
+	if logger == nil {
+		return nil, fmt.Errorf("logger is required")
+	}
+
+	// Use the existing database connection for PostgreSQL
+	return NewPostgresStorageWithDatabase(db, logger)
 }
 
 // ConfigFromGlobal creates a storage config from global configuration

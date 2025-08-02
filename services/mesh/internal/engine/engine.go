@@ -9,9 +9,11 @@ import (
 
 	meshv1 "github.com/redbco/redb-open/api/proto/mesh/v1"
 	"github.com/redbco/redb-open/pkg/config"
+	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/mesh/internal/consensus"
 	"github.com/redbco/redb-open/services/mesh/internal/mesh"
+	"github.com/redbco/redb-open/services/mesh/internal/security"
 	"github.com/redbco/redb-open/services/mesh/internal/storage"
 	"google.golang.org/grpc"
 )
@@ -47,6 +49,8 @@ type Engine struct {
 	storage    storage.Interface
 	logger     *logger.Logger
 	standalone bool
+	db         *database.PostgreSQL
+	initInfo   *MeshInitInfo // Store initialization info for shutdown operations
 
 	// Consensus groups management
 	consensusGroups map[string]*consensus.Group
@@ -87,9 +91,18 @@ func (e *Engine) SetGRPCServer(server *grpc.Server) {
 	if e.grpcServer != nil {
 		serviceServer := NewServer(e)
 		meshv1.RegisterMeshServiceServer(e.grpcServer, serviceServer)
-		meshv1.RegisterManagementServiceServer(e.grpcServer, serviceServer)
 		meshv1.RegisterConsensusServiceServer(e.grpcServer, serviceServer)
 	}
+}
+
+// SetDatabase sets the database connection for the engine
+func (e *Engine) SetDatabase(db *database.PostgreSQL) {
+	e.db = db
+}
+
+// GetDatabase returns the database connection
+func (e *Engine) GetDatabase() *database.PostgreSQL {
+	return e.db
 }
 
 // checkInitializationState examines the database to determine the current initialization state
@@ -159,6 +172,127 @@ func (e *Engine) checkInitializationState(ctx context.Context) (*MeshInitInfo, e
 	return initInfo, nil
 }
 
+// TODO: Move all SQL operations to a appropriate service
+
+// startMeshRuntime starts the mesh runtime based on the initialization info
+func (e *Engine) startMeshRuntime(ctx context.Context, initInfo *MeshInitInfo) error {
+	if initInfo.MeshInfo == nil || initInfo.NodeInfo == nil {
+		return fmt.Errorf("mesh info or node info is missing")
+	}
+
+	// Try to generate mesh credentials if storage is available
+	if e.storage != nil {
+		// Create credential manager
+		credManager := security.NewCredentialManager(e.storage, e.logger)
+
+		// Generate mesh credentials
+		_, err := credManager.GenerateMeshCredentials(ctx, initInfo.MeshInfo.MeshID, initInfo.NodeInfo.NodeID)
+		if err != nil {
+			e.logger.Warnf("Failed to generate mesh credentials (continuing without credentials): %v", err)
+			// Continue without credentials - mesh will work without TLS
+		} else {
+			e.logger.Infof("Generated mesh credentials successfully")
+		}
+
+		// Store runtime metadata
+		runtimeMeta := map[string]interface{}{
+			"initialization_time": time.Now(),
+			"seed_node":           initInfo.NodeInfo.NodeID == initInfo.MeshInfo.MeshID, // Simplified logic
+			"runtime_state":       "starting",
+		}
+
+		if err := e.storage.SaveConfig(ctx, "mesh_runtime_metadata", runtimeMeta); err != nil {
+			e.logger.Warnf("Failed to store runtime metadata (continuing): %v", err)
+		}
+	} else {
+		e.logger.Warnf("Storage not available - mesh will run without credentials and runtime metadata")
+	}
+
+	// Update mesh and node statuses to HEALTHY (mesh started successfully)
+	if e.db != nil {
+		// Update mesh status to HEALTHY
+		_, err := e.db.Pool().Exec(ctx, `
+			UPDATE mesh 
+			SET status = $1, updated = CURRENT_TIMESTAMP
+			WHERE mesh_id = $2
+		`, "STATUS_HEALTHY", initInfo.MeshInfo.MeshID)
+		if err != nil {
+			e.logger.Warnf("Failed to update mesh status to HEALTHY: %v", err)
+		}
+
+		// Update local node status to HEALTHY
+		_, err = e.db.Pool().Exec(ctx, `
+			UPDATE nodes 
+			SET status = $1, updated = CURRENT_TIMESTAMP
+			WHERE node_id = $2
+		`, "STATUS_HEALTHY", initInfo.NodeInfo.NodeID)
+		if err != nil {
+			e.logger.Warnf("Failed to update node status to HEALTHY: %v", err)
+		}
+	}
+
+	// Note: Network layer is handled by the mesh node itself
+	// The mesh node will initialize its own WebSocket network on the configured port
+
+	// Initialize mesh node (with or without credentials)
+	meshConfig := mesh.Config{
+		NodeID:        initInfo.NodeInfo.NodeID,
+		MeshID:        initInfo.MeshInfo.MeshID,
+		ListenAddress: ":8443", // Default WebSocket port
+		Heartbeat:     30 * time.Second,
+		Timeout:       60 * time.Second,
+	}
+
+	meshNode, err := mesh.NewNode(meshConfig, e.storage, e.logger)
+	if err != nil {
+		// Update status to DEGRADED if mesh node creation fails
+		if e.db != nil {
+			_, updateErr := e.db.Pool().Exec(ctx, `
+				UPDATE mesh SET status = $1, updated = CURRENT_TIMESTAMP WHERE mesh_id = $2
+			`, "STATUS_DEGRADED", initInfo.MeshInfo.MeshID)
+			if updateErr != nil {
+				e.logger.Warnf("Failed to update mesh status to DEGRADED: %v", updateErr)
+			}
+			_, updateErr = e.db.Pool().Exec(ctx, `
+				UPDATE nodes SET status = $1, updated = CURRENT_TIMESTAMP WHERE node_id = $2
+			`, "STATUS_DEGRADED", initInfo.NodeInfo.NodeID)
+			if updateErr != nil {
+				e.logger.Warnf("Failed to update node status to DEGRADED: %v", updateErr)
+			}
+		}
+		return fmt.Errorf("failed to create mesh node: %w", err)
+	}
+
+	// Start the mesh node
+	if err := meshNode.Start(); err != nil {
+		// Update status to DEGRADED if mesh node start fails
+		if e.db != nil {
+			_, updateErr := e.db.Pool().Exec(ctx, `
+				UPDATE mesh SET status = $1, updated = CURRENT_TIMESTAMP WHERE mesh_id = $2
+			`, "STATUS_DEGRADED", initInfo.MeshInfo.MeshID)
+			if updateErr != nil {
+				e.logger.Warnf("Failed to update mesh status to DEGRADED: %v", updateErr)
+			}
+			_, updateErr = e.db.Pool().Exec(ctx, `
+				UPDATE nodes SET status = $1, updated = CURRENT_TIMESTAMP WHERE node_id = $2
+			`, "STATUS_DEGRADED", initInfo.NodeInfo.NodeID)
+			if updateErr != nil {
+				e.logger.Warnf("Failed to update node status to DEGRADED: %v", updateErr)
+			}
+		}
+		return fmt.Errorf("failed to start mesh node: %w", err)
+	}
+
+	// Update engine state
+	e.meshNode = meshNode
+	e.state.initState = StateFullyConfigured
+
+	e.logger.Infof("Successfully started mesh runtime for mesh %s with node %s",
+		initInfo.MeshInfo.MeshID, initInfo.NodeInfo.NodeID)
+
+	return nil
+}
+
 func (e *Engine) Start(ctx context.Context) error {
 	e.state.Lock()
 	defer e.state.Unlock()
@@ -171,127 +305,56 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("gRPC server not set - call SetGRPCServer first")
 	}
 
-	// Initialize logger
-	e.logger = logger.New("mesh", "1.0.0")
+	// Use the logger provided by base service, don't create a new one
+	if e.logger == nil {
+		return fmt.Errorf("logger not set - call SetLogger first")
+	}
 
-	// Initialize storage
-	var err error
-	storageConfig := storage.ConfigFromGlobal(e.config)
-	e.storage, err = storage.NewStorage(ctx, storageConfig, e.logger)
-	if err != nil {
-		e.logger.Errorf("Failed to initialize storage, continuing without storage: %v", err)
-		e.storage = nil
+	// RE-ENABLE: Storage initialization (testing component 1/3)
+	// Initialize storage using the existing database connection (same as core service)
+	if e.db != nil {
+		var err error
+		e.storage, err = storage.NewPostgresStorageWithDatabase(e.db, e.logger)
+		if err != nil {
+			e.logger.Errorf("Failed to initialize storage: %v", err)
+			e.state.initState = StateError
+			return fmt.Errorf("failed to initialize storage: %w", err)
+		} else {
+			e.logger.Infof("Storage initialized successfully with existing database connection")
+		}
 	} else {
-		e.logger.Infof("Storage initialized successfully (type: %s)", storageConfig.Type)
+		e.logger.Errorf("Database not available, storage is required for mesh service")
+		e.state.initState = StateError
+		return fmt.Errorf("database not available, storage is required for mesh service")
 	}
 
 	// Service is always marked as running so gRPC can receive requests
 	e.state.isRunning = true
 
-	if e.storage == nil {
-		e.logger.Warnf("Storage not available, mesh node will not be initialized")
-		e.state.initState = StateError
-		e.logger.Infof("Mesh engine started in error state - gRPC server available but no mesh functionality")
-		return nil
-	}
-
-	// Check initialization state from database
+	// STAGE 1: Get initialization info and start basic mesh runtime (WebSocket connectivity only)
 	initInfo, err := e.checkInitializationState(ctx)
 	if err != nil {
-		e.logger.Errorf("Failed to check initialization state: %v", err)
+		e.logger.Warnf("Failed to check initialization state (will retry later): %v", err)
 		e.state.initState = StateError
-		e.logger.Infof("Mesh engine started in error state - gRPC server available but no mesh functionality")
-		return nil
-	}
+		// Store empty initInfo to avoid nil pointer issues during shutdown
+		e.initInfo = &MeshInitInfo{State: StateError, ErrorMessage: err.Error()}
+	} else {
+		e.state.initState = initInfo.State
+		// Store initialization info for database operations during shutdown
+		e.initInfo = initInfo
+		e.logger.Infof("Mesh service started - initialization state: %v", initInfo.State)
 
-	e.state.initState = initInfo.State
-
-	switch initInfo.State {
-	case StateUninitialized:
-		e.logger.Infof("Node has not been initialized (no localidentity, nodes, or mesh defined)")
-		e.logger.Infof("Mesh engine started - gRPC server available for initialization requests")
-		return nil
-
-	case StateNodeOnly:
-		e.logger.Infof("Node initialized but not added to a mesh (node_id: %s, node_name: %s)",
-			initInfo.NodeInfo.NodeID, initInfo.NodeInfo.NodeName)
-		e.logger.Infof("Mesh engine started - gRPC server available for mesh operations")
-		return nil
-
-	case StateFullyConfigured:
-		e.logger.Infof("Node and mesh fully configured (node_id: %s, mesh_id: %s)",
-			initInfo.NodeInfo.NodeID, initInfo.MeshInfo.MeshID)
-
-		// Create mesh node configuration from database
-		meshConfig := mesh.Config{
-			NodeID:        initInfo.NodeInfo.NodeID,
-			MeshID:        initInfo.MeshInfo.MeshID,
-			ListenAddress: fmt.Sprintf("%s:%d", initInfo.NodeInfo.IPAddress, initInfo.NodeInfo.Port),
-			Heartbeat:     30 * time.Second, // Default values
-			Timeout:       60 * time.Second,
+		// STAGE 1: Start full mesh runtime for fully configured meshes
+		if initInfo.State == StateFullyConfigured {
+			e.logger.Infof("Mesh is fully configured, starting mesh runtime automatically")
+			if err := e.startMeshRuntime(ctx, initInfo); err != nil {
+				e.logger.Warnf("Failed to start mesh runtime (continuing without mesh): %v", err)
+				// Don't fail startup completely - mesh service can still function without runtime
+			}
 		}
-
-		// Create and start mesh node
-		e.meshNode, err = mesh.NewNode(meshConfig, e.storage, e.logger)
-		if err != nil {
-			e.logger.Errorf("Failed to create mesh node: %v", err)
-			e.state.initState = StateError
-			e.logger.Infof("Mesh engine started in error state - gRPC server available but mesh node failed to create")
-			return nil
-		}
-
-		if err := e.meshNode.Start(); err != nil {
-			e.logger.Errorf("Failed to start mesh node: %v", err)
-			e.state.initState = StateError
-			e.logger.Infof("Mesh engine started in error state - gRPC server available but mesh node failed to start")
-			return nil
-		}
-
-		// Establish connections based on routes
-		if len(initInfo.Routes) > 0 {
-			e.logger.Infof("Attempting to establish %d route connections", len(initInfo.Routes))
-			go e.establishRouteConnections(initInfo.Routes)
-		} else {
-			e.logger.Infof("No outbound routes defined - waiting for incoming connections")
-		}
-
-		e.logger.Infof("Mesh engine started successfully with full mesh configuration")
-		return nil
-
-	case StateError:
-		e.logger.Errorf("Initialization error: %s", initInfo.ErrorMessage)
-		e.logger.Infof("Mesh engine started in error state - gRPC server available but mesh functionality disabled")
-		return nil
 	}
 
 	return nil
-}
-
-// establishRouteConnections attempts to establish connections to target nodes based on routes
-func (e *Engine) establishRouteConnections(routes []*storage.RouteInfo) {
-	for _, route := range routes {
-		e.logger.Infof("Attempting to establish connection to node %s", route.TargetNodeID)
-
-		// Get target node information
-		targetNode, err := e.storage.GetNodeInfo(context.Background(), route.TargetNodeID)
-		if err != nil {
-			e.logger.Errorf("Failed to get target node info for %s: %v", route.TargetNodeID, err)
-			continue
-		}
-
-		if targetNode == nil {
-			e.logger.Errorf("Target node %s not found in database", route.TargetNodeID)
-			continue
-		}
-
-		// Add connection to mesh node
-		if err := e.meshNode.AddConnection(targetNode.NodeID); err != nil {
-			e.logger.Errorf("Failed to add connection to %s: %v", targetNode.NodeID, err)
-		} else {
-			e.logger.Infof("Successfully added connection to node %s (%s:%d)",
-				targetNode.NodeID, targetNode.IPAddress, targetNode.Port)
-		}
-	}
 }
 
 // GetInitializationState returns the current initialization state
@@ -322,22 +385,121 @@ func (e *Engine) Stop(ctx context.Context) error {
 		e.logger.Info("Stopping mesh engine")
 	}
 
-	// Stop all consensus groups (simplified handling)
+	// Update database statuses FIRST to ensure they complete before supervisor timeout
+	if e.db != nil {
+		if e.logger != nil {
+			e.logger.Info("Updating database statuses during shutdown...")
+		}
+
+		// SIMPLE SOLUTION: Use short timeout - database and connection pool can handle concurrency
+		shutdownCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+		defer cancel()
+
+		// Set mesh status to DISCONNECTED
+		_, err := e.db.Pool().Exec(shutdownCtx, `
+			UPDATE mesh 
+			SET status = $1, updated = CURRENT_TIMESTAMP
+		`, "STATUS_DISCONNECTED")
+		if err != nil {
+			if e.logger != nil {
+				e.logger.Warnf("Failed to update mesh status to DISCONNECTED: %v", err)
+			}
+		} else if e.logger != nil {
+			e.logger.Info("Successfully updated mesh status to DISCONNECTED")
+		}
+
+		// Set local node status to STOPPED (use initInfo.NodeInfo if available)
+		var nodeID string
+		if e.meshNode != nil {
+			nodeID = e.meshNode.GetID()
+		} else if e.initInfo != nil && e.initInfo.NodeInfo != nil {
+			nodeID = e.initInfo.NodeInfo.NodeID
+		}
+
+		if nodeID != "" {
+			_, err := e.db.Pool().Exec(shutdownCtx, `
+				UPDATE nodes 
+				SET status = $1, updated = CURRENT_TIMESTAMP
+				WHERE node_id = $2
+			`, "STATUS_STOPPED", nodeID)
+			if err != nil {
+				if e.logger != nil {
+					e.logger.Warnf("Failed to update local node status to STOPPED: %v", err)
+				}
+			} else if e.logger != nil {
+				e.logger.Info("Successfully updated local node status to STOPPED")
+			}
+		} else if e.logger != nil {
+			e.logger.Warn("Cannot update local node status: no node ID available (node not initialized)")
+		}
+
+		// Set all other nodes to UNKNOWN (if we have a node ID)
+		if nodeID != "" {
+			_, err = e.db.Pool().Exec(shutdownCtx, `
+				UPDATE nodes 
+				SET status = $1, updated = CURRENT_TIMESTAMP
+				WHERE node_id != $2
+			`, "STATUS_UNKNOWN", nodeID)
+			if err != nil {
+				if e.logger != nil {
+					e.logger.Warnf("Failed to update other nodes status to UNKNOWN: %v", err)
+				}
+			} else if e.logger != nil {
+				e.logger.Info("Successfully updated other nodes status to UNKNOWN")
+			}
+		}
+
+		if e.logger != nil {
+			e.logger.Info("Database status updates completed")
+		}
+	}
+
+	// Step 1: Stop all consensus groups (simplified handling)
 	e.groupsMutex.Lock()
 	for groupID := range e.consensusGroups {
 		if e.logger != nil {
 			e.logger.Infof("Stopping consensus group (group_id: %s)", groupID)
 		}
-		// We'll handle group cleanup in a simplified way
 		delete(e.consensusGroups, groupID)
 	}
 	e.groupsMutex.Unlock()
 
-	// Stop mesh node
+	// Step 2: Stop mesh node with timeout
 	if e.meshNode != nil {
-		if err := e.meshNode.Stop(); err != nil && e.logger != nil {
-			e.logger.Errorf("Failed to stop mesh node: %v", err)
+		if e.logger != nil {
+			e.logger.Info("Stopping mesh node")
 		}
+
+		// Use timeout for mesh node shutdown to prevent hanging
+		meshNodeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		// Create a channel to signal completion
+		done := make(chan error, 1)
+		go func() {
+			done <- e.meshNode.Stop()
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil && e.logger != nil {
+				e.logger.Errorf("Failed to stop mesh node: %v", err)
+			} else if e.logger != nil {
+				e.logger.Info("Mesh node stopped successfully")
+			}
+		case <-meshNodeCtx.Done():
+			if e.logger != nil {
+				e.logger.Warn("Mesh node shutdown timed out, forcing stop")
+			}
+			// Force stop by canceling context
+			e.meshNode.CancelContext()
+		}
+	}
+
+	// Note: Network layer shutdown is handled by the mesh node itself
+
+	if e.logger != nil {
+		e.logger.Info("Mesh runtime components cleanup completed")
 	}
 
 	// Close storage
@@ -345,6 +507,11 @@ func (e *Engine) Stop(ctx context.Context) error {
 		if err := e.storage.Close(); err != nil && e.logger != nil {
 			e.logger.Errorf("Failed to close storage: %v", err)
 		}
+	}
+
+	// Log successful stop
+	if e.logger != nil {
+		e.logger.Info("Mesh engine stopped successfully (with storage + database status updates)")
 	}
 
 	return nil

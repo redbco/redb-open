@@ -29,11 +29,9 @@ func NewServer(cfg Config, node *mesh.Node, logger *logger.Logger) (*Server, err
 
 	// Register all services
 	meshService := NewMeshService(node, logger)
-	managementService := NewManagementService(node, logger)
 	consensusService := NewConsensusService(logger)
 
 	meshv1.RegisterMeshServiceServer(server, meshService)
-	meshv1.RegisterManagementServiceServer(server, managementService)
 	meshv1.RegisterConsensusServiceServer(server, consensusService)
 
 	return &Server{
