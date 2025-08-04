@@ -230,11 +230,27 @@ func (s *Server) CreateGroup(ctx context.Context, req *meshv1.CreateGroupRequest
 		return nil, status.Error(codes.AlreadyExists, "group already exists")
 	}
 
+	// Get database connections from engine
+	postgres := s.engine.GetDatabase()
+	redis := s.engine.GetRedis()
+
+	if postgres == nil {
+		return nil, status.Error(codes.Internal, "PostgreSQL connection not available")
+	}
+	if redis == nil {
+		return nil, status.Error(codes.Internal, "Redis connection not available")
+	}
+
 	// Create consensus group configuration
 	cfg := consensus.Config{
 		GroupID:      req.GroupId,
+		NodeID:       fmt.Sprintf("node-%s", req.GroupId), // Generate a node ID based on group ID
 		DataDir:      fmt.Sprintf("/data/consensus/%s", req.GroupId),
+		BindAddr:     ":0", // Use dynamic port allocation
+		Peers:        req.InitialMembers,
 		SnapshotPath: fmt.Sprintf("/data/snapshots/%s", req.GroupId),
+		PostgreSQL:   postgres,
+		Redis:        redis,
 	}
 
 	logger := s.engine.GetLogger()
@@ -274,7 +290,9 @@ func (s *Server) JoinGroup(ctx context.Context, req *meshv1.JoinGroupRequest) (*
 	}
 
 	// Add the new peer to the group
-	if err := group.AddPeer(req.NodeId, ""); err != nil {
+	// Construct peer address based on node ID (this should be configurable)
+	peerAddr := fmt.Sprintf(":%d", 8080+len(group.GetLeader())) // Simple port assignment
+	if err := group.AddPeer(req.NodeId, peerAddr); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to add peer: %v", err)
 	}
 
@@ -320,10 +338,12 @@ func (s *Server) GetGroupStatus(ctx context.Context, req *meshv1.GetGroupStatusR
 	state := group.GetState()
 	leader := group.GetLeader()
 	term := group.GetTerm()
+	members := group.GetMembers()
 
 	return &meshv1.GetGroupStatusResponse{
 		GroupId:  req.GroupId,
 		LeaderId: leader,
+		Members:  members,
 		State:    meshv1.GroupState(state),
 		Term:     int64(term),
 	}, nil
