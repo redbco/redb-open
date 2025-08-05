@@ -402,14 +402,15 @@ func (e *Engine) Stop(ctx context.Context) error {
 		e.logger.Info("Stopping mesh engine")
 	}
 
-	// Update database statuses FIRST to ensure they complete before supervisor timeout
+	// Update database statuses FIRST to ensure they complete before context cancellation
 	if e.db != nil {
 		if e.logger != nil {
 			e.logger.Info("Updating database statuses during shutdown...")
 		}
 
-		// SIMPLE SOLUTION: Use short timeout - database and connection pool can handle concurrency
-		shutdownCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+		// Use a separate context for database operations to avoid cancellation issues
+		dbCtx := context.Background()
+		shutdownCtx, cancel := context.WithTimeout(dbCtx, 1*time.Second)
 		defer cancel()
 
 		// Set mesh status to DISCONNECTED

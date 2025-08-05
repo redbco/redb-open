@@ -288,11 +288,11 @@ func (s *Supervisor) waitForServiceHealth(ctx context.Context, serviceName strin
 	}
 }
 
-func (s *Supervisor) shutdown(ctx context.Context) error {
+func (s *Supervisor) shutdown(_ context.Context) error {
 	s.logger.Info("Starting graceful shutdown")
 
 	// Create a timeout context for the entire shutdown process
-	shutdownCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 40*time.Second) // Use Background context and increased timeout
 	defer cancel()
 
 	// Step 1: Stop all services first (but keep gRPC server running to accept unregister requests)
@@ -301,11 +301,12 @@ func (s *Supervisor) shutdown(ctx context.Context) error {
 		s.logger.Errorf("Error stopping services: %v", err)
 	}
 
-	// Step 2: Give services additional time to unregister themselves
+	// Step 2: Give services additional time to complete database operations and unregister
 	s.logger.Info("Waiting for services to unregister...")
 	time.Sleep(2 * time.Second)
 
 	// Step 3: Now stop accepting new connections and shutdown the gRPC server
+	// BUT only after all services have had a chance to unregister
 	s.logger.Info("Stopping gRPC server...")
 	if s.grpcServer != nil {
 		// Use a separate timeout for gRPC server shutdown

@@ -232,10 +232,8 @@ func (m *ServiceManager) StopService(ctx context.Context, serviceID string, forc
 func (m *ServiceManager) StopAllServices(ctx context.Context) error {
 	m.mu.RLock()
 	services := make([]*ServiceInfo, 0, len(m.services))
-	serviceIDs := make([]string, 0, len(m.services))
 	for _, svc := range m.services {
 		services = append(services, svc)
-		serviceIDs = append(serviceIDs, svc.ID)
 	}
 	m.mu.RUnlock()
 
@@ -245,35 +243,42 @@ func (m *ServiceManager) StopAllServices(ctx context.Context) error {
 
 	m.logger.Infof("Initiating shutdown for %d services...", len(services))
 
-	// Send stop commands to all services in reverse dependency order
-	// Note: Some services may unregister themselves before receiving the stop command
-	for i := len(services) - 1; i >= 0; i-- {
-		svc := services[i]
+	// Send stop commands to all services concurrently
+	var wg sync.WaitGroup
+	for _, svc := range services {
+		wg.Add(1)
+		go func(service *ServiceInfo) {
+			defer wg.Done()
 
-		// Check if service still exists (it may have unregistered already)
-		m.mu.RLock()
-		_, stillExists := m.services[svc.ID]
-		m.mu.RUnlock()
+			// Check if service still exists (it may have unregistered already)
+			m.mu.RLock()
+			_, stillExists := m.services[service.ID]
+			m.mu.RUnlock()
 
-		if !stillExists {
-			m.logger.Infof("Service %s has already unregistered", svc.Name)
-			continue
-		}
-
-		m.logger.Infof("Stopping service: %s", svc.Name)
-
-		if err := m.StopService(ctx, svc.ID, false, 30*time.Second); err != nil {
-			// Don't log as error if service already unregistered (expected during shutdown)
-			if err.Error() == "service not found" {
-				m.logger.Infof("Service %s unregistered during shutdown", svc.Name)
-			} else {
-				m.logger.Errorf("Failed to stop %s: %v", svc.Name, err)
+			if !stillExists {
+				m.logger.Infof("Service %s has already unregistered", service.Name)
+				return
 			}
-		}
+
+			m.logger.Infof("Stopping service: %s", service.Name)
+
+			if err := m.StopService(ctx, service.ID, false, 30*time.Second); err != nil {
+				// Don't log as error if service already unregistered (expected during shutdown)
+				if err.Error() == "service not found" {
+					m.logger.Infof("Service %s unregistered during shutdown", service.Name)
+				} else {
+					m.logger.Errorf("Failed to stop %s: %v", service.Name, err)
+				}
+			}
+		}(svc)
 	}
 
+	// Wait for all stop commands to be sent
+	wg.Wait()
+	m.logger.Info("All stop commands sent, waiting for services to unregister...")
+
 	// Wait for services to unregister themselves with a timeout
-	unregisterTimeout := 10 * time.Second
+	unregisterTimeout := 15 * time.Second // Increased timeout for complex services
 	if deadline, ok := ctx.Deadline(); ok {
 		// Use remaining context time if less than our default
 		remaining := time.Until(deadline)
@@ -294,9 +299,13 @@ func (m *ServiceManager) StopAllServices(ctx context.Context) error {
 		case <-time.After(unregisterTimeout):
 			m.mu.RLock()
 			remaining := len(m.services)
+			remainingNames := make([]string, 0, remaining)
+			for _, svc := range m.services {
+				remainingNames = append(remainingNames, svc.Name)
+			}
 			m.mu.RUnlock()
 			if remaining > 0 {
-				m.logger.Warnf("Timeout waiting for service unregistration - %d services still registered", remaining)
+				m.logger.Warnf("Timeout waiting for service unregistration - %d services still registered: %v", remaining, remainingNames)
 			}
 			return nil
 		case <-ticker.C:
