@@ -4,6 +4,9 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/redbco/redb-open/pkg/service"
 	"github.com/redbco/redb-open/services/anchor/internal/engine"
@@ -36,9 +39,13 @@ func main() {
 		svc.SetStandaloneMode(true)
 	}
 
+	// Create context with signal handling
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// Run the service
-	ctx := context.Background()
 	if err := svc.Run(ctx); err != nil {
+		stop()
 		log.Fatalf("Failed to run service: %v", err)
 	}
 }
