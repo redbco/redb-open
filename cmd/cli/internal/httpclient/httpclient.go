@@ -91,7 +91,9 @@ func (c *HTTPClient) makeRequest(method, url string, body interface{}, requireAu
 
 // handleResponse processes the HTTP response and handles errors
 func (c *HTTPClient) handleResponse(resp *http.Response, result interface{}) error {
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(resp.Body)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
