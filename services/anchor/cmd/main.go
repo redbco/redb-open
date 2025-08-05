@@ -20,9 +20,6 @@ var (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	flag.Parse()
 
 	// Create service implementation
@@ -41,6 +38,10 @@ func main() {
 	if *standalone {
 		svc.SetStandaloneMode(true)
 	}
+
+	// Create context with signal handling
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Run the service
 	if err := svc.Run(ctx); err != nil {
