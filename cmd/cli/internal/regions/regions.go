@@ -123,7 +123,7 @@ func ListRegions() error {
 			region.Description)
 	}
 
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println()
 	return nil
 }
@@ -161,7 +161,7 @@ func ShowRegion(regionName string) error {
 	fmt.Fprintf(w, "Node Count:\t%d\n", detailedRegion.NodeCount)
 	fmt.Fprintf(w, "Created:\t%s\n", detailedRegion.Created)
 	fmt.Fprintf(w, "Updated:\t%s\n", detailedRegion.Updated)
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println()
 
 	return nil

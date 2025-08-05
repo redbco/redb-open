@@ -105,7 +105,7 @@ func ListTenants() error {
 			tenant.URL)
 	}
 
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println()
 	return nil
 }

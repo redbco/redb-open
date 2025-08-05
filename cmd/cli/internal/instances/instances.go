@@ -182,7 +182,7 @@ func ListInstances() error {
 			enabled)
 	}
 
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println()
 	return nil
 }

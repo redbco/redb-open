@@ -286,7 +286,7 @@ func ListNodes(meshID string) error {
 		)
 	}
 
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }

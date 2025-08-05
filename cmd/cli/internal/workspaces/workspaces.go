@@ -110,7 +110,7 @@ func ListWorkspaces() error {
 			workspace.RelationshipCount)
 	}
 
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println()
 	return nil
 }

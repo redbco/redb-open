@@ -122,7 +122,7 @@ func ListRepos() error {
 			repo.RepoDescription,
 			repo.OwnerID)
 	}
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println()
 	return nil
 }
@@ -188,7 +188,7 @@ func ShowRepo(repoName string) error {
 				branch.DatabaseID,
 				branch.Status)
 		}
-		w.Flush()
+		_ = w.Flush()
 	}
 
 	fmt.Println()

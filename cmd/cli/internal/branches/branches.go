@@ -130,7 +130,7 @@ func ShowBranch(repoBranchStr string) error {
 				head,
 				commit.CommitDate)
 		}
-		w.Flush()
+		_ = w.Flush()
 	}
 
 	if len(branch.Branches) > 0 {
@@ -149,7 +149,7 @@ func ShowBranch(repoBranchStr string) error {
 				childBranch.DatabaseID,
 				childBranch.Status)
 		}
-		w.Flush()
+		_ = w.Flush()
 	}
 
 	fmt.Println()
