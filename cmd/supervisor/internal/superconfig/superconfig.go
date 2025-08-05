@@ -29,6 +29,7 @@ type ServiceConfig struct {
 	Environment  map[string]string `yaml:"environment"`
 	Dependencies []string          `yaml:"dependencies"`
 	Config       map[string]string `yaml:"config"`
+	ExternalPort int               `yaml:"external_port"`
 }
 
 type LoggingConfig struct {

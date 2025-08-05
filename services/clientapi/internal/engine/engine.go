@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -165,7 +166,11 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 
 	// Initialize HTTP server
-	portStr := e.config.Get("services.clientapi.http_port") // Fixed: Use hyphenated name
+	// Check for external_port from environment first, then fall back to config
+	portStr := os.Getenv("EXTERNAL_PORT")
+	if portStr == "" {
+		portStr = e.config.Get("services.clientapi.http_port") // Fallback to config
+	}
 	if portStr == "" {
 		portStr = "8080" // Default HTTP port
 	}

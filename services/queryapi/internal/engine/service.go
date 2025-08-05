@@ -80,9 +80,10 @@ func (s *Service) GetCapabilities() *supervisorv1.ServiceCapabilities {
 			"core", // Added: Query API depends on core service
 		},
 		RequiredConfig: map[string]string{
-			"services.queryapi.http_port": "HTTP port for the Query API service",
+			"services.queryapi.http_port": "HTTP port for the Query API service (fallback)",
 			"services.queryapi.timeout":   "Request timeout in seconds",
-			"services.core.grpc_address":  "gRPC address of the Core service", // Added: Core service address
+			"services.core.grpc_address":  "gRPC address of the Core service",
+			"EXTERNAL_PORT":               "External HTTP port (environment variable)",
 		},
 	}
 }

@@ -139,6 +139,7 @@ func (s *Service) GetCapabilities() *supervisorv1.ServiceCapabilities {
 		},
 		RequiredConfig: map[string]string{
 			"services.mesh.grpc_port":            "gRPC port for the Mesh service",
+			"services.mesh.external_port":        "WebSocket port for the Mesh service",
 			"services.mesh.timeout":              "Request timeout in seconds",
 			"services.mesh.mesh_id":              "Mesh identifier",
 			"services.mesh.node_id":              "Node identifier",

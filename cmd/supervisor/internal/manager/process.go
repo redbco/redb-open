@@ -43,6 +43,11 @@ func (p *ServiceProcess) Start(ctx context.Context) error {
 		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
+	// Add EXTERNAL_PORT environment variable if configured
+	if p.config.ExternalPort > 0 {
+		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("EXTERNAL_PORT=%d", p.config.ExternalPort))
+	}
+
 	// Set output
 	p.cmd.Stdout = os.Stdout
 	p.cmd.Stderr = os.Stderr
