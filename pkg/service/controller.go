@@ -63,8 +63,10 @@ func (s *ControllerServer) Stop(ctx context.Context, req *supervisorv1.StopReque
 		gracePeriod = req.GracePeriod.AsDuration()
 	}
 
-	// Signal stop
-	close(s.service.stopCh)
+	// Signal stop - use sync.Once to prevent panic from double-closing
+	s.service.stopOnce.Do(func() {
+		close(s.service.stopCh)
+	})
 
 	// Wait for graceful shutdown or timeout
 	done := make(chan struct{})

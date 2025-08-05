@@ -263,8 +263,9 @@ func (e *Engine) Stop(ctx context.Context) error {
 				e.logger.Info("Updating database and instance statuses during shutdown...")
 			}
 
-			// Use a short timeout for shutdown operations
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// Use a separate context for database operations to avoid cancellation issues
+			dbCtx := context.Background()
+			shutdownCtx, cancel := context.WithTimeout(dbCtx, 5*time.Second)
 			defer cancel()
 
 			// Update all instance statuses to STATUS_DISCONNECTED (synchronous)

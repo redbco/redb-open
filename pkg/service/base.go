@@ -84,6 +84,7 @@ type BaseService struct {
 	state     commonv1.ServiceState
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
+	stopOnce  sync.Once
 
 	// Service implementation
 	impl Service
@@ -353,13 +354,30 @@ func (s *BaseService) heartbeatLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
+			// Check if we're shutting down before sending heartbeat
+			select {
+			case <-s.stopCh:
+				s.Logger.Info("Heartbeat loop stopping due to shutdown signal")
+				return
+			default:
+			}
+
 			if err := s.sendHeartbeat(ctx); err != nil {
-				s.Logger.Errorf("Failed to send heartbeat: %v", err)
+				// Check if this is due to shutdown
+				select {
+				case <-s.stopCh:
+					s.Logger.Info("Heartbeat loop stopping due to shutdown signal")
+					return
+				default:
+					s.Logger.Errorf("Failed to send heartbeat: %v", err)
+				}
 			}
 
 		case <-ctx.Done():
+			s.Logger.Info("Heartbeat loop stopping due to context cancellation")
 			return
 		case <-s.stopCh:
+			s.Logger.Info("Heartbeat loop stopping due to stop signal")
 			return
 		}
 	}
@@ -429,6 +447,14 @@ func (s *BaseService) logStreamLoop(ctx context.Context) {
 	retryDelay := time.Second
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Check if we're shutting down before attempting to create stream
+		select {
+		case <-s.stopCh:
+			s.Logger.Info("Log stream loop stopping due to shutdown signal")
+			return
+		default:
+		}
+
 		var err error
 		stream, err = s.supervisorClient.StreamLogs(ctx)
 		if err != nil {
@@ -441,6 +467,7 @@ func (s *BaseService) logStreamLoop(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case <-s.stopCh:
+					s.Logger.Info("Log stream loop stopping due to shutdown signal")
 					return
 				}
 			} else {
@@ -469,6 +496,19 @@ func (s *BaseService) logStreamLoop(ctx context.Context) {
 	for {
 		select {
 		case entry := <-logCh:
+			// Check if we're shutting down before sending log
+			select {
+			case <-s.stopCh:
+				s.Logger.Info("Log stream loop stopping due to shutdown signal")
+				if stream != nil {
+					stream.CloseSend()
+				}
+				// Re-enable console output when shutting down
+				s.Logger.EnableConsoleOutput()
+				return
+			default:
+			}
+
 			req := &supervisorv1.LogStreamRequest{
 				Entry: &commonv1.LogEntry{
 					Timestamp: timestamppb.New(entry.Time),
@@ -485,6 +525,15 @@ func (s *BaseService) logStreamLoop(ctx context.Context) {
 			}
 
 			if err := stream.Send(req); err != nil {
+				// Check if this is due to shutdown before retrying
+				select {
+				case <-s.stopCh:
+					s.Logger.EnableConsoleOutput()
+					s.Logger.Info("Log stream stopping due to shutdown")
+					return
+				default:
+				}
+
 				// Re-enable console output temporarily for error logging
 				s.Logger.EnableConsoleOutput()
 				s.Logger.Errorf("Failed to send log: %v", err)
@@ -493,9 +542,16 @@ func (s *BaseService) logStreamLoop(ctx context.Context) {
 				// Try to recreate the stream on error
 				stream.CloseSend()
 
-				// Retry creating the stream
+				// Retry creating the stream with shutdown check
 				for retryAttempt := 1; retryAttempt <= 3; retryAttempt++ {
-					time.Sleep(time.Second * time.Duration(retryAttempt))
+					// Check for shutdown before retry
+					select {
+					case <-s.stopCh:
+						s.Logger.EnableConsoleOutput()
+						return
+					case <-time.After(time.Second * time.Duration(retryAttempt)):
+					}
+
 					newStream, err := s.supervisorClient.StreamLogs(ctx)
 					if err != nil {
 						// Re-enable console output temporarily for error logging
@@ -541,14 +597,24 @@ func (s *BaseService) healthCheckLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
+			// Check if we're shutting down before running health checks
+			select {
+			case <-s.stopCh:
+				s.Logger.Info("Health check loop stopping due to shutdown signal")
+				return
+			default:
+			}
+
 			// Run health checks
 			for name, checkFunc := range checks {
 				s.HealthChecker.RunCheck(name, checkFunc)
 			}
 
 		case <-ctx.Done():
+			s.Logger.Info("Health check loop stopping due to context cancellation")
 			return
 		case <-s.stopCh:
+			s.Logger.Info("Health check loop stopping due to stop signal")
 			return
 		}
 	}
@@ -595,9 +661,18 @@ func (s *BaseService) setState(state commonv1.ServiceState) {
 func (s *BaseService) shutdown(ctx context.Context) error {
 	s.Logger.Info("Starting graceful shutdown")
 
-	// Stop service implementation
+	// First, stop background tasks that might interfere with shutdown
+	// Use sync.Once to prevent panic from double-closing the channel
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+	})
+
+	// Stop service implementation first with proper timeout
 	gracePeriod := 30 * time.Second
-	if err := s.impl.Stop(ctx, gracePeriod); err != nil {
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), gracePeriod)
+	defer stopCancel()
+
+	if err := s.impl.Stop(stopCtx, gracePeriod); err != nil {
 		s.Logger.Errorf("Service implementation shutdown error: %v", err)
 	}
 
@@ -612,26 +687,42 @@ func (s *BaseService) shutdown(ctx context.Context) error {
 			Reason:    "Graceful shutdown",
 		}
 
-		// Use a longer timeout for unregistration to avoid deadline exceeded errors
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		// Use a separate context for unregistration to avoid cancellation issues
+		unregisterCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		if _, err := s.supervisorClient.UnregisterService(ctx, req); err != nil {
+		if _, err := s.supervisorClient.UnregisterService(unregisterCtx, req); err != nil {
 			s.Logger.Errorf("Failed to unregister: %v", err)
 		} else {
 			s.Logger.Info("Successfully unregistered from supervisor")
 		}
 	}
 
-	// Stop gRPC server
+	// Log service stopped BEFORE stopping gRPC server to ensure it's sent immediately
+	s.Logger.Info("Service stopped")
+
+	// Stop gRPC server gracefully with timeout
 	if s.grpcServer != nil {
-		s.grpcServer.GracefulStop()
+		// Create a channel to signal graceful stop completion
+		done := make(chan struct{})
+		go func() {
+			s.grpcServer.GracefulStop()
+			close(done)
+		}()
+
+		// Wait for graceful stop or timeout
+		select {
+		case <-done:
+			// Graceful stop completed
+		case <-time.After(5 * time.Second):
+			//s.Logger.Warn("gRPC server graceful stop timed out, forcing stop")
+			s.grpcServer.Stop()
+		}
 	}
 
 	// Signal stopped
 	close(s.stoppedCh)
 	s.setState(commonv1.ServiceState_SERVICE_STATE_STOPPED)
-	s.Logger.Info("Service stopped")
 
 	return nil
 }
