@@ -81,6 +81,7 @@ services:
       - core
     environment:
       SERVICE_NAME: mesh
+    external_port: 8443
 
   anchor:
     enabled: true
@@ -107,6 +108,7 @@ services:
       - core
     environment:
       SERVICE_NAME: serviceapi
+    external_port: 8081
 
   clientapi:
     enabled: true
@@ -119,6 +121,7 @@ services:
       - core
     environment:
       SERVICE_NAME: clientapi
+    external_port: 8080
   
   queryapi:
     enabled: true
@@ -131,6 +134,7 @@ services:
       - core
     environment:
       SERVICE_NAME: queryapi
+    external_port: 8082
 
   mcpserver:
     enabled: true

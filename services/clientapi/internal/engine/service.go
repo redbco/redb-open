@@ -80,9 +80,10 @@ func (s *Service) GetCapabilities() *supervisorv1.ServiceCapabilities {
 			"core",
 		},
 		RequiredConfig: map[string]string{
-			"services.clientapi.http_port": "HTTP port for the Client API service", // Fixed: Use hyphenated name
-			"services.clientapi.timeout":   "Request timeout in seconds",           // Fixed: Use hyphenated name
+			"services.clientapi.http_port": "HTTP port for the Client API service (fallback)",
+			"services.clientapi.timeout":   "Request timeout in seconds",
 			"services.core.grpc_address":   "gRPC address of the Core service",
+			"EXTERNAL_PORT":                "External HTTP port (environment variable)",
 		},
 	}
 }

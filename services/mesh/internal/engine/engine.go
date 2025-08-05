@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -245,11 +247,26 @@ func (e *Engine) startMeshRuntime(ctx context.Context, initInfo *MeshInitInfo) e
 	// Note: Network layer is handled by the mesh node itself
 	// The mesh node will initialize its own WebSocket network on the configured port
 
+	// Get WebSocket port from configuration
+	// Check for external_port from environment first, then fall back to config
+	wsPortStr := os.Getenv("EXTERNAL_PORT")
+	if wsPortStr == "" {
+		wsPortStr = e.config.Get("services.mesh.external_port") // Fallback to config
+	}
+	if wsPortStr == "" {
+		wsPortStr = "8443" // Default WebSocket port
+	}
+	wsPort, err := strconv.Atoi(wsPortStr)
+	if err != nil {
+		e.logger.Errorf("Invalid WebSocket port configuration: %v", err)
+		return fmt.Errorf("invalid WebSocket port configuration: %v", err)
+	}
+
 	// Initialize mesh node (with or without credentials)
 	meshConfig := mesh.Config{
 		NodeID:        initInfo.NodeInfo.NodeID,
 		MeshID:        initInfo.MeshInfo.MeshID,
-		ListenAddress: ":8443", // Default WebSocket port
+		ListenAddress: fmt.Sprintf(":%d", wsPort),
 		Heartbeat:     30 * time.Second,
 		Timeout:       60 * time.Second,
 	}
