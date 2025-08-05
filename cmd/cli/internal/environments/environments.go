@@ -147,7 +147,7 @@ func ListEnvironments() error {
 			environment.RelationshipCount)
 	}
 
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println()
 	return nil
 }

@@ -384,7 +384,7 @@ func Profile() error {
 	fmt.Fprintf(w, "Email\t%s\n", response.Profile.Email)
 	fmt.Fprintf(w, "Name\t%s\n", response.Profile.Name)
 
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println()
 	return nil
 }
@@ -432,7 +432,7 @@ func ListSessions() error {
 		)
 	}
 
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println()
 	return nil
 }
@@ -715,7 +715,7 @@ func Status() error {
 	fmt.Fprintf(w, "Access Token Expires:\t%s\n", accessExpiry)
 	fmt.Fprintf(w, "Refresh Token:\t%s\n", refreshStatus)
 	fmt.Fprintf(w, "Refresh Token Expires:\t%s\n", refreshExpiry)
-	w.Flush()
+	_ = w.Flush()
 
 	// Show warnings if tokens are expired
 	if accessExpired {

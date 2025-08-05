@@ -205,7 +205,7 @@ func formatSchemaData(schemaJSON string) error {
 				col.ColumnDefault,
 				unique)
 		}
-		w.Flush()
+		_ = w.Flush()
 		fmt.Println()
 	}
 
@@ -290,7 +290,7 @@ func formatTablesData(tablesJSON string) error {
 				privileged,
 				confidence)
 		}
-		w.Flush()
+		_ = w.Flush()
 
 		// Show classification scores if available
 		if len(table.ClassificationScores) > 0 {
@@ -301,7 +301,7 @@ func formatTablesData(tablesJSON string) error {
 			for _, score := range table.ClassificationScores {
 				fmt.Fprintf(scoreW, "%s\t%.2f\t%s\n", score.Category, score.Score, score.Reason)
 			}
-			scoreW.Flush()
+			_ = scoreW.Flush()
 		}
 		fmt.Println()
 	}
@@ -360,7 +360,7 @@ func ListDatabases() error {
 			db.Status,
 			enabled)
 	}
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println()
 	return nil
 }

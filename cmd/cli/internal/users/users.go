@@ -112,7 +112,7 @@ func ListUsers() error {
 			user.UserID)
 	}
 
-	w.Flush()
+	_ = w.Flush()
 	fmt.Println()
 	return nil
 }
