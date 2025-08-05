@@ -79,11 +79,11 @@ func readPassword(prompt string) (string, error) {
 }
 
 // getServiceAPIURLWithPrompt gets the service API URL, prompting for it if not stored
-func getServiceAPIURLWithPrompt() (string, error) {
+func getServiceAPIURLWithPrompt() string {
 	// Try to get the service API URL from stored configuration
 	serviceAPIURL, err := config.GetServiceAPIURL()
 	if err == nil {
-		return serviceAPIURL, nil
+		return serviceAPIURL
 	}
 
 	// If not stored, prompt the user
@@ -101,7 +101,7 @@ func getServiceAPIURLWithPrompt() (string, error) {
 		input = "http://" + input
 	}
 
-	return input, nil
+	return input
 }
 
 // toURLSafe converts a string to a URL-safe slug
@@ -142,10 +142,7 @@ func performInitialSetup() error {
 	fmt.Println()
 
 	// Get Service API URL - prompt if not stored
-	serviceAPIURL, err := getServiceAPIURLWithPrompt()
-	if err != nil {
-		return fmt.Errorf("failed to get service API URL: %v", err)
-	}
+	serviceAPIURL := getServiceAPIURLWithPrompt()
 
 	// Check if setup is already done by trying to list tenants
 	client := httpclient.GetClient()
@@ -153,7 +150,7 @@ func performInitialSetup() error {
 		Tenants []interface{} `json:"tenants"`
 	}
 
-	err = client.Get(fmt.Sprintf("%s/api/v1/tenants", serviceAPIURL), &tenantsResponse, false)
+	err := client.Get(fmt.Sprintf("%s/api/v1/tenants", serviceAPIURL), &tenantsResponse, false)
 	if err == nil && len(tenantsResponse.Tenants) > 0 {
 		return SetupError{message: "initial setup is not available: tenants already exist in the system"}
 	}
