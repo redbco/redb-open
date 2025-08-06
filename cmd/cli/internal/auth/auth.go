@@ -259,32 +259,32 @@ func Login(args []string) error {
 	url := fmt.Sprintf("%s/%s/api/v1/auth/login", hostname, tenantURL)
 
 	var loginResp LoginResponse
-	if err := client.Post(url, loginReq, &loginResp, false); err != nil {
+	if err = client.Post(url, loginReq, &loginResp, false); err != nil {
 		return fmt.Errorf("login failed: %v", err)
 	}
 
 	// Store credentials in keyring
-	if err := config.StoreUsername(username); err != nil {
+	if err = config.StoreUsername(username); err != nil {
 		return fmt.Errorf("failed to store username: %v", err)
 	}
 
-	if err := config.StoreToken(username, loginResp.AccessToken); err != nil {
+	if err = config.StoreToken(username, loginResp.AccessToken); err != nil {
 		return fmt.Errorf("failed to store token: %v", err)
 	}
 
-	if err := config.StoreRefreshToken(username, loginResp.RefreshToken); err != nil {
+	if err = config.StoreRefreshToken(username, loginResp.RefreshToken); err != nil {
 		return fmt.Errorf("failed to store refresh token: %v", err)
 	}
 
-	if err := config.StoreSessionID(username, loginResp.SessionID); err != nil {
+	if err = config.StoreSessionID(username, loginResp.SessionID); err != nil {
 		return fmt.Errorf("failed to store session ID: %v", err)
 	}
 
-	if err := config.StoreHostname(username, hostname); err != nil {
+	if err = config.StoreHostname(username, hostname); err != nil {
 		return fmt.Errorf("failed to store hostname: %v", err)
 	}
 
-	if err := config.StoreTenant(username, tenantURL); err != nil {
+	if err = config.StoreTenant(username, tenantURL); err != nil {
 		return fmt.Errorf("failed to store tenant: %v", err)
 	}
 
@@ -751,7 +751,7 @@ func SelectWorkspace(workspaceName string) error {
 		} `json:"workspaces"`
 	}
 
-	if err := client.Get(url, &response, true); err != nil {
+	if err = client.Get(url, &response, true); err != nil {
 		return fmt.Errorf("failed to get workspaces: %v", err)
 	}
 
