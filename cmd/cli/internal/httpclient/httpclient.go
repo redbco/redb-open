@@ -121,6 +121,7 @@ func (c *HTTPClient) handleResponse(resp *http.Response, result interface{}) err
 
 // Get performs a GET request
 func (c *HTTPClient) Get(url string, result interface{}, requireAuth bool) error {
+	//nolint: bodyclose // response body is closed in handleResponse
 	resp, err := c.makeRequest("GET", url, nil, requireAuth)
 	if err != nil {
 		return err
@@ -130,6 +131,7 @@ func (c *HTTPClient) Get(url string, result interface{}, requireAuth bool) error
 
 // Post performs a POST request
 func (c *HTTPClient) Post(url string, body, result interface{}, requireAuth bool) error {
+	//nolint: bodyclose // response body is closed in handleResponse
 	resp, err := c.makeRequest("POST", url, body, requireAuth)
 	if err != nil {
 		return err
@@ -139,6 +141,7 @@ func (c *HTTPClient) Post(url string, body, result interface{}, requireAuth bool
 
 // Put performs a PUT request
 func (c *HTTPClient) Put(url string, body, result interface{}, requireAuth bool) error {
+	//nolint: bodyclose // response body is closed in handleResponse
 	resp, err := c.makeRequest("PUT", url, body, requireAuth)
 	if err != nil {
 		return err
@@ -148,6 +151,7 @@ func (c *HTTPClient) Put(url string, body, result interface{}, requireAuth bool)
 
 // Delete performs a DELETE request
 func (c *HTTPClient) Delete(url string, requireAuth bool) error {
+	//nolint: bodyclose // response body is closed in handleResponse
 	resp, err := c.makeRequest("DELETE", url, nil, requireAuth)
 	if err != nil {
 		return err
