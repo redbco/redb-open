@@ -56,12 +56,13 @@ func Init(configFile string) error {
 
 	// Create config directory if it doesn't exist
 	configDir := filepath.Dir(configFile)
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
+	if err := os.MkdirAll(configDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
 
 	// Try to read existing config file
 	if _, err := os.Stat(configFile); err == nil {
+		//nolint:gosec // configFile is constructed internally and safe to read
 		data, err := os.ReadFile(configFile)
 		if err != nil {
 			return fmt.Errorf("failed to read config file: %v", err)
