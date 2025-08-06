@@ -52,6 +52,7 @@ type Engine struct {
 	logger     *logger.Logger
 	standalone bool
 	db         *database.PostgreSQL
+	redis      *database.Redis
 	initInfo   *MeshInitInfo // Store initialization info for shutdown operations
 
 	// Consensus groups management
@@ -105,6 +106,16 @@ func (e *Engine) SetDatabase(db *database.PostgreSQL) {
 // GetDatabase returns the database connection
 func (e *Engine) GetDatabase() *database.PostgreSQL {
 	return e.db
+}
+
+// SetRedis sets the Redis connection for the engine
+func (e *Engine) SetRedis(redis *database.Redis) {
+	e.redis = redis
+}
+
+// GetRedis returns the Redis connection
+func (e *Engine) GetRedis() *database.Redis {
+	return e.redis
 }
 
 // checkInitializationState examines the database to determine the current initialization state

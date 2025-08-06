@@ -5,6 +5,7 @@ import (
 	"net"
 
 	meshv1 "github.com/redbco/redb-open/api/proto/mesh/v1"
+	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/mesh/internal/mesh"
 	"google.golang.org/grpc"
@@ -24,12 +25,12 @@ type Server struct {
 }
 
 // NewServer creates a new gRPC server
-func NewServer(cfg Config, node *mesh.Node, logger *logger.Logger) (*Server, error) {
+func NewServer(cfg Config, node *mesh.Node, logger *logger.Logger, postgres *database.PostgreSQL, redis *database.Redis) (*Server, error) {
 	server := grpc.NewServer()
 
 	// Register all services
 	meshService := NewMeshService(node, logger)
-	consensusService := NewConsensusService(logger)
+	consensusService := NewConsensusService(logger, postgres, redis)
 
 	meshv1.RegisterMeshServiceServer(server, meshService)
 	meshv1.RegisterConsensusServiceServer(server, consensusService)

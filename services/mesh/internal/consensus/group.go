@@ -1,18 +1,29 @@
 package consensus
 
+// Package consensus provides Raft-based distributed consensus functionality.
+// This implementation uses HashiCorp Raft for leader election, log replication,
+// and state machine replication across a cluster of nodes.
+//
+// The consensus group manages:
+// - Leader election and failover
+// - Log replication and consistency
+// - State machine operations
+// - Membership changes
+// - Snapshot and recovery
+
 import (
+	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/hashicorp/raft"
-	raftboltdb "github.com/hashicorp/raft-boltdb"
+	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/mesh/internal/consensus/fsm"
+	"github.com/redbco/redb-open/services/mesh/internal/consensus/stores"
 )
 
 // Config holds the consensus group configuration
@@ -23,6 +34,8 @@ type Config struct {
 	BindAddr     string
 	Peers        []string
 	SnapshotPath string
+	PostgreSQL   *database.PostgreSQL
+	Redis        *database.Redis
 }
 
 // Group represents a consensus group
@@ -40,6 +53,20 @@ type Group struct {
 
 // NewGroup creates a new consensus group
 func NewGroup(cfg Config, logger *logger.Logger) (*Group, error) {
+	// Validate configuration
+	if cfg.GroupID == "" {
+		return nil, fmt.Errorf("group ID is required")
+	}
+	if cfg.NodeID == "" {
+		return nil, fmt.Errorf("node ID is required")
+	}
+	if cfg.DataDir == "" {
+		return nil, fmt.Errorf("data directory is required")
+	}
+	if cfg.SnapshotPath == "" {
+		return nil, fmt.Errorf("snapshot path is required")
+	}
+
 	// Create data directory if it doesn't exist
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %v", err)
@@ -52,20 +79,28 @@ func NewGroup(cfg Config, logger *logger.Logger) (*Group, error) {
 	raftConfig := raft.DefaultConfig()
 	raftConfig.LocalID = raft.ServerID(cfg.NodeID)
 
-	// Create log store
-	logStore, err := raftboltdb.NewBoltStore(filepath.Join(cfg.DataDir, "raft.db"))
+	// Validate database connections
+	if cfg.PostgreSQL == nil {
+		return nil, fmt.Errorf("PostgreSQL connection is required")
+	}
+	if cfg.Redis == nil {
+		return nil, fmt.Errorf("Redis connection is required")
+	}
+
+	// Create log store using PostgreSQL
+	logStore, err := stores.NewPostgresLogStore(cfg.PostgreSQL, logger, cfg.GroupID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log store: %v", err)
 	}
 
-	// Create stable store
-	stableStore, err := raftboltdb.NewBoltStore(filepath.Join(cfg.DataDir, "stable.db"))
+	// Create stable store using PostgreSQL
+	stableStore, err := stores.NewPostgresStableStore(cfg.PostgreSQL, logger, cfg.GroupID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stable store: %v", err)
 	}
 
-	// Create snapshot store
-	snapshotStore, err := raft.NewFileSnapshotStore(cfg.SnapshotPath, 3, os.Stderr)
+	// Create snapshot store using Redis
+	snapshotStore, err := stores.NewRedisSnapshotStore(cfg.Redis, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create snapshot store: %v", err)
 	}
@@ -155,6 +190,29 @@ func (g *Group) Apply(cmd []byte) error {
 	return future.Error()
 }
 
+// ApplyCommand applies a structured command to the state machine
+func (g *Group) ApplyCommand(cmdType string, payload interface{}) error {
+	// Marshal payload to JSON
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %v", err)
+	}
+
+	// Create command structure
+	cmd := fsm.Command{
+		Type:    cmdType,
+		Payload: json.RawMessage(payloadBytes),
+	}
+
+	// Marshal command to JSON
+	cmdBytes, err := json.Marshal(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to marshal command: %v", err)
+	}
+
+	return g.Apply(cmdBytes)
+}
+
 // GetState returns the current state of the group
 func (g *Group) GetState() GroupState {
 	g.mu.RLock()
@@ -174,6 +232,43 @@ func (g *Group) GetTerm() uint64 {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.term
+}
+
+// GetMembers returns the current members of the consensus group
+func (g *Group) GetMembers() []string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	state := g.fsm.GetState()
+	members := make([]string, 0, len(state.Members))
+	for memberID := range state.Members {
+		members = append(members, memberID)
+	}
+	return members
+}
+
+// GetConfig returns the current configuration of the consensus group
+func (g *Group) GetConfig() map[string]interface{} {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	state := g.fsm.GetState()
+	return state.Config
+}
+
+// AddMember adds a member to the consensus group
+func (g *Group) AddMember(memberID string) error {
+	return g.ApplyCommand("add_member", memberID)
+}
+
+// RemoveMember removes a member from the consensus group
+func (g *Group) RemoveMember(memberID string) error {
+	return g.ApplyCommand("remove_member", memberID)
+}
+
+// UpdateConfig updates the configuration of the consensus group
+func (g *Group) UpdateConfig(config map[string]interface{}) error {
+	return g.ApplyCommand("update_config", config)
 }
 
 // AddPeer adds a new peer to the cluster
@@ -204,61 +299,3 @@ const (
 	GroupStateDegraded
 	GroupStateDisbanded
 )
-
-// StateMachine implements the Raft FSM interface
-type StateMachine struct {
-	logger *logger.Logger
-	mu     sync.RWMutex
-	state  map[string]interface{}
-}
-
-// NewStateMachine creates a new state machine
-func NewStateMachine(logger *logger.Logger) *StateMachine {
-	return &StateMachine{
-		logger: logger,
-		state:  make(map[string]interface{}),
-	}
-}
-
-// Apply applies a log entry to the state machine
-func (s *StateMachine) Apply(log *raft.Log) interface{} {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// TODO: Implement state machine logic
-	s.logger.Debug("Applying log entry: (index: %d, term: %d, type: %s)", log.Index, log.Term, log.Type.String())
-
-	return nil
-}
-
-// Snapshot returns a snapshot of the state machine
-func (s *StateMachine) Snapshot() (raft.FSMSnapshot, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// TODO: Implement snapshot logic
-	return &Snapshot{state: s.state}, nil
-}
-
-// Restore restores the state machine from a snapshot
-func (s *StateMachine) Restore(rc io.ReadCloser) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// TODO: Implement restore logic
-	return nil
-}
-
-// Snapshot represents a snapshot of the state machine
-type Snapshot struct {
-	state map[string]interface{}
-}
-
-// Persist saves the snapshot to the given sink
-func (s *Snapshot) Persist(sink raft.SnapshotSink) error {
-	// TODO: Implement persist logic
-	return nil
-}
-
-// Release releases any resources associated with the snapshot
-func (s *Snapshot) Release() {}

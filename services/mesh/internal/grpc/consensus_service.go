@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	meshv1 "github.com/redbco/redb-open/api/proto/mesh/v1"
+	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/mesh/internal/consensus"
 	"google.golang.org/grpc/codes"
@@ -14,15 +15,19 @@ import (
 // consensusService implements the ConsensusServiceServer interface
 type consensusService struct {
 	meshv1.UnimplementedConsensusServiceServer
-	groups map[string]*consensus.Group
-	logger *logger.Logger
+	groups   map[string]*consensus.Group
+	logger   *logger.Logger
+	postgres *database.PostgreSQL
+	redis    *database.Redis
 }
 
 // NewConsensusService creates a new consensus service handler
-func NewConsensusService(logger *logger.Logger) *consensusService {
+func NewConsensusService(logger *logger.Logger, postgres *database.PostgreSQL, redis *database.Redis) *consensusService {
 	return &consensusService{
-		groups: make(map[string]*consensus.Group),
-		logger: logger,
+		groups:   make(map[string]*consensus.Group),
+		logger:   logger,
+		postgres: postgres,
+		redis:    redis,
 	}
 }
 
@@ -39,8 +44,13 @@ func (s *consensusService) CreateGroup(ctx context.Context, req *meshv1.CreateGr
 	// Create consensus group configuration
 	cfg := consensus.Config{
 		GroupID:      req.GroupId,
+		NodeID:       fmt.Sprintf("node-%s", req.GroupId), // Generate a node ID based on group ID
 		DataDir:      fmt.Sprintf("/data/consensus/%s", req.GroupId),
+		BindAddr:     ":0", // Use dynamic port allocation
+		Peers:        req.InitialMembers,
 		SnapshotPath: fmt.Sprintf("/data/snapshots/%s", req.GroupId),
+		PostgreSQL:   s.postgres,
+		Redis:        s.redis,
 	}
 
 	// Create the consensus group
@@ -73,7 +83,9 @@ func (s *consensusService) JoinGroup(ctx context.Context, req *meshv1.JoinGroupR
 	}
 
 	// Add the new peer to the group
-	if err := group.AddPeer(req.NodeId, ""); err != nil {
+	// Construct peer address based on node ID (this should be configurable)
+	peerAddr := fmt.Sprintf(":%d", 8080+len(req.NodeId)) // Simple port assignment
+	if err := group.AddPeer(req.NodeId, peerAddr); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to add peer: %v", err)
 	}
 
@@ -117,10 +129,12 @@ func (s *consensusService) GetGroupStatus(ctx context.Context, req *meshv1.GetGr
 	state := group.GetState()
 	leader := group.GetLeader()
 	term := group.GetTerm()
+	members := group.GetMembers()
 
 	return &meshv1.GetGroupStatusResponse{
 		GroupId:  req.GroupId,
 		LeaderId: leader,
+		Members:  members,
 		State:    meshv1.GroupState(state),
 		Term:     int64(term),
 	}, nil

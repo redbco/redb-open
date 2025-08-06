@@ -834,6 +834,33 @@ CREATE TABLE mesh_runtime_config (
 );
 
 -- =============================================================================
+-- RAFT CONSENSUS SYSTEM TABLES
+-- =============================================================================
+
+-- Raft log entries for distributed consensus
+CREATE TABLE raft_logs (
+    id BIGSERIAL PRIMARY KEY,
+    group_id VARCHAR(255) NOT NULL,
+    log_index BIGINT NOT NULL,
+    log_term BIGINT NOT NULL,
+    log_type SMALLINT NOT NULL,
+    log_data BYTEA,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(group_id, log_index)
+);
+
+-- Raft stable store for persistent state
+CREATE TABLE raft_stable_store (
+    id BIGSERIAL PRIMARY KEY,
+    group_id VARCHAR(255) NOT NULL,
+    key_name VARCHAR(255) NOT NULL,
+    value BYTEA,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(group_id, key_name)
+);
+
+-- =============================================================================
 -- LICENSE MANAGEMENT TABLES
 -- =============================================================================
 
@@ -1020,6 +1047,15 @@ CREATE INDEX idx_mesh_node_state_node_id ON mesh_node_state(node_id);
 CREATE INDEX idx_mesh_routing_table_destination ON mesh_routing_table(destination);
 CREATE INDEX idx_mesh_runtime_config_key ON mesh_runtime_config(key);
 CREATE INDEX idx_mesh_state_key ON mesh_state(key);
+
+-- Raft consensus indexes for performance
+CREATE INDEX idx_raft_logs_group_index ON raft_logs(group_id, log_index);
+CREATE INDEX idx_raft_logs_group_term ON raft_logs(group_id, log_term);
+CREATE INDEX idx_raft_logs_index_range ON raft_logs(group_id, log_index) WHERE log_index > 0;
+CREATE INDEX idx_raft_logs_term_range ON raft_logs(group_id, log_term) WHERE log_term > 0;
+CREATE INDEX idx_raft_stable_store_group_key ON raft_stable_store(group_id, key_name);
+CREATE INDEX idx_raft_stable_store_group_id ON raft_stable_store(group_id);
+CREATE INDEX idx_raft_stable_store_updated ON raft_stable_store(group_id, updated_at);
 
 -- Resource name indexes
 CREATE INDEX idx_workspaces_name ON workspaces(workspace_name);

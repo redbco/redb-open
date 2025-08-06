@@ -8,6 +8,12 @@ import (
 	"github.com/redbco/redb-open/pkg/logger"
 )
 
+// NOTE: This file contains a custom consensus implementation that is separate from
+// the Raft-based consensus implementation in services/mesh/internal/consensus/.
+// This custom implementation is for mesh-level consensus operations,
+// while the Raft implementation is for service level consensus groups.
+// TODO: These might be merged in the future.
+
 // ConsensusState represents the state of a node in the consensus protocol
 type ConsensusState string
 
