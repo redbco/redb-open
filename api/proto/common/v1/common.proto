@@ -37,6 +37,11 @@ enum Status {
     STATUS_LEAVING = 26;
     STATUS_SEEDING = 27;
     STATUS_ORPHANED = 28;
+    STATUS_SENT = 29;
+    STATUS_CANCELLED = 30;
+    STATUS_PROCESSING = 31;
+    STATUS_DONE = 32;
+    STATUS_RECEIVED = 33;
 }
 
 // ServiceInfo contains basic information about a service

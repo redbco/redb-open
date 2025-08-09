@@ -1,4 +1,4 @@
-# Mesh Microservice Architecture (Updated for Shared Packages)
+# Mesh Microservice Architecture
 
 This defines the full architecture and implementation plan for a Golang mesh microservice that provides asymmetric, NAT-friendly, multi-path connectivity and reliable data delivery between application nodes. The implementation leverages the shared packages in `/pkg` and follows the established engine/server/service pattern used by all microservices.
 
@@ -11,7 +11,7 @@ This defines the full architecture and implementation plan for a Golang mesh mic
 - Control Plane:
     - Gossip/Serf-like membership & health detection.
     - Mesh-level consensus: ensure system/internal-DB updates are durably delivered to all nodes.
-    - No static seed node; all nodes equal, but use Raft for leadership/elections where needed.
+    - No static seed node; all nodes equal after joining, but use Raft for leadership/elections where needed.
 - Data Plane:
 	- Three traffic classes over gRPC-facing API:
 	    1.	System updates (mesh-wide propagation)
@@ -21,7 +21,10 @@ This defines the full architecture and implementation plan for a Golang mesh mic
     - Encryption:
         - Use tenant-specific encryption keys for all tenant client data (via `/pkg/encryption`)
         - Use mesh/node encryption keys for system and internal DB updates
-- Persistence per node: Local PostgreSQL (durable metadata/state) and Redis (queues/ephemeral, dedupe) via `/pkg/database`.
+- Persistence per node: 
+    - Local PostgreSQL for application data (durable metadata/state) via `/pkg/database`
+    - BoltDB for Raft consensus logs and state
+    - Redis for queues/ephemeral data and deduplication via `/pkg/database`
 - Supervisor integration: gRPC both ways; base server/service/engine pattern; shared global config via `/pkg/service`.
 - Scalability: Goroutine-based, non-blocking I/O, bounded worker pools, backpressure, resumable streams.
 
@@ -45,19 +48,19 @@ services/mesh/
         transport/ws/               # WebSocket transport layer with VirtualLink
             dialer.go               # Outbound connections
             listener.go             # Inbound connections
-            virtuallink.go          # VirtualLink abstraction
-            lanes.go                # Lane management and configuration
-            mux.go                  # Multiplexing across lanes
+            virtuallink.go          # VirtualLink abstraction (future enhancement)
+            lanes.go                # Lane management and configuration (future enhancement)
+            mux.go                  # Multiplexing across lanes (future enhancement)
             frame.go                # Message framing with lane_id
             auth.go                 # Authentication
-            backpressure.go         # Per-lane credit management
-            health.go               # Lane health monitoring
+            backpressure.go         # Per-lane credit management (future enhancement)
+            health.go               # Lane health monitoring (future enhancement)
         gossip/                     # Membership & health detection
             swim.go                 # SWIM protocol implementation
             membership.go           # Membership management
         consensus/raft/             # Raft consensus engine
             node.go                 # Raft node implementation
-            storage.go              # Raft storage interface
+            storage.go              # BoltDB storage interface
             transport.go            # Raft transport over WS
             groups.go               # Group management
         topology/                   # Link-state topology
@@ -129,7 +132,7 @@ func (s *MeshService) HealthChecks() map[string]health.CheckFunc
 ```
 
 ### Database Integration (`/pkg/database`)
-- PostgreSQL for persistent state via `database.PostgreSQL`
+- PostgreSQL for persistent application state via `database.PostgreSQL`
 - Redis for queues and caching via `database.Redis`
 - Automatic connection management and health checks
 
@@ -164,6 +167,36 @@ func (s *MeshService) HealthChecks() map[string]health.CheckFunc
 - Automatic key rotation support
 
 
+## Storage Architecture
+
+### Data Storage Separation
+
+#### PostgreSQL (Application Data via `/pkg/database`)
+Stores all application-level persistent state:
+- Mesh configuration and metadata
+- Node information and status
+- Link state and metrics
+- Stream metadata and offsets
+- Topology snapshots
+- Message delivery logs
+- Outbox/inbox patterns for reliable delivery
+
+#### BoltDB (Raft Consensus Data)
+Stores Raft-specific consensus data:
+- Raft log entries
+- Raft stable state (term, vote, commit index)
+- Raft snapshots (compacted state)
+- Managed entirely by HashiCorp Raft library
+
+#### Redis (Ephemeral and Queue Data via `/pkg/database`)
+Stores temporary and performance-critical data:
+- Message queues (outbox/inbox hot paths)
+- Deduplication cache
+- Rate limiting and credit tokens
+- Path metrics cache
+- Session state
+
+
 ## Process Model & Concurrency
 
 - One goroutine per WebSocket peer for read loop; write loop per peer with buffered channel.
@@ -175,7 +208,16 @@ func (s *MeshService) HealthChecks() map[string]health.CheckFunc
 
 ## Networking & Transport
 
-### WebSocket Transport with VirtualLink Architecture
+### WebSocket Transport (Initial Implementation)
+
+#### Basic WebSocket Architecture
+- **Single Connection Per Peer**: One WebSocket connection between any two connected nodes
+- **Bidirectional Communication**: Full-duplex messaging over single connection
+- **Message Framing**: Internal header with stream_id, msg_type, tenant_id, seq, ack, path_id, hop_count, ttl, priority
+- **Connection Management**: Automatic reconnection with exponential backoff
+- **Security**: Secure via wss:// with mTLS where possible; fallback JWT (short-lived) with periodic re-auth
+
+### WebSocket Transport with VirtualLink Architecture (Future Enhancement)
 
 #### VirtualLink Abstraction
 - **VirtualLink**: Logical connection between two nodes managing K physical WebSocket connections ("lanes")
@@ -203,7 +245,7 @@ func (s *MeshService) HealthChecks() map[string]health.CheckFunc
 - **Layered Quotas**: Per-tenant/stream quotas on top of lane limits
 - **Critical Stream Protection**: If bulk lane saturates, critical streams stay on their designated lanes
 
-#### Adaptive Lane Management (Optional)
+#### Adaptive Lane Management
 - **Scale-up**: If bulk lane send buffer stays high, RTT inflates, and throughput < target for X seconds, open another bulk lane (up to cap, e.g., 4)
 - **Scale-down**: If idle and queues empty for Y seconds, close extra bulk lanes
 - **Cool-down**: Between expansions to avoid connection storms
@@ -214,16 +256,81 @@ func (s *MeshService) HealthChecks() map[string]health.CheckFunc
 - **Lane Failure**: Reroute streams to remaining lanes (respect class rules)
 - **Control Lane Recovery**: If control lane dies, immediately promote data lane to control (priority flip), spin up new data lane if needed
 
-#### Connection Management
+### Connection Management
 - **Outbound-only Dialer**: Every node dials configured peers (URIs) it can reach
 - **Reverse Connections**: For unreachable peers, reverse-accept connections: if A can dial B, B marks A as reachable and forms logical bidirectional link
-- **Security**: Secure via wss:// with mTLS where possible; fallback JWT (short-lived) with periodic re-auth
-- **Framing**: Internal header with stream_id, msg_type, tenant_id, seq, ack, path_id, hop_count, ttl, priority, lane_id
-- **Heartbeats**: Per-lane heartbeat frames (keepalive) & link probes (latency/bandwidth sampling)
+- **Heartbeats**: Periodic heartbeat frames (keepalive) & link probes (latency/bandwidth sampling)
 
 ### NAT/Relay
 
 - Mesh supports relay forwarding: nodes can act as transit if they have links that shorten path cost. No centralized TURN; relaying is part of routing.
+
+
+## Mesh Bootstrap and Discovery
+
+### Initial Mesh Creation (Seeding)
+1. **First Node Initialization**:
+   - User calls `SeedMesh` via gRPC to create initial mesh identity
+   - Generates mesh_id (ULID) and mesh encryption keys
+   - Initializes mesh metadata (name, description, join policy)
+   - Starts WebSocket listener on configured port
+   - Sets mesh state to ACTIVE, node state to ONLINE
+   - Node becomes the first member of MCG (Mesh Control Group)
+
+2. **Join Policies**:
+   - `OPEN`: Any node can join without authentication
+   - `KEY_REQUIRED`: Nodes must provide correct join_key
+   - `CLOSED`: No new nodes accepted (existing members only)
+
+### Node Join Process
+1. **New Node Joining**:
+   - User calls `JoinMesh` via gRPC with target node address (host:port)
+   - Establishes WebSocket connection to existing mesh node
+   - Performs handshake:
+     - Sends join request with node metadata and optional join_key
+     - Receives mesh configuration and current member list
+     - Exchanges node capabilities and encryption keys
+   - Upon successful join:
+     - New node becomes equal member of mesh
+     - Joins MCG for consensus participation
+     - Begins gossip protocol participation
+     - Establishes connections to other reachable nodes
+
+2. **Post-Join Behavior**:
+   - All nodes are equal (no permanent "seed" node concept)
+   - New connections between existing members use simplified handshake
+   - Nodes maintain peer list in PostgreSQL for reconnection after restart
+
+### Recovery and Reconnection
+1. **Node Restart Recovery**:
+   - Load mesh configuration from PostgreSQL
+   - Attempt reconnection to previously connected peers
+   - If successful, resume normal operation
+   - If isolated, wait for incoming connections
+
+2. **Mesh State Management**:
+   - `STATUS_HEALTHY`: All known nodes reachable
+   - `STATUS_DEGRADED`: Some nodes unreachable (< 50%)
+   - `STATUS_CRITICAL`: Majority of nodes unreachable (≥ 50%)
+   
+3. **Consensus During Degradation**:
+   - When mesh is CRITICAL (≥ 50% unreachable):
+     - Block all configuration changes except node eviction
+     - Maintain read-only operation for existing streams
+     - Allow eviction to restore quorum
+   - Evicted nodes cannot rejoin without explicit `JoinMesh`
+
+### Node Shutdown Process
+1. **Node Shutdown Process**:
+    - Supervisor sends a shutdown notification the service over gRPC (StopService(StopServiceRequest) -> StopServiceResponse)
+    - Mesh service notifies all other mesh nodes that it will shutdown
+    - Mesh service sets node and link status to offline in the internal database
+
+### Future Discovery Mechanisms (Optional)
+- DNS-based discovery with SRV records
+- Multicast/broadcast for local network discovery
+- External service registry integration (Consul, etcd)
+- Cloud provider metadata service integration
 
 
 ## Gossip (Membership & Health)
@@ -277,22 +384,42 @@ Coefficients are config-driven and adjustable per traffic class.
 
 ## Consensus
 
-### Raft Engine
-- Shared Raft implementation for control-plane and data-plane groups.
-- Transport for Raft messages uses the same WS overlay (separate control channel).
+### Raft Engine (Using HashiCorp Raft with BoltDB)
+- HashiCorp Raft library with BoltDB for log and stable storage
+- Transport for Raft messages uses the same WS overlay (separate control channel)
 - Dynamic groups:
-    - Mesh Control Group (MCG): all reachable nodes (or an elected quorum subset) participate; stores:
-        - Membership authoritative view,
-        - LSA version index & digests,
-        - Global system/internal DB update logs (commit index).
-    - Data Stream Groups (DSG): per-relationship / per-tenant stream group including the source and all targets (can be small, 2–10 nodes). Stores:
-        - Stream metadata, committed offsets, ack sets, producer epoch.
-- Leaderless startup: any node can bootstrap; Raft elects a leader automatically; no static seeds needed.
+    - **Mesh Control Group (MCG)**: All reachable nodes (or an elected quorum subset) participate; manages:
+        - Membership authoritative view
+        - LSA version index & digests
+        - Global system/internal DB update logs (commit index)
+        - Mesh configuration changes
+    - **Data Stream Groups (DSG)**: Per-relationship / per-tenant stream group including the source and all targets (can be small, 2–10 nodes). Manages:
+        - Stream metadata, committed offsets, ack sets, producer epoch
+        - Ensures all members process writes before considering complete
+- Leaderless startup: any node can bootstrap; Raft elects a leader automatically; no static seeds needed
+
+### Consensus Boundaries
+
+#### Mesh-Level Consensus (MCG)
+- **Required for**:
+  - Node membership changes (join/leave/evict)
+  - Mesh configuration updates
+  - System-wide parameter changes
+  - Global routing policy updates
+- **Blocking conditions**: When mesh is CRITICAL (≥50% nodes unreachable), only eviction operations allowed
+
+#### Data-Level Consensus (DSG)
+- **Required for**:
+  - Stream creation/deletion
+  - Write completion acknowledgment (all DSG members must complete write)
+  - Stream offset advancement
+  - Checkpoint creation
+- **Write semantics**: Write operations considered complete only when all DSG members successfully process
 
 ### Applying Consensus
 
 - Mesh-level: a system or internal-DB update is appended to MCG log; committed entry triggers guaranteed fanout to every node (with durable outbox & retry).
-- Client-data: source appends data events to its DSG log; an entry is committed when the Raft quorum of that DSG acknowledges processing (not just receipt). "Processing" is defined by the target's handler returning success (see §10).
+- Client-data: source appends data events to its DSG log; an entry is committed when the Raft quorum of that DSG acknowledges processing (not just receipt). "Processing" is defined by the target's handler returning success.
 
 ### Data Semantics (Ordering, Exactly-Once, Idempotency)
 
@@ -304,24 +431,163 @@ Coefficients are config-driven and adjustable per traffic class.
 - Idempotent handlers required: include message_id in any side effects (DB UPSERT keyed by (stream_id, message_id)).
 
 
-## Persistence Model (PostgreSQL via `/pkg/database`)
+## Persistence Model
 
-Tables (essential, minimal columns implied):
-- mesh(mesh_id, name, desctiption, allow_join, status, created, updated)
-- nodes(node_id, name, description, pubkey, last_seen, status, incarnation, meta jsonb, platform, version, region_id, ip_address, port, created, updated)
-- links(id, a_node, b_node, latency_ms, bandwidth_mbps, loss, utilization, status, meta jsonb)
-- lsa_versions(node_id, version, hash, created)
-- raft_groups(id, type enum{MCG, DSG}, members[], term, leader_id, meta jsonb)
-- raft_log(group_id, index, term, payload bytea, created)
-- streams(id, tenant_id, src_node, dst_nodes[], qos enum, priority, meta jsonb)
-- stream_offsets(stream_id, node_id, committed_seq, updated)
-- delivery_log(stream_id, message_id, src_node, dst_node, state enum{received, processing, done, failed}, err, updated)
-- outbox(stream_id, message_id, payload, headers jsonb, next_attempt, attempts, status, created, updated)
-- inbox(stream_id, message_id, payload, headers jsonb, received, processed)
-- topology_snapshots(version, graph jsonb, created)
-- config_kv(key text primary key, value jsonb, updated)
+### PostgreSQL Tables (Application Data via `/pkg/database`)
+
+Tables with indexing strategy:
+
+```sql
+-- Core mesh topology
+CREATE TABLE mesh(
+    mesh_id UUID PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    allow_join ENUM('OPEN', 'KEY_REQUIRED', 'CLOSED') DEFAULT 'KEY_REQUIRED',
+    join_key_hash VARCHAR(255), -- bcrypt hash of join key
+    status ENUM('ACTIVE', 'DEGRADED', 'CRITICAL') DEFAULT 'ACTIVE',
+    created TIMESTAMP DEFAULT NOW(),
+    updated TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_mesh_status ON mesh(status);
+
+CREATE TABLE nodes(
+    node_id UUID PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    pubkey TEXT NOT NULL,
+    last_seen TIMESTAMP,
+    status ENUM('ONLINE', 'SUSPECT', 'OFFLINE') DEFAULT 'ONLINE',
+    incarnation BIGINT DEFAULT 0,
+    meta JSONB,
+    platform VARCHAR(50),
+    version VARCHAR(50),
+    region_id VARCHAR(50),
+    ip_address INET,
+    port INTEGER,
+    created TIMESTAMP DEFAULT NOW(),
+    updated TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_nodes_status ON nodes(status);
+CREATE INDEX idx_nodes_last_seen ON nodes(last_seen);
+
+CREATE TABLE links(
+    id UUID PRIMARY KEY,
+    a_node UUID REFERENCES nodes(node_id),
+    b_node UUID REFERENCES nodes(node_id),
+    latency_ms FLOAT,
+    bandwidth_mbps FLOAT,
+    loss FLOAT,
+    utilization FLOAT,
+    status ENUM('UP', 'DOWN', 'DEGRADED') DEFAULT 'UP',
+    meta JSONB,
+    updated TIMESTAMP DEFAULT NOW(),
+    UNIQUE(a_node, b_node)
+);
+CREATE INDEX idx_links_nodes ON links(a_node, b_node);
+CREATE INDEX idx_links_status ON links(status);
+
+CREATE TABLE lsa_versions(
+    node_id UUID REFERENCES nodes(node_id),
+    version BIGINT,
+    hash VARCHAR(64),
+    created TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY(node_id, version)
+);
+
+-- Stream management (partitioned by month for large deployments)
+CREATE TABLE streams(
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    src_node UUID REFERENCES nodes(node_id),
+    dst_nodes UUID[] NOT NULL,
+    qos ENUM('SYSTEM', 'PRIORITY', 'BULK') DEFAULT 'BULK',
+    priority INTEGER DEFAULT 0,
+    meta JSONB,
+    created TIMESTAMP DEFAULT NOW()
+) PARTITION BY RANGE (created);
+
+CREATE TABLE stream_offsets(
+    stream_id UUID REFERENCES streams(id),
+    node_id UUID REFERENCES nodes(node_id),
+    committed_seq BIGINT NOT NULL,
+    updated TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY(stream_id, node_id)
+);
+CREATE INDEX idx_stream_offsets_updated ON stream_offsets(updated);
+
+-- Delivery log (partitioned by month, auto-archive after 90 days)
+CREATE TABLE delivery_log(
+    stream_id UUID,
+    message_id VARCHAR(26), -- ULID
+    src_node UUID REFERENCES nodes(node_id),
+    dst_node UUID REFERENCES nodes(node_id),
+    state ENUM('received', 'processing', 'done', 'failed') DEFAULT 'received',
+    error_message TEXT,
+    updated TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY(stream_id, message_id, dst_node)
+) PARTITION BY RANGE (updated);
+CREATE INDEX idx_delivery_log_state ON delivery_log(state);
+
+-- Message queuing (outbox pattern)
+CREATE TABLE outbox(
+    id SERIAL PRIMARY KEY,
+    stream_id UUID NOT NULL,
+    message_id VARCHAR(26) NOT NULL,
+    payload BYTEA,
+    headers JSONB,
+    next_attempt TIMESTAMP,
+    attempts INTEGER DEFAULT 0,
+    status ENUM('pending', 'sent', 'failed') DEFAULT 'pending',
+    created TIMESTAMP DEFAULT NOW(),
+    updated TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_outbox_next_attempt ON outbox(next_attempt) WHERE status = 'pending';
+CREATE INDEX idx_outbox_stream_status ON outbox(stream_id, status);
+
+CREATE TABLE inbox(
+    stream_id UUID NOT NULL,
+    message_id VARCHAR(26) NOT NULL,
+    payload BYTEA,
+    headers JSONB,
+    received TIMESTAMP DEFAULT NOW(),
+    processed TIMESTAMP,
+    PRIMARY KEY(stream_id, message_id)
+);
+CREATE INDEX idx_inbox_processed ON inbox(processed) WHERE processed IS NULL;
+
+-- Topology and configuration
+CREATE TABLE topology_snapshots(
+    version BIGINT PRIMARY KEY,
+    graph JSONB NOT NULL,
+    created TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE config_kv(
+    key TEXT PRIMARY KEY,
+    value JSONB,
+    updated TIMESTAMP DEFAULT NOW()
+);
+
+-- Partitioning for large tables
+CREATE TABLE streams_2025_01 PARTITION OF streams FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
+CREATE TABLE delivery_log_2025_01 PARTITION OF delivery_log FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
+-- Add monthly partitions as needed
+```
+
+### BoltDB Storage (Raft Consensus Data)
+Managed entirely by HashiCorp Raft library:
+- `raft.db`: Contains log entries, stable state, and snapshots
+- Location: `/var/lib/mesh/raft/` or configured data directory
+- Automatic compaction and snapshot management
+
+### Database Initialization
 
 Tables are created by the supervisor service during the initialization of the application.
+
+Schema is stored in two places:
+- Supervisor initialization process `/cmd/supervisor/internal/initialize/schema.go` (used by the application to setup the database)
+- Database SQL schema file `/scripts/DATABASE_SCHEMA.sql` (only used for documentation)
 
 
 ## Redis Usage (via `/pkg/database`)
@@ -340,37 +606,44 @@ Proto services in api/proto/mesh/v1/:
 
 ### MeshService
 - SeedMesh -> MeshStatus
-    - Seed a new mesh (only used to initialize the mesh)
+    - Initialize a new mesh with mesh_id and encryption keys
+    - Start WebSocket listener for incoming connections
+    - Only used once per mesh creation
 - JoinMesh -> MeshStatus
-    - Join an existing mesh by connecting to another node (only used once per node to join a mesh and get all initial details)
+    - Join existing mesh by connecting to node at specified address:port
+    - Exchange mesh configuration and node metadata
+    - Establish node as equal member of mesh
 - StartMesh -> MeshStatus
-    - When the node is already a member of a mesh, start mesh is used when the application is starting
+    - When node is already member, reconnect to known peers
+    - Resume operations after restart
 - StopMesh -> MeshStatus
-    - Used for shutting down the node and telling all other nodes that the node is going down
+    - Graceful shutdown with notification to other nodes
+    - Persist state for later recovery
 - LeaveMesh -> SuccessStatus
-    - For a node to leave the mesh, consensus is required
+    - Permanent departure from mesh (requires consensus)
 - EvictNode -> MeshStatus
-    - Evicting a node requires consensus from the mesh
+    - Force remove node from mesh (requires consensus)
+    - Used when node is unreachable or misbehaving
 - AddLink -> TopologyStatus
-    - Adds a link between nodes
+    - Establish direct connection between nodes
 - DropLink -> TopologyStatus
-    - Drop a link between nodes
+    - Remove direct connection between nodes
 - EstablishFullLinks -> TopologyStatus
-    - Make all nodes try to establish all possible links with each other
+    - Attempt to create full mesh connectivity
 - SendNodeUpdate(NodeUpdate) -> BroadcastResult
-    - Node updates are authorized by the node
+    - Node-authorized updates (status, capabilities)
 - SendMeshUpdate(MeshUpdate) -> BroadcastResult
-    - Mesh updates require consensus from the mesh to be applied
+    - Mesh-wide updates (requires MCG consensus)
 - SendInternalDBUpdate(DBUpdate) -> BroadcastResult
-    - Internal DB updates will need to be cached any any node is missing from the mesh
+    - Database CDC replication events
 - OpenClientDataStream(OpenClientDataStreamReq) -> StreamHandle
 - CloseClientDataStream(StreamHandle) -> Empty
 - PublishClientData(Chunk) -> PublishResult
     - Chunk headers include (tenant_id, stream_id, seq, chunk_seq, total_chunks, checksum)
 - GetMeshStatus(Empty) -> MeshStatus
-    Includes: node list & state, link metrics, LSDB version, Raft group health.
+    - Returns comprehensive mesh state including nodes, links, consensus health
 - WatchMeshEvents(Filter) -> stream MeshEvent
-    (node join/leave, link up/down, role changes, path changes)
+    - Real-time notifications of topology changes
 
 ### MeshDataService (server-side streams from mesh into app)
 - SubscribeNodeUpdates(SubscribeReq) -> stream NodeUpdate
@@ -384,6 +657,7 @@ Delivery guaranteed in-order per stream.
     - Start(Empty), Stop(Empty), Health(Empty) -> Healthz, Metrics(Empty) -> KVList, Config(Empty) -> ConfigDump, Logs(TailReq) -> stream LogLine
 - Mesh ↔ Supervisor Client (mesh calls supervisor):
     - Notify(Event) for critical state changes.
+    - Health status updates stored in PostgreSQL for supervisor monitoring
 
 ### Notes
 
@@ -396,11 +670,13 @@ Delivery guaranteed in-order per stream.
 ### Node Startup
 
 1. Load config via `/pkg/config`; init PostgreSQL/Redis via `/pkg/database`.
-2. Start gRPC servers via `/pkg/service`; register with Supervisor.
-3. Dial configured peers (WS). Start reader/writer loops.
-4. Start gossip (advertise alive), receive membership.
-5. Join or create Raft MCG; elect leader.
-6. Begin topology probes, emit LSAs; compute k-paths.
+2. Initialize BoltDB for Raft storage.
+3. Start gRPC servers via `/pkg/service`; register with Supervisor.
+4. Check PostgreSQL for existing mesh membership:
+   - If member: attempt reconnection to known peers
+   - If not: wait for SeedMesh or JoinMesh command
+5. Once connected: start gossip, join/create Raft groups
+6. Begin topology probes, emit LSAs, compute k-paths.
 7. Drain outbox; resume DSGs from last committed indices.
 
 ### New Stream (Client Data)
@@ -437,6 +713,28 @@ Delivery guaranteed in-order per stream.
 - OnConsensusRoleChange: leader/follower transitions (e.g., start/stop background duties).
 
 
+## Component Health and Failure Domains
+
+### Component-Level Health
+Each component maintains its health state, reported to supervisor:
+- **WebSocket Transport**: Connection state, reconnection attempts
+- **Raft Consensus**: Leader status, follower lag, snapshot state
+- **Router**: Path availability, queue depths
+- **Storage**: PostgreSQL connection, BoltDB integrity, Redis availability
+
+### Service-Level Degradation
+Mesh service adjusts operational mode based on component health:
+- **Read-Only Mode**: When consensus unavailable but connectivity intact
+- **Degraded Mode**: When some nodes unreachable but quorum maintained
+- **Critical Mode**: When majority unreachable, only eviction allowed
+
+### Failure Handling
+- **Redis Failure**: Fall back to PostgreSQL for queuing (with performance impact)
+- **PostgreSQL Failure**: Block new operations, maintain in-memory state
+- **BoltDB Corruption**: Restore from Raft snapshots or peer sync
+- **Network Partition**: Maintain separate MCG per partition, reconcile on heal
+
+
 ## Reliability, Flow Control, and Backpressure
 
 - Credit-based flow control per stream and per link; credits granted based on:
@@ -461,6 +759,7 @@ Delivery guaranteed in-order per stream.
 - Metrics (Prometheus): link RTT/bw/loss, queue depths, Raft terms/commit lag, stream throughput/latency, drop/retry counts, dedupe hits.
 - Tracing (OpenTelemetry): spans for publish→process path across hops; inject baggage (tenant, stream, seq).
 - Structured logs via `/pkg/logger`: correlation with stream_id, message_id, raft_group.
+- Supervisor integration: continuous health monitoring and centralized logging.
 
 
 ## Configuration
@@ -491,20 +790,26 @@ Delivery guaranteed in-order per stream.
     - Client data is delivered in-order, exactly-once to all required targets; retry survives restarts.
 4. Consensus: Raft groups for MCG and DSGs elect leaders and commit logs; snapshots reduce log size; partitions don't corrupt state.
 5. APIs: All gRPC endpoints implemented; backpressure enforced; Supervisor controls start/stop/health/metrics via `/pkg/service`.
-6. Persistence: PostgreSQL tables populated via `/pkg/database`; Redis queues active; restart resumes streams without loss/duplication.
+6. Persistence: PostgreSQL tables populated via `/pkg/database`; BoltDB stores Raft state; Redis queues active; restart resumes streams without loss/duplication.
 7. Observability: Metrics, logs via `/pkg/logger`, traces give per-stream and per-link visibility; GetMeshStatus returns full mesh & topology.
 
 
-## Performance Targets (tunable)
+## Performance Targets (Initial Implementation)
 
-- Per-node: ≥ 10k msgs/sec sustained small messages; ≥ 1 Gbps aggregate throughput on commodity VM.
-- Latency budget (intra-continent): p50 < 30ms added per hop, p99 < 120ms end-to-end for small messages.
-- Recovery: link failure reroute < 500ms; node restart resume < 5s.
+### Without VirtualLink
+- Per-node: ≥ 5k msgs/sec sustained small messages
+- Latency: p50 < 50ms, p99 < 200ms per hop
+- Recovery: link failure reroute < 1s
+
+### With VirtualLink (Future Enhancement)
+- Per-node: ≥ 10k msgs/sec sustained small messages; ≥ 1 Gbps aggregate throughput on commodity VM
+- Latency budget (intra-continent): p50 < 30ms added per hop, p99 < 120ms end-to-end for small messages
+- Recovery: link failure reroute < 500ms; node restart resume < 5s
 
 
 ## Implementation Notes & Choices
 
-- Raft lib: use a mature Go Raft implementation (pluggable storage & network); wrap transport over WS control channel.
+- Raft lib: HashiCorp Raft with BoltDB storage backend (battle-tested, production-ready)
 - Path computation: Dijkstra + Yen for k-shortest; cache results; incremental recomputation on LSA deltas.
 - Chunk checksum: CRC32C for speed; end-to-end optional payload hash (BLAKE3) for critical data.
 - Message IDs: ULID for monotonic sortable IDs; embed in headers.
@@ -519,7 +824,8 @@ Delivery guaranteed in-order per stream.
 ```
 services/mesh/cmd/main.go
 services/mesh/internal/engine/{engine.go, server.go, service.go}
-services/mesh/internal/transport/ws/{dialer.go, virtuallink.go, lanes.go, mux.go, frame.go, auth.go, backpressure.go, health.go}
+services/mesh/internal/transport/ws/{dialer.go, listener.go, frame.go, auth.go}
+services/mesh/internal/transport/ws/{virtuallink.go, lanes.go, mux.go, backpressure.go, health.go} # Future enhancement
 services/mesh/internal/gossip/{swim.go, membership.go}
 services/mesh/internal/consensus/raft/{node.go, storage.go, transport.go, groups.go}
 services/mesh/internal/topology/{lsdb.go, probes.go, ksp.go, scoring.go}

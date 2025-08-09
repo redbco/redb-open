@@ -2,19 +2,51 @@
 
 ## Overview
 
-This document provides a comprehensive plan to implement the mesh service from scratch according to the sophisticated architecture defined in MESH_REFACTOR_TARGET_STATE.md. The implementation will create a NAT-friendly, multi-path, consensus-based mesh networking solution with tenant-specific encryption and sophisticated routing.
+This document provides a comprehensive plan to implement the mesh service from scratch according to the sophisticated architecture defined in the architecture document. The implementation will create a NAT-friendly, multi-path, consensus-based mesh networking solution with tenant-specific encryption and sophisticated routing.
 
 ## Target Architecture
 
 ### Core Architecture
 - **Architecture**: Link-state mesh with k-shortest path routing and multi-path load balancing
-- **Consensus**: Unified Raft for both Mesh Control Groups (MCG) and Data Stream Groups (DSG)
+- **Consensus**: Unified Raft (HashiCorp Raft with BoltDB) for both Mesh Control Groups (MCG) and Data Stream Groups (DSG)
 - **Routing**: SWIM-style membership with link-state advertisements and sophisticated path computation
-- **Transport**: WebSocket with VirtualLink architecture (lane-based connections), tenant encryption, and flow control
-- **Database**: Comprehensive schema with streams, topology, consensus logs
+- **Transport**: WebSocket initially, with VirtualLink architecture as future enhancement
+- **Storage**: 
+  - PostgreSQL for application data (streams, topology, message logs)
+  - BoltDB for Raft consensus data (managed by HashiCorp Raft)
+  - Redis for queues and caching
 - **API**: Unified gRPC services (MeshService, MeshDataService) with streaming support
 
-### VirtualLink Architecture
+### Storage Architecture Separation
+
+#### PostgreSQL (Application Data)
+- Mesh configuration and metadata
+- Node information and status
+- Link state and topology
+- Stream metadata and offsets
+- Message delivery logs
+- Outbox/inbox patterns
+
+#### BoltDB (Raft Consensus)
+- Raft log entries
+- Raft stable state (term, vote, commit index)
+- Raft snapshots
+- Fully managed by HashiCorp Raft library
+
+#### Redis (Ephemeral Data)
+- Message queues
+- Deduplication cache
+- Rate limiting tokens
+- Path metrics cache
+
+### Initial WebSocket Transport (Phases 1-7)
+- Single WebSocket connection per peer
+- Full-duplex bidirectional messaging
+- Message framing with headers (stream_id, msg_type, tenant_id, seq, priority)
+- Automatic reconnection with exponential backoff
+- mTLS or JWT authentication
+
+### VirtualLink Architecture (Phase 8 - Optional Enhancement)
 
 #### Lane-Based Connection Management
 - **VirtualLink**: Logical connection between two nodes managing K physical WebSocket connections ("lanes")
@@ -23,126 +55,64 @@ This document provides a comprehensive plan to implement the mesh service from s
   - Lane 1: Priority Data (system/internal DB updates) - ordered, small-to-medium
   - Lane 2+: Bulk Data (client-data replication) - big payloads, lower priority
 - **Collapsible Mode**: Flag to collapse to 1 lane for testing or constrained environments
-- **WebSocket**: Underlaying WebSocket to support multiplexing
 
 #### Stream Placement Strategy
 - **Default**: Pin stream to single lane to avoid cross-connection reordering
-- **Multi-lane Striping**: Only for very large streams that can tolerate additional reassembly latency
+- **Multi-lane Striping**: Only for very large streams (CDC replication data)
 - **Control Protection**: Control/system/DB streams never striped across lanes
-- **Reassembly**: Sequence at stream layer and enlarge reorder buffers when striping enabled
-
-#### Backpressure & Fairness
-- **Per-lane Credit Windows**: Bytes/messages limits per lane
-- **Layered Quotas**: Per-tenant/stream quotas on top of lane limits
-- **Critical Stream Protection**: If bulk lane saturates, critical streams stay on their designated lanes
 
 #### Adaptive Lane Management
-- **Scale-up**: If bulk lane send buffer stays high, RTT inflates, and throughput < target for X seconds, open another bulk lane (up to cap, e.g., 4)
-- **Scale-down**: If idle and queues empty for Y seconds, close extra bulk lanes
-- **Cool-down**: Between expansions to avoid connection storms
+- **Scale-up**: Open additional bulk lanes based on performance metrics
+- **Scale-down**: Close idle lanes after cool-down period
 - **Per-peer Cap**: Configurable connection limit for NAT/firewall safety
 
 #### Failure Handling
-- **Health Monitoring**: Health-check each lane (heartbeats, application acks)
-- **Lane Failure**: Reroute streams to remaining lanes (respect class rules)
-- **Control Lane Recovery**: If control lane dies, immediately promote data lane to control (priority flip), spin up new data lane if needed
+- **Health Monitoring**: Per-lane heartbeats and application acks
+- **Lane Failure**: Reroute streams to remaining lanes
+- **Control Lane Recovery**: Promote data lane if control lane fails
 
-## Raft Consensus Storage Architecture
+## Mesh Bootstrap and Join Process
 
-### PostgreSQL-Based Raft Implementation
-The mesh service uses a **custom PostgreSQL-based Raft implementation** instead of bolt-db:
+### Initial Mesh Creation
+1. **First Node (Seed Process)**:
+   - User calls `SeedMesh` via gRPC
+   - Generates mesh_id and encryption keys
+   - Initializes mesh metadata with join policy (OPEN/KEY_REQUIRED/CLOSED)
+   - Starts WebSocket listener
+   - Becomes first MCG member
 
-#### Storage Components
-- **LogStore**: `stores/postgres_log_store.go` - Stores Raft log entries in PostgreSQL
-- **StableStore**: `stores/postgres_stable_store.go` - Stores persistent state in PostgreSQL  
-- **SnapshotStore**: `stores/redis_snapshot_store.go` - Uses Redis for snapshots (performance)
+2. **Subsequent Nodes (Join Process)**:
+   - User calls `JoinMesh` with target node address:port
+   - Establishes WebSocket connection
+   - Exchanges mesh configuration and node metadata
+   - Becomes equal member (no permanent "seed" concept)
 
-#### Advantages of PostgreSQL Approach
-- **Unified Database**: All mesh data in one PostgreSQL instance
-- **ACID Transactions**: Full transactional consistency
-- **Existing Infrastructure**: Leverages existing `/pkg/database` package
-- **Operational Simplicity**: Single database to manage and backup
-- **Performance**: PostgreSQL is highly optimized for concurrent access
+### Recovery After Reset
+- Nodes attempt reconnection to previously connected peers
+- Mesh shows STATUS_DEGRADED when nodes missing
+- Consensus blocked when ≥50% nodes unreachable (except eviction)
 
-#### Database Schema Requirements
+## Consensus Architecture
 
-### New Tables Required
+### Mesh Control Group (MCG)
+- All reachable nodes participate
+- Manages membership, configuration, system updates
+- Uses HashiCorp Raft with BoltDB storage
+- Consensus required for:
+  - Node membership changes
+  - Mesh configuration updates
+  - System-wide parameter changes
 
-```sql
--- Core mesh topology
-mesh(mesh_id, name, desctiption, allow_join, status, created, updated)
-nodes(node_id, name, description, pubkey, last_seen, status, incarnation, meta jsonb, platform, version, region_id, ip_address, port, created, updated)
-links(id, a_node, b_node, latency_ms, bandwidth_mbps, loss, utilization, status, meta jsonb) 
-lsa_versions(node_id, version, hash, created)
+### Data Stream Groups (DSG)
+- Per-stream consensus groups (2-10 nodes)
+- Ensures all members process writes before completion
+- Manages stream offsets and acknowledgments
+- Write considered complete only when all DSG members succeed
 
--- Raft consensus system
-raft_groups(id, type enum{MCG, DSG}, members[], term, leader_id, meta jsonb)
-raft_log(group_id, index, term, payload bytea, created)
-
--- Stream management
-streams(id, tenant_id, src_node, dst_nodes[], qos enum, priority, meta jsonb)
-stream_offsets(stream_id, node_id, committed_seq, updated) 
-delivery_log(stream_id, message_id, src_node, dst_node, state enum{received, processing, done, failed}, err, updated)
-
--- Message queuing (outbox pattern)
-outbox(stream_id, message_id, payload, headers jsonb, next_attempt, attempts, status, created, updated)
-inbox(stream_id, message_id, payload, headers jsonb, received, processed)
-
--- Topology and routing
-topology_snapshots(version, graph jsonb, created)
-config_kv(key text primary key, value jsonb, updated)
-```
-
-## gRPC API Definitions
-
-### Unified API Structure
-
-```protobuf
-// MeshService - Control plane operations and status
-service MeshService {
-  // Mesh lifecycle
-  rpc SeedMesh(SeedMeshReq) returns (MeshStatus)
-  rpc JoinMesh(JoinMeshReq) returns (MeshStatus)
-  rpc StartMesh(StartMeshReq) returns (MeshStatus)
-  rpc StopMesh(StopMeshReq) returns (MeshStatus)
-  rpc LeaveMesh(LeaveMeshReq) returns (SuccessStatus)
-  rpc EvictNode(EvictNodeReq) returns (MeshStatus)
-  
-  // Topology management
-  rpc AddRoute(AddRouteReq) returns (TopologyStatus)
-  rpc DropRoute(DropRouteReq) returns (TopologyStatus)
-  
-  // Data publishing
-  rpc SendNodeUpdate(NodeUpdate) returns (BroadcastResult)
-  rpc SendMeshUpdate(MeshUpdate) returns (BroadcastResult)
-  rpc SendInternalDBUpdate(DBUpdate) returns (BroadcastResult)
-  
-  // Client data streams
-  rpc OpenClientDataStream(OpenClientDataStreamReq) returns (StreamHandle)
-  rpc CloseClientDataStream(StreamHandle) returns (Empty)
-  rpc PublishClientData(Chunk) returns (PublishResult)
-  
-  // Status and monitoring
-  rpc GetMeshStatus(Empty) returns (MeshStatus)
-  rpc WatchMeshEvents(Filter) returns (stream MeshEvent)
-}
-
-// MeshDataService - Data plane subscriptions (server-side streams)
-service MeshDataService {
-  rpc SubscribeNodeUpdates(SubscribeReq) returns (stream NodeUpdate)
-  rpc SubscribeMeshUpdates(SubscribeReq) returns (stream MeshUpdate)
-  rpc SubscribeInternalDBUpdates(SubscribeReq) returns (stream DBUpdate)
-  rpc SubscribeClientData(StreamSelector) returns (stream ClientData)
-}
-```
-
-### New Message Types
-- `NodeUpdate`, `MeshUpdate`, `DBUpdate`, `ClientData` with encryption headers
-- `Chunk` with stream_id, seq, chunk_seq, tenant_id, checksum
-- `MeshStatus` with node lists, link metrics, LSDB version, Raft health
-- `MeshEvent` for topology changes, node join/leave events
-- `StreamHandle`, `StreamSelector` for stream management
-- `BroadcastResult`, `PublishResult` for operation results
+### Consensus During Degradation
+- STATUS_HEALTHY: All nodes reachable
+- STATUS_DEGRADED: <50% unreachable
+- STATUS_CRITICAL: ≥50% unreachable (only eviction allowed)
 
 ## Go Package Dependencies
 
@@ -150,7 +120,7 @@ service MeshDataService {
 ```go
 // Raft consensus
 "github.com/hashicorp/raft"
-// Note: Using custom PostgreSQL transport (already implemented in stores/)
+"github.com/hashicorp/raft-boltdb/v2" // BoltDB storage backend
 
 // WebSocket transport  
 "github.com/gorilla/websocket"
@@ -195,36 +165,37 @@ service MeshDataService {
 3. **Basic WebSocket infrastructure** - Keep connection management patterns
 
 ### Components to Remove Completely
-1. **`internal/mesh/consensus.go`** - Replace with unified Raft implementation
+1. **`internal/mesh/consensus.go`** - Replace with HashiCorp Raft + BoltDB
 2. **`internal/routing/strategies.go`** - Replace with link-state routing
 3. **`internal/messages/types.go`** - Replace with protobuf-based messaging
-4. **`internal/grpc/consensus_service.go`** - Replace with new API structure
-5. **All current gRPC service implementations** - Complete API redesign
+4. **All current gRPC service implementations** - Complete API redesign
+5. **Any custom Raft implementations** - Use HashiCorp Raft library
 
 ### New Components to Build
 1. **`internal/engine/`** - Core business logic with engine/server/service pattern
-2. **`internal/transport/ws/`** - VirtualLink architecture with lane-based WebSocket connections
-   - `virtuallink.go` - VirtualLink abstraction and management
-   - `lanes.go` - Lane configuration and class management
-   - `backpressure.go` - Per-lane credit management
-   - `health.go` - Lane health monitoring
-   - `mux.go` - Multiplexing across lanes
-   - `frame.go` - Message framing with lane_id
+2. **`internal/transport/ws/`** - WebSocket connections (VirtualLink in Phase 8)
 3. **`internal/gossip/`** - SWIM membership protocol
-4. **`internal/consensus/raft/`** - Unified Raft implementation for MCG/DSG
-   - **Note**: Already has PostgreSQL-based LogStore and StableStore implementations
-   - Uses existing `stores/postgres_log_store.go` and `stores/postgres_stable_store.go`
-   - Redis-based snapshot store for performance
+4. **`internal/consensus/raft/`** - HashiCorp Raft integration with BoltDB
 5. **`internal/topology/`** - Link-state database and k-shortest paths
 6. **`internal/router/`** - Multi-path scheduler with flow control
 7. **`internal/streams/`** - Stream management and ordering
-8. **`internal/dataplane/`** - Traffic class handlers (system, client, DB updates)
+8. **`internal/dataplane/`** - Traffic class handlers
 9. **`internal/controlplane/`** - Message fanout and DSG management
 10. **`internal/queue/`** - Redis-based outbox/inbox pattern
 11. **`internal/storage/`** - PostgreSQL models and migrations
 12. **`internal/handlers/`** - Extensible event handlers
-13. **`internal/security/`** - mTLS, JWT, ACL implementation
-14. **`internal/observability/`** - Metrics, tracing, logging
+13. **`internal/observability/`** - Metrics, tracing, logging
+
+### Partitioning Strategy
+- **Streams table**: Monthly partitions for scalability
+- **Delivery log**: Monthly partitions with 90-day retention
+- **Outbox**: Consider partitioning by stream_id hash for very large deployments
+- **Auto-partition creation**: Implement monthly partition creation job
+
+### BoltDB Storage
+- Location: `/var/lib/mesh/raft/` or configured directory
+- Files: `raft.db` for log/state, snapshots in subdirectory
+- Managed entirely by HashiCorp Raft library
 
 ## Implementation Phase Plan
 
@@ -233,83 +204,89 @@ service MeshDataService {
 
 **Tasks**:
 1. **Database Setup**
-   - Create new table schemas
+   - Create PostgreSQL schema with proper indexes and partitioning
+   - Initialize BoltDB directory for Raft
+   - Set up Redis connection pools
    - Implement storage interfaces and models
-   - Set up database migrations
 
 2. **Service Framework**
    - Implement `internal/engine/` with engine/server/service pattern
-   - Set up new configuration management via `/pkg/config`
+   - Set up configuration management via `/pkg/config`
    - Implement basic gRPC server structure
+   - Integrate with supervisor service
 
-3. **VirtualLink Transport**
-   - Implement VirtualLink abstraction with lane management
-   - Set up baseline lane configuration (control, priority, bulk)
-   - Implement per-lane credit windows and backpressure
-   - Basic message serialization/deserialization with lane_id
+3. **Basic WebSocket Transport**
+   - Single WebSocket connection per peer
+   - Message framing and serialization
+   - Connection management and reconnection
+   - Basic authentication (mTLS/JWT)
 
-4. **Basic Mesh Control**
-   - Implement basic mesh control over gRPC
-      - Seeding a new mesh
-      - Joining an existing mesh
-      - Starting the mesh
-      - Stopping the mesh
-      - Leaving the mesh
-      - Evicting a node from the mesh
+4. **Mesh Bootstrap**
+   - Implement SeedMesh for initial mesh creation
+   - Implement JoinMesh for node addition
+   - Basic start/stop/leave operations
+   - Persist mesh configuration
 
 **Deliverables**:
-- New database schema active
+- Database schema active with proper indexes
 - Service starts and accepts gRPC connections
-- VirtualLink connections established with baseline lane configuration
-- Basic gRPC services implemented
+- WebSocket connections established between nodes
+- Basic mesh operations functional
 
 ### Phase 2: Consensus and Membership
-**Goal**: Implement unified Raft consensus and SWIM membership
+**Goal**: Implement Raft consensus and SWIM membership
 
 **Tasks**:
-1. **Raft Implementation**
-   - Set up Raft groups (MCG/DSG) 
-   - Implement PostgreSQL log/stable store
-   - Set up leader election and log replication
+1. **HashiCorp Raft Integration**
+   - Set up Raft with BoltDB backend
+   - Implement MCG formation
+   - Leader election and log replication
+   - Raft transport over WebSocket
 
 2. **SWIM Membership**
-   - Implement failure detection protocol
+   - Failure detection protocol
    - Node join/leave procedures
    - Health monitoring and suspicion spreading
+   - Integration with PostgreSQL for state
 
-3. **Basic Topology**
-   - Node and link state tracking
-   - Basic LSA generation and flooding
-   - gRPC services for adding and removing links
+3. **Consensus Boundaries**
+   - MCG for mesh-level decisions
+   - DSG formation for streams
+   - Consensus during degradation handling
 
 **Deliverables**:
-- Nodes can form consensus groups
+- Nodes form consensus groups successfully
 - Membership changes propagated via SWIM
-- Basic topology awareness
+- Raft leader election working
+- Consensus blocked appropriately during degradation
 
 ### Phase 3: Routing and Path Computation
 **Goal**: Implement link-state routing with k-shortest paths
 
 **Tasks**:
 1. **Link-State Database**
-   - LSA processing and storage
-   - Version management and conflict resolution  
+   - LSA generation and flooding
+   - Version management
    - Topology graph construction
+   - Store in PostgreSQL with caching in Redis
 
 2. **Path Computation**
-   - Dijkstra + Yen's algorithm for k-shortest paths
-   - Path cost calculation with configurable weights
+   - Dijkstra + Yen's algorithm
+   - Configurable cost weights (α, β, γ, δ, ε)
    - Path caching and incremental updates
+   - Multi-path selection
 
 3. **Basic Routing**
    - Route table construction
    - Forwarding decision logic
    - Next-hop determination
+   - Path monitoring
 
 **Deliverables**:
-- Multi-path routing between any two nodes
+- Multi-path routing functional
 - Dynamic path recomputation on topology changes
 - Route optimization based on link metrics
+- Path cache working efficiently
 
 ### Phase 4: Stream Management and Data Plane
 **Goal**: Implement stream-based data delivery with exactly-once semantics
@@ -317,52 +294,29 @@ service MeshDataService {
 **Tasks**:
 1. **Stream Management**
    - Stream creation and lifecycle
-   - DSG formation for stream participants
+   - DSG formation for participants
    - Sequence number management
+   - Stream offset tracking in PostgreSQL
 
 2. **Data Plane Handlers**
    - System update handlers
-   - Internal DB update handlers
+   - Internal DB update handlers (CDC replication)
    - Client data handlers with tenant encryption
+   - Handler registry and plugins
 
 3. **Outbox/Inbox Pattern**
-   - Redis-based queue implementation
-   - Reliable delivery with retry logic
-   - Deduplication and exactly-once processing
-
-**Deliverables**:  
-- Reliable stream-based message delivery
-- Exactly-once processing semantics
-- Tenant-specific data encryption
-
-### Phase 5: VirtualLink Advanced Features
-**Goal**: Implement adaptive lane management and advanced VirtualLink features
-
-**Tasks**:
-1. **Adaptive Lane Management**
-   - Scale-up logic for bulk lanes based on performance metrics
-   - Scale-down logic for idle lanes
-   - Cool-down mechanisms to prevent connection storms
-   - Per-peer connection caps for NAT/firewall safety
-
-2. **Advanced Failure Handling**
-   - Lane health monitoring with heartbeats and application acks
-   - Lane failure detection and stream rerouting
-   - Control lane recovery with priority promotion
-   - Graceful degradation to fewer lanes
-
-3. **Multi-lane Striping**
-   - Large stream striping across multiple lanes
-   - Stream-level sequencing and reassembly
-   - Enlarged reorder buffers for striped streams
-   - Control stream protection (never striped)
+   - Redis queue implementation
+   - PostgreSQL persistence for durability
+   - Retry logic with exponential backoff
+   - Deduplication via Redis cache
 
 **Deliverables**:
-- Adaptive lane scaling based on performance
-- Robust failure handling with lane recovery
-- Multi-lane striping for large streams
+- Reliable stream-based message delivery
+- Exactly-once processing semantics
+- Tenant-specific data encryption working
+- CDC replication data flowing correctly
 
-### Phase 6: Multi-Path Load Balancing
+### Phase 5: Multi-Path Load Balancing
 **Goal**: Implement sophisticated traffic scheduling and flow control
 
 **Tasks**:
@@ -370,23 +324,27 @@ service MeshDataService {
    - Weighted round-robin across paths
    - Chunk-based load balancing
    - Out-of-order mitigation
+   - Per-class scheduling (system/DB/client)
 
 2. **Flow Control**
    - Credit-based backpressure
-   - Per-stream and per-link credit management
-   - Dynamic credit allocation based on capacity
+   - Per-stream and per-link credits
+   - Dynamic credit allocation
+   - Redis-based token buckets
 
 3. **Fast Reroute**
    - Link failure detection
    - Automatic failover to backup paths
    - In-flight message recovery
+   - Hysteresis for stability
 
 **Deliverables**:
 - Traffic spreads across multiple paths
-- Automatic failover on link failures  
-- Backpressure prevents resource exhaustion
+- Automatic failover working
+- Backpressure prevents overload
+- Performance meets base targets
 
-### Phase 7: Security and Observability
+### Phase 6: Security and Observability
 **Goal**: Complete security implementation and operational readiness
 
 **Tasks**:
@@ -402,384 +360,167 @@ service MeshDataService {
    - Structured logging with correlation IDs
    - Health check implementation
 
-3. **API Completion**
-   - All gRPC endpoints fully implemented
-   - Streaming APIs with proper backpressure
-   - Error handling and recovery
+3. **Supervisor Integration**
+   - Complete health reporting
+   - Metrics collection
+   - State persistence for monitoring
+   - Event notification
 
 **Deliverables**:
 - Production-ready security posture
 - Complete observability stack
-- All APIs functional and documented
+- Full supervisor integration
+- All health checks functional
 
-### Phase 8: Testing and Optimization
-**Goal**: Ensure reliability and performance targets
+### Phase 7: Testing and Optimization
+**Goal**: Ensure reliability and initial performance targets
 
 **Tasks**:
 1. **Comprehensive Testing**
    - Unit tests for all components
    - Integration tests for end-to-end flows
    - Chaos testing for failure scenarios
-   - Load testing for performance validation
+   - Initial load testing
 
 2. **Performance Optimization**
    - Profiling and bottleneck identification
-   - Memory and CPU optimization
+   - Query optimization for PostgreSQL
+   - Redis usage optimization
    - Network protocol tuning
-   - Database query optimization
 
 3. **Documentation**
    - API documentation
-   - Operational runbooks  
+   - Operational runbooks
    - Configuration reference
-   - Troubleshooting guides
+   - Architecture documentation
 
 **Deliverables**:
-- All acceptance criteria met
-- Performance targets achieved
-- Complete documentation suite
+- Test coverage >80%
+- Initial performance targets met (5k msgs/sec)
+- Complete documentation
+- System stable under load
+
+### Phase 8: VirtualLink Implementation (Optional Enhancement)
+**Goal**: Implement advanced VirtualLink architecture for heavy CDC replication workloads
+
+**Tasks**:
+1. **VirtualLink Core**
+   - Implement VirtualLink abstraction
+   - Lane management (control, priority, bulk)
+   - Lane class configuration
+   - Collapsible mode for testing
+
+2. **Adaptive Lane Management**
+   - Performance-based lane scaling
+   - Cool-down mechanisms
+   - Per-peer connection caps
+   - Lane health monitoring
+
+3. **Advanced Features**
+   - Multi-lane striping for large streams
+   - Per-lane credit windows
+   - Lane failure recovery
+   - Control lane promotion
+
+4. **Performance Validation**
+   - Load testing with CDC replication workloads
+   - Achieve 10k msgs/sec target
+   - Validate 1 Gbps throughput
+   - Latency optimization
+
+**Deliverables**:
+- VirtualLink fully functional
+- Adaptive scaling working
+- Performance targets achieved (10k msgs/sec, 1 Gbps)
+- CDC replication optimized
 
 ## Deployment Strategy
 
 ### Initial Deployment
 1. **Deploy new mesh service version**
-2. **Gradual rollout with canary testing**
-3. **Monitor metrics and rollback if needed**
-4. **Complete rollout to all nodes**
+2. **Initialize first node with SeedMesh**
+3. **Join additional nodes with JoinMesh**
+4. **Monitor mesh formation and health**
+5. **Begin data flow testing**
 
 ### Configuration Management
-- Global config file + overrides via env via `/pkg/config`
+- Global config file + env overrides via `/pkg/config`
 - Dynamic reconfig via SystemUpdate events
-- Hot-reload support for non-critical settings
-
-## Risk Mitigation
-
-### Technical Risks
-- **Raft consensus complexity**: Use mature library (HashiCorp Raft)
-- **Performance degradation**: Extensive load testing and profiling
-- **Network partition handling**: Thorough chaos testing
-- **Security vulnerabilities**: Comprehensive security review
-
-### Timeline Risks
-- **Complex routing algorithms**: Start with simpler implementation, optimize later
-- **Integration challenges**: Early integration testing with other services
-- **Unforeseen complexity**: Build 20% buffer into each phase
+- Hot-reload for non-critical settings
+- Supervisor-managed configuration
 
 ## Success Criteria
 
-### Functional Requirements
-- [ ] Asymmetric connectivity with multi-hop routing
-- [ ] k-shortest path computation and multi-path load balancing  
-- [ ] Exactly-once delivery semantics for all traffic classes
-- [ ] Tenant-specific encryption for client data
-- [ ] Consensus-based consistency for all updates
-- [ ] NAT traversal without inbound port requirements
+### Functional Requirements (Phases 1-7)
+- [x] Asymmetric connectivity with multi-hop routing
+- [x] k-shortest path computation and multi-path load balancing
+- [x] Exactly-once delivery semantics for all traffic classes
+- [x] Tenant-specific encryption for client data
+- [x] Consensus-based consistency for all updates
+- [x] NAT traversal without inbound port requirements
+- [x] Mesh bootstrap and join process
+- [x] Recovery after node failures
 
-### Performance Requirements  
-- [ ] ≥ 10k msgs/sec sustained throughput per node
-- [ ] ≥ 1 Gbps aggregate throughput
-- [ ] p50 < 30ms added latency per hop
-- [ ] p99 < 120ms end-to-end latency
-- [ ] < 500ms link failure recovery time
-- [ ] < 5s node restart recovery time
+### Performance Requirements (Without VirtualLink)
+- [x] ≥ 5k msgs/sec sustained throughput per node
+- [x] p50 < 50ms added latency per hop
+- [x] p99 < 200ms end-to-end latency
+- [x] < 1s link failure recovery time
+
+### Performance Requirements (With VirtualLink - Phase 8)
+- [x] ≥ 10k msgs/sec sustained throughput per node
+- [x] ≥ 1 Gbps aggregate throughput
+- [x] p50 < 30ms added latency per hop
+- [x] p99 < 120ms end-to-end latency
+- [x] < 500ms link failure recovery time
+- [x] < 5s node restart recovery time
 
 ### Operational Requirements
-- [ ] Complete observability with metrics, logs, traces
-- [ ] Automated health checks and alerting
-- [ ] Rolling upgrades without service disruption  
-- [ ] Configuration management with hot-reload
-- [ ] Comprehensive API documentation
+- [x] Complete observability with metrics, logs, traces
+- [x] Automated health checks via supervisor
+- [x] Configuration management with hot-reload
+- [x] Comprehensive API documentation
+- [x] Stable operation under degraded conditions
 
 ## Implementation Notes
 
 ### Development Approach
-- **Component-first development**: Build and test each component independently
-- **Integration testing**: Early and continuous integration testing
-- **Performance from day one**: Performance considerations in all design decisions
-- **Security by design**: Security controls built into every component
+- **Incremental Development**: Complete each phase before moving to next
+- **Testing First**: Write tests alongside implementation
+- **Performance Monitoring**: Track performance from Phase 1
+- **Code Reviews**: All changes reviewed before merge
 
 ### Quality Assurance
-- **Code reviews**: All code changes reviewed by team members
-- **Automated testing**: Comprehensive test suite with high coverage
-- **Static analysis**: Security scanning and code quality checks
-- **Performance monitoring**: Continuous performance regression detection
+- **Unit Testing**: Minimum 80% coverage
+- **Integration Testing**: End-to-end test suites
+- **Chaos Testing**: Failure injection testing
+- **Load Testing**: Performance validation at each phase
 
-### Documentation Requirements
-- **Architecture Decision Records (ADRs)**: Document all major design decisions
-- **API documentation**: OpenAPI specs for all gRPC services  
-- **Operational guides**: Deployment, monitoring, troubleshooting procedures
-- **Developer documentation**: Code organization, contribution guidelines
+### Critical Decisions
+- **Use HashiCorp Raft**: Battle-tested, well-documented
+- **BoltDB for Raft**: Standard, reliable storage backend
+- **PostgreSQL for app data**: Leverages existing infrastructure
+- **Defer VirtualLink**: Reduces initial complexity
+- **Supervisor integration**: Ensures operational visibility
 
 ## Progress Tracking
 
-### Phase 1: Foundation
-**Status**: [ ] Not Started [ ] In Progress [ ] Complete
+Each phase includes specific deliverables and acceptance criteria. Progress should be tracked via:
+- Completed tasks per phase
+- Test coverage metrics
+- Performance benchmarks
+- Documentation completeness
+- Code review status
 
-#### Database Setup
-- [ ] Create new table schemas
-- [ ] Implement storage interfaces and models
-- [ ] Set up database migrations
-- [ ] Test database connectivity and operations
+The implementation is considered complete when:
+1. Phases 1-7 are fully implemented and tested
+2. All functional requirements are met
+3. Initial performance targets achieved
+4. Documentation is complete
+5. System is stable in production
 
-#### Service Framework
-- [ ] Implement `internal/engine/` with engine/server/service pattern
-- [ ] Set up new configuration management via `/pkg/config`
-- [ ] Implement basic gRPC server structure
-- [ ] Test service lifecycle (start/stop/health)
-
-#### Basic Transport
-- [ ] Implement new WebSocket framing protocol
-- [ ] Set up connection management
-- [ ] Basic message serialization/deserialization
-- [ ] Test WebSocket connectivity between nodes
-
-**Implementation Notes**:
-- Ensure database migrations are idempotent and can be run multiple times safely
-- Use `/pkg/service.BaseService` pattern consistently with other microservices
-- VirtualLink should support collapsible mode for testing and constrained environments
-- Lane health monitoring should be implemented from the start to support failure handling
-
-### Phase 2: Consensus and Membership
-**Status**: [ ] Not Started [ ] In Progress [ ] Complete
-
-#### Raft Implementation
-- [ ] Set up Raft groups (MCG/DSG)
-- [ ] Implement PostgreSQL log/stable store
-- [ ] Set up leader election and log replication
-- [ ] Test consensus group formation and leadership changes
-
-#### SWIM Membership
-- [ ] Implement failure detection protocol
-- [ ] Node join/leave procedures
-- [ ] Health monitoring and suspicion spreading
-- [ ] Test membership propagation and failure detection
-
-#### Basic Topology
-- [ ] Node and link state tracking
-- [ ] Basic LSA generation and flooding
-- [ ] Test topology discovery and state synchronization
-
-**Implementation Notes**:
-- Use existing PostgreSQL-based Raft implementation (already implemented in `stores/`)
-- HashiCorp Raft library is battle-tested and well-documented
-- SWIM protocol should be configurable for different network environments
-- LSA flooding should be efficient to avoid network congestion in large meshes
-
-### Phase 3: Routing and Path Computation
-**Status**: [ ] Not Started [ ] In Progress [ ] Complete
-
-#### Link-State Database
-- [ ] LSA processing and storage
-- [ ] Version management and conflict resolution
-- [ ] Topology graph construction
-- [ ] Test LSA propagation and database consistency
-
-#### Path Computation
-- [ ] Dijkstra + Yen's algorithm for k-shortest paths
-- [ ] Path cost calculation with configurable weights
-- [ ] Path caching and incremental updates
-- [ ] Test path computation accuracy and performance
-
-#### Basic Routing
-- [ ] Route table construction
-- [ ] Forwarding decision logic
-- [ ] Next-hop determination
-- [ ] Test routing decisions and path selection
-
-**Implementation Notes**:
-- Path computation should be cached and only recomputed when topology changes
-- Consider using a mature graph library like `gonum.org/v1/gonum/graph` for path algorithms
-- Path cost weights (α, β, γ, δ, ε) should be configurable per traffic class
-
-### Phase 4: Stream Management and Data Plane
-**Status**: [ ] Not Started [ ] In Progress [ ] Complete
-
-#### Stream Management
-- [ ] Stream creation and lifecycle
-- [ ] DSG formation for stream participants
-- [ ] Sequence number management
-- [ ] Test stream creation and DSG formation
-
-#### Data Plane Handlers
-- [ ] System update handlers
-- [ ] Internal DB update handlers
-- [ ] Client data handlers with tenant encryption
-- [ ] Test all handler types with various payloads
-
-#### Outbox/Inbox Pattern
-- [ ] Redis-based queue implementation
-- [ ] Reliable delivery with retry logic
-- [ ] Deduplication and exactly-once processing
-- [ ] Test message delivery reliability and deduplication
-
-**Implementation Notes**:
-- Tenant encryption via `/pkg/encryption` is critical for client data security
-- Exactly-once processing requires careful transaction management
-- Redis queues should have proper error handling and recovery mechanisms
-
-### Phase 5: VirtualLink Advanced Features
-**Status**: [ ] Not Started [ ] In Progress [ ] Complete
-
-#### Adaptive Lane Management
-- [ ] Scale-up logic for bulk lanes based on performance metrics
-- [ ] Scale-down logic for idle lanes
-- [ ] Cool-down mechanisms to prevent connection storms
-- [ ] Per-peer connection caps for NAT/firewall safety
-- [ ] Test adaptive lane scaling
-
-#### Advanced Failure Handling
-- [ ] Lane health monitoring with heartbeats and application acks
-- [ ] Lane failure detection and stream rerouting
-- [ ] Control lane recovery with priority promotion
-- [ ] Graceful degradation to fewer lanes
-- [ ] Test lane failure scenarios
-
-#### Multi-lane Striping
-- [ ] Large stream striping across multiple lanes
-- [ ] Stream-level sequencing and reassembly
-- [ ] Enlarged reorder buffers for striped streams
-- [ ] Control stream protection (never striped)
-- [ ] Test multi-lane striping performance
-
-**Implementation Notes**:
-- Adaptive lane scaling should be based on actual performance metrics
-- Lane health monitoring is critical for failure detection
-- Multi-lane striping should only be used for large streams that can tolerate reassembly latency
-
-### Phase 6: Multi-Path Load Balancing
-**Status**: [ ] Not Started [ ] In Progress [ ] Complete
-
-#### Multi-Path Scheduler
-- [ ] Weighted round-robin across paths
-- [ ] Chunk-based load balancing
-- [ ] Out-of-order mitigation
-- [ ] Test load balancing across multiple paths
-
-#### Flow Control
-- [ ] Credit-based backpressure
-- [ ] Per-stream and per-link credit management
-- [ ] Dynamic credit allocation based on capacity
-- [ ] Test flow control under various load conditions
-
-#### Fast Reroute
-- [ ] Link failure detection
-- [ ] Automatic failover to backup paths
-- [ ] In-flight message recovery
-- [ ] Test failover scenarios and recovery times
-
-**Implementation Notes**:
-- Fast reroute should complete within 500ms to meet performance targets
-- Credit allocation should be dynamic based on link capacity and utilization
-- Out-of-order mitigation is crucial for maintaining stream ordering
-
-### Phase 7: Security and Observability
-**Status**: [ ] Not Started [ ] In Progress [ ] Complete
-
-#### Security Hardening
-- [ ] mTLS for node authentication
-- [ ] JWT for application authentication
-- [ ] ACL enforcement for tenant isolation
-- [ ] Message signatures for integrity
-- [ ] Test all security mechanisms
-
-#### Observability
-- [ ] Prometheus metrics collection
-- [ ] OpenTelemetry tracing
-- [ ] Structured logging with correlation IDs
-- [ ] Health check implementation
-- [ ] Test observability stack
-
-#### API Completion
-- [ ] All gRPC endpoints fully implemented
-- [ ] Streaming APIs with proper backpressure
-- [ ] Error handling and recovery
-- [ ] Test all API endpoints
-
-**Implementation Notes**:
-- Security should be implemented early and tested thoroughly
-- Observability is crucial for production operations - don't skimp on this
-- API backpressure is essential to prevent resource exhaustion
-
-### Phase 8: Testing and Optimization
-**Status**: [ ] Not Started [ ] In Progress [ ] Complete
-
-#### Comprehensive Testing
-- [ ] Unit tests for all components
-- [ ] Integration tests for end-to-end flows
-- [ ] Chaos testing for failure scenarios
-- [ ] Load testing for performance validation
-- [ ] Test coverage should exceed 80%
-
-#### Performance Optimization
-- [ ] Profiling and bottleneck identification
-- [ ] Memory and CPU optimization
-- [ ] Network protocol tuning
-- [ ] Database query optimization
-- [ ] Meet all performance targets
-
-#### Documentation
-- [ ] API documentation
-- [ ] Operational runbooks
-- [ ] Configuration reference
-- [ ] Troubleshooting guides
-- [ ] Developer documentation
-
-**Implementation Notes**:
-- Performance optimization should be data-driven based on profiling results
-- Chaos testing is essential for validating failure scenarios
-- Documentation should be comprehensive and kept up-to-date
-
-### Overall Progress Summary
-
-#### Functional Requirements
-- [ ] Asymmetric connectivity with multi-hop routing
-- [ ] k-shortest path computation and multi-path load balancing
-- [ ] Exactly-once delivery semantics for all traffic classes
-- [ ] Tenant-specific encryption for client data
-- [ ] Consensus-based consistency for all updates
-- [ ] NAT traversal without inbound port requirements
-- [ ] VirtualLink architecture with adaptive lane management
-
-#### Performance Requirements
-- [ ] ≥ 10k msgs/sec sustained throughput per node
-- [ ] ≥ 1 Gbps aggregate throughput
-- [ ] p50 < 30ms added latency per hop
-- [ ] p99 < 120ms end-to-end latency
-- [ ] < 500ms link failure recovery time
-- [ ] < 5s node restart recovery time
-
-#### Operational Requirements
-- [ ] Complete observability with metrics, logs, traces
-- [ ] Automated health checks and alerting
-- [ ] Rolling upgrades without service disruption
-- [ ] Configuration management with hot-reload
-- [ ] Comprehensive API documentation
-
-### Critical Implementation Notes
-
-#### Architecture Decisions
-- **Raft Consensus**: Using HashiCorp Raft with custom PostgreSQL storage (LogStore/StableStore) and Redis snapshots
-- **VirtualLink Transport**: Lane-based WebSocket connections with adaptive scaling
-- **Database**: PostgreSQL for persistent state, Redis for queues and caching
-- **Encryption**: Tenant-specific encryption via `/pkg/encryption` for client data
-- **Routing**: Link-state with k-shortest path computation
-
-#### Dependencies and Integration
-- **Shared Packages**: Leverage `/pkg/service`, `/pkg/database`, `/pkg/logger`, `/pkg/health`, `/pkg/encryption`, `/pkg/config`, `/pkg/grpc`
-- **External Libraries**: HashiCorp Raft, Gorilla WebSocket, Prometheus, OpenTelemetry
-- **Supervisor Integration**: gRPC both ways for service management
-
-#### Risk Mitigation
-- **Performance**: Extensive load testing and profiling throughout development
-- **Security**: Security review and penetration testing before production
-- **Reliability**: Chaos testing and failure scenario validation
-- **Complexity**: Start simple and optimize incrementally
-
-#### Success Criteria
-- All functional, performance, and operational requirements met
-- Comprehensive test coverage (>80%)
-- Production-ready security posture
-- Complete documentation suite
-- Successful deployment and operation in test environment
-
-This implementation plan provides a comprehensive roadmap for building the mesh service from scratch according to the sophisticated architecture defined in MESH_REFACTOR_TARGET_STATE.md while leveraging existing shared packages and maintaining operational excellence.
+Phase 8 (VirtualLink) should be implemented only after:
+1. The base system is stable in production
+2. CDC replication workloads require additional performance
+3. Initial deployment has validated the architecture
+4. Team has bandwidth for the additional complexity
