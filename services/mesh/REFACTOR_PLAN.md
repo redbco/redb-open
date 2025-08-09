@@ -70,7 +70,8 @@ The mesh service uses a **custom PostgreSQL-based Raft implementation** instead 
 
 ```sql
 -- Core mesh topology
-nodes(id, name, pubkey, last_seen, status, incarnation, meta jsonb)
+mesh(mesh_id, name, desctiption, allow_join, status, created, updated)
+nodes(node_id, name, description, pubkey, last_seen, status, incarnation, meta jsonb, platform, version, region_id, ip_address, port, created, updated)
 links(id, a_node, b_node, latency_ms, bandwidth_mbps, loss, utilization, status, meta jsonb) 
 lsa_versions(node_id, version, hash, created)
 
@@ -100,6 +101,8 @@ config_kv(key text primary key, value jsonb, updated)
 // MeshService - Control plane operations and status
 service MeshService {
   // Mesh lifecycle
+  rpc SeedMesh(SeedMeshReq) returns (MeshStatus)
+  rpc JoinMesh(JoinMeshReq) returns (MeshStatus)
   rpc StartMesh(StartMeshReq) returns (MeshStatus)
   rpc StopMesh(StopMeshReq) returns (MeshStatus)
   rpc LeaveMesh(LeaveMeshReq) returns (SuccessStatus)
@@ -245,10 +248,20 @@ service MeshDataService {
    - Implement per-lane credit windows and backpressure
    - Basic message serialization/deserialization with lane_id
 
+4. **Basic Mesh Control**
+   - Implement basic mesh control over gRPC
+      - Seeding a new mesh
+      - Joining an existing mesh
+      - Starting the mesh
+      - Stopping the mesh
+      - Leaving the mesh
+      - Evicting a node from the mesh
+
 **Deliverables**:
 - New database schema active
 - Service starts and accepts gRPC connections
 - VirtualLink connections established with baseline lane configuration
+- Basic gRPC services implemented
 
 ### Phase 2: Consensus and Membership
 **Goal**: Implement unified Raft consensus and SWIM membership
@@ -267,6 +280,7 @@ service MeshDataService {
 3. **Basic Topology**
    - Node and link state tracking
    - Basic LSA generation and flooding
+   - gRPC services for adding and removing links
 
 **Deliverables**:
 - Nodes can form consensus groups

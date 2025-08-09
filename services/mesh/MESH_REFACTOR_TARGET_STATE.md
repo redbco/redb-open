@@ -307,7 +307,8 @@ Coefficients are config-driven and adjustable per traffic class.
 ## Persistence Model (PostgreSQL via `/pkg/database`)
 
 Tables (essential, minimal columns implied):
-- nodes(id, name, pubkey, last_seen, status, incarnation, meta jsonb)
+- mesh(mesh_id, name, desctiption, allow_join, status, created, updated)
+- nodes(node_id, name, description, pubkey, last_seen, status, incarnation, meta jsonb, platform, version, region_id, ip_address, port, created, updated)
 - links(id, a_node, b_node, latency_ms, bandwidth_mbps, loss, utilization, status, meta jsonb)
 - lsa_versions(node_id, version, hash, created)
 - raft_groups(id, type enum{MCG, DSG}, members[], term, leader_id, meta jsonb)
@@ -338,19 +339,24 @@ Tables are created by the supervisor service during the initialization of the ap
 Proto services in api/proto/mesh/v1/:
 
 ### MeshService
+- SeedMesh -> MeshStatus
+    - Seed a new mesh (only used to initialize the mesh)
+- JoinMesh -> MeshStatus
+    - Join an existing mesh by connecting to another node (only used once per node to join a mesh and get all initial details)
 - StartMesh -> MeshStatus
-    - Seed a new mesh
-    - Join an existing mesh by connecting to another node
+    - When the node is already a member of a mesh, start mesh is used when the application is starting
 - StopMesh -> MeshStatus
     - Used for shutting down the node and telling all other nodes that the node is going down
 - LeaveMesh -> SuccessStatus
     - For a node to leave the mesh, consensus is required
 - EvictNode -> MeshStatus
     - Evicting a node requires consensus from the mesh
-- AddRoute -> TopologyStatus
-    - Adds a path between nodes
-- DropRoute -> TopologyStatus
-    - Drop a path between nodes
+- AddLink -> TopologyStatus
+    - Adds a link between nodes
+- DropLink -> TopologyStatus
+    - Drop a link between nodes
+- EstablishFullLinks -> TopologyStatus
+    - Make all nodes try to establish all possible links with each other
 - SendNodeUpdate(NodeUpdate) -> BroadcastResult
     - Node updates are authorized by the node
 - SendMeshUpdate(MeshUpdate) -> BroadcastResult
