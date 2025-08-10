@@ -94,7 +94,7 @@ func (e *Engine) SetGRPCServer(server *grpc.Server) {
 	if e.grpcServer != nil {
 		serviceServer := NewServer(e)
 		meshv1.RegisterMeshServiceServer(e.grpcServer, serviceServer)
-		meshv1.RegisterConsensusServiceServer(e.grpcServer, serviceServer)
+		meshv1.RegisterMeshDataServiceServer(e.grpcServer, serviceServer)
 	}
 }
 

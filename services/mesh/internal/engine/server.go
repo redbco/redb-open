@@ -2,17 +2,20 @@ package engine
 
 import (
 	"context"
-	"fmt"
+	"crypto/rand"
+	"encoding/hex"
+	"time"
 
 	meshv1 "github.com/redbco/redb-open/api/proto/mesh/v1"
-	"github.com/redbco/redb-open/services/mesh/internal/consensus"
+	"github.com/redbco/redb-open/services/mesh/internal/storage"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type Server struct {
 	meshv1.UnimplementedMeshServiceServer
-	meshv1.UnimplementedConsensusServiceServer
+	meshv1.UnimplementedMeshDataServiceServer
 	engine *Engine
 }
 
@@ -20,6 +23,14 @@ func NewServer(engine *Engine) *Server {
 	return &Server{
 		engine: engine,
 	}
+}
+
+// generateID generates a simple unique ID string (simplified ULID-like)
+func generateID() string {
+	// Generate 16 random bytes and encode as hex (32 chars)
+	bytes := make([]byte, 16)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
 }
 
 // Helper method to track operations
@@ -30,321 +41,500 @@ func (s *Server) trackOperation() func() {
 
 // MeshService methods
 
-func (s *Server) SendMessage(ctx context.Context, req *meshv1.SendMessageRequest) (*meshv1.SendMessageResponse, error) {
+// SeedMesh creates a new mesh with this node as the first member
+func (s *Server) SeedMesh(ctx context.Context, req *meshv1.SeedMeshReq) (*meshv1.MeshStatus, error) {
 	defer s.trackOperation()()
 
-	if req.ToNodeId == "" {
-		return nil, status.Error(codes.InvalidArgument, "to_node_id is required")
+	if req.MeshName == "" {
+		return nil, status.Error(codes.InvalidArgument, "mesh_name is required")
 	}
 
-	if len(req.Content) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "content is required")
-	}
+	// TODO: Implement mesh seeding logic
+	// 1. Generate mesh_id (ULID) and mesh encryption keys
+	// 2. Initialize mesh metadata in PostgreSQL
+	// 3. Start WebSocket listener
+	// 4. Create MCG (Mesh Control Group) with this node as first member
+	// 5. Set mesh and node status to active
 
-	// TODO: Implement message sending through the mesh node
-	// For now, return a success response
-	return &meshv1.SendMessageResponse{
-		MessageId: "msg-001", // TODO: Generate unique message ID
-		Success:   true,
+	meshID := generateID()
+	nodeID := generateID()
+
+	return &meshv1.MeshStatus{
+		MeshId:   meshID,
+		MeshName: req.MeshName,
+		Nodes: []*meshv1.NodeInfo{
+			{
+				NodeId:   nodeID,
+				NodeName: "seed-node",
+				Status:   "ONLINE",
+				LastSeen: time.Now().Unix(),
+			},
+		},
+		Status:      "ACTIVE",
+		LastUpdated: time.Now().Unix(),
 	}, nil
 }
 
-func (s *Server) GetNodeStatus(ctx context.Context, req *meshv1.GetNodeStatusRequest) (*meshv1.GetNodeStatusResponse, error) {
+// JoinMesh joins an existing mesh by connecting to peer nodes
+func (s *Server) JoinMesh(ctx context.Context, req *meshv1.JoinMeshReq) (*meshv1.MeshStatus, error) {
 	defer s.trackOperation()()
 
-	node := s.engine.GetMeshNode()
-	if node == nil {
-		return nil, status.Error(codes.Internal, "mesh node not initialized")
+	if req.MeshId == "" {
+		return nil, status.Error(codes.InvalidArgument, "mesh_id is required")
+	}
+	if len(req.PeerEndpoints) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "peer_endpoints are required")
 	}
 
-	conns := node.GetConnections()
-	connectedNodes := make([]string, 0, len(conns))
-	for nodeID := range conns {
-		connectedNodes = append(connectedNodes, nodeID)
-	}
+	// TODO: Implement mesh joining logic
+	// 1. Establish WebSocket connections to peer endpoints
+	// 2. Perform handshake and exchange mesh configuration
+	// 3. Join MCG for consensus participation
+	// 4. Begin gossip protocol participation
+	// 5. Establish connections to other reachable nodes
 
-	return &meshv1.GetNodeStatusResponse{
-		NodeId:         node.GetID(),
-		MeshId:         node.GetMeshID(),
-		ConnectedNodes: connectedNodes,
-		State:          meshv1.NodeState_NODE_STATE_RUNNING, // TODO: Implement proper state tracking
+	return &meshv1.MeshStatus{
+		MeshId:      req.MeshId,
+		MeshName:    "joined-mesh",
+		Status:      "ACTIVE",
+		LastUpdated: time.Now().Unix(),
 	}, nil
 }
 
-// ManagementService methods
-
-func (s *Server) StartMesh(ctx context.Context, req *meshv1.StartMeshRequest) (*meshv1.StartMeshResponse, error) {
+// StartMesh starts the mesh service for an existing node/mesh configuration
+func (s *Server) StartMesh(ctx context.Context, req *meshv1.StartMeshReq) (*meshv1.MeshStatus, error) {
 	defer s.trackOperation()()
+
+	if req.MeshId == "" {
+		return nil, status.Error(codes.InvalidArgument, "mesh_id is required")
+	}
+	if req.NodeId == "" {
+		return nil, status.Error(codes.InvalidArgument, "node_id is required")
+	}
 
 	logger := s.engine.GetLogger()
 	storage := s.engine.GetStorage()
 
 	if storage == nil {
-		return &meshv1.StartMeshResponse{
-			Success: false,
-			Error:   "storage not available",
-		}, nil
+		return nil, status.Error(codes.Internal, "storage not available")
 	}
 
-	// Check if mesh is already running
-	if s.engine.GetMeshNode() != nil {
-		return &meshv1.StartMeshResponse{
-			Success: false,
-			Error:   "mesh runtime is already started",
-		}, nil
-	}
+	// TODO: Implement mesh startup logic
+	// 1. Load mesh configuration from PostgreSQL
+	// 2. Attempt reconnection to previously connected peers
+	// 3. Resume normal operation or wait for incoming connections
+	// 4. Start gossip protocol and Raft consensus groups
+	// 5. Begin topology probes and LSA emission
 
-	// Get initialization state to determine what to start
-	initInfo, err := s.engine.checkInitializationState(ctx)
-	if err != nil {
-		logger.Errorf("Failed to check initialization state: %v", err)
-		return &meshv1.StartMeshResponse{
-			Success: false,
-			Error:   fmt.Sprintf("failed to check initialization state: %v", err),
-		}, nil
-	}
+	logger.Info("Starting mesh with configuration overrides")
 
-	// Check if we have the required configuration
-	if initInfo.State != StateFullyConfigured {
-		return &meshv1.StartMeshResponse{
-			Success: false,
-			Error:   fmt.Sprintf("mesh not ready to start: %s", initInfo.ErrorMessage),
-		}, nil
-	}
-
-	// Start the mesh runtime
-	if err := s.engine.startMeshRuntime(ctx, initInfo); err != nil {
-		logger.Errorf("Failed to start mesh runtime: %v", err)
-		return &meshv1.StartMeshResponse{
-			Success: false,
-			Error:   fmt.Sprintf("failed to start mesh runtime: %v", err),
-		}, nil
-	}
-
-	logger.Infof("Successfully started mesh runtime for mesh %s with node %s",
-		initInfo.MeshInfo.MeshID, initInfo.NodeInfo.NodeID)
-
-	return &meshv1.StartMeshResponse{
-		Success: true,
-		MeshId:  initInfo.MeshInfo.MeshID,
-		NodeId:  initInfo.NodeInfo.NodeID,
-		Status:  "running",
+	return &meshv1.MeshStatus{
+		MeshId:      req.MeshId,
+		MeshName:    "existing-mesh",
+		Status:      "ACTIVE",
+		LastUpdated: time.Now().Unix(),
 	}, nil
 }
 
-func (s *Server) AddConnection(ctx context.Context, req *meshv1.AddConnectionRequest) (*meshv1.AddConnectionResponse, error) {
+// StopMesh gracefully stops the mesh service
+func (s *Server) StopMesh(ctx context.Context, req *meshv1.StopMeshReq) (*meshv1.MeshStatus, error) {
 	defer s.trackOperation()()
 
-	if req.PeerId == "" {
-		return nil, status.Error(codes.InvalidArgument, "peer_id is required")
+	if req.MeshId == "" {
+		return nil, status.Error(codes.InvalidArgument, "mesh_id is required")
 	}
 
-	if req.Address == "" {
-		return nil, status.Error(codes.InvalidArgument, "address is required")
+	// TODO: Implement mesh shutdown logic
+	// 1. Notify all other mesh nodes of shutdown
+	// 2. Set node and link status to offline in database
+	// 3. Close WebSocket connections gracefully
+	// 4. Persist state for later recovery
+
+	return &meshv1.MeshStatus{
+		MeshId:      req.MeshId,
+		Status:      "STOPPED",
+		LastUpdated: time.Now().Unix(),
+	}, nil
+}
+
+// LeaveMesh permanently removes this node from the mesh
+func (s *Server) LeaveMesh(ctx context.Context, req *meshv1.LeaveMeshReq) (*meshv1.SuccessStatus, error) {
+	defer s.trackOperation()()
+
+	if req.MeshId == "" {
+		return nil, status.Error(codes.InvalidArgument, "mesh_id is required")
 	}
 
-	node := s.engine.GetMeshNode()
-	if node == nil {
-		return &meshv1.AddConnectionResponse{
-			Success: false,
-			Error:   "mesh node not initialized",
-		}, nil
-	}
+	// TODO: Implement mesh leave logic
+	// 1. Request consensus for node removal
+	// 2. Clean up local state
+	// 3. Close all connections
 
-	err := node.AddConnection(req.PeerId)
-	if err != nil {
-		return &meshv1.AddConnectionResponse{
-			Success: false,
-			Error:   err.Error(),
-		}, nil
-	}
-
-	return &meshv1.AddConnectionResponse{
+	return &meshv1.SuccessStatus{
 		Success: true,
 	}, nil
 }
 
-func (s *Server) RemoveConnection(ctx context.Context, req *meshv1.RemoveConnectionRequest) (*meshv1.RemoveConnectionResponse, error) {
+// EvictNode forcibly removes another node from the mesh
+func (s *Server) EvictNode(ctx context.Context, req *meshv1.EvictNodeReq) (*meshv1.MeshStatus, error) {
 	defer s.trackOperation()()
 
-	if req.PeerId == "" {
-		return nil, status.Error(codes.InvalidArgument, "peer_id is required")
+	if req.MeshId == "" {
+		return nil, status.Error(codes.InvalidArgument, "mesh_id is required")
+	}
+	if req.TargetNodeId == "" {
+		return nil, status.Error(codes.InvalidArgument, "target_node_id is required")
 	}
 
-	node := s.engine.GetMeshNode()
-	if node == nil {
-		return &meshv1.RemoveConnectionResponse{
-			Success: false,
-			Error:   "mesh node not initialized",
-		}, nil
+	// TODO: Implement node eviction logic
+	// 1. Request consensus for node eviction (requires MCG consensus)
+	// 2. Update topology and routing tables
+	// 3. Notify remaining nodes
+
+	return &meshv1.MeshStatus{
+		MeshId:      req.MeshId,
+		Status:      "ACTIVE",
+		LastUpdated: time.Now().Unix(),
+	}, nil
+}
+
+// Topology management methods
+
+// AddLink establishes a direct connection between two nodes
+func (s *Server) AddLink(ctx context.Context, req *meshv1.AddLinkReq) (*meshv1.TopologyStatus, error) {
+	defer s.trackOperation()()
+
+	if req.MeshId == "" {
+		return nil, status.Error(codes.InvalidArgument, "mesh_id is required")
+	}
+	if req.SourceNodeId == "" {
+		return nil, status.Error(codes.InvalidArgument, "source_node_id is required")
+	}
+	if req.TargetNodeId == "" {
+		return nil, status.Error(codes.InvalidArgument, "target_node_id is required")
 	}
 
-	err := node.RemoveConnection(req.PeerId)
-	if err != nil {
-		return &meshv1.RemoveConnectionResponse{
-			Success: false,
-			Error:   err.Error(),
-		}, nil
+	// TODO: Implement link addition logic
+	// 1. Establish WebSocket connection between nodes
+	// 2. Update link state database
+	// 3. Emit LSA updates
+	// 4. Trigger path recomputation
+
+	linkInfo := &meshv1.LinkInfo{
+		LinkId:        generateID(),
+		SourceNodeId:  req.SourceNodeId,
+		TargetNodeId:  req.TargetNodeId,
+		LatencyMs:     req.LatencyMs,
+		BandwidthMbps: req.BandwidthMbps,
+		Status:        "UP",
 	}
 
-	return &meshv1.RemoveConnectionResponse{
+	return &meshv1.TopologyStatus{
+		Success: true,
+		Links:   []*meshv1.LinkInfo{linkInfo},
+	}, nil
+}
+
+// DropLink removes a direct connection between two nodes
+func (s *Server) DropLink(ctx context.Context, req *meshv1.DropLinkReq) (*meshv1.TopologyStatus, error) {
+	defer s.trackOperation()()
+
+	if req.MeshId == "" {
+		return nil, status.Error(codes.InvalidArgument, "mesh_id is required")
+	}
+	if req.SourceNodeId == "" {
+		return nil, status.Error(codes.InvalidArgument, "source_node_id is required")
+	}
+	if req.TargetNodeId == "" {
+		return nil, status.Error(codes.InvalidArgument, "target_node_id is required")
+	}
+
+	// TODO: Implement link removal logic
+	// 1. Close WebSocket connection
+	// 2. Update link state database
+	// 3. Emit LSA updates
+	// 4. Trigger fast reroute for affected paths
+
+	return &meshv1.TopologyStatus{
 		Success: true,
 	}, nil
 }
 
-func (s *Server) ListConnections(ctx context.Context, req *meshv1.ListConnectionsRequest) (*meshv1.ListConnectionsResponse, error) {
+// EstablishFullLinks attempts to create full mesh connectivity
+func (s *Server) EstablishFullLinks(ctx context.Context, req *meshv1.EstablishFullLinksReq) (*meshv1.TopologyStatus, error) {
 	defer s.trackOperation()()
 
-	node := s.engine.GetMeshNode()
-	if node == nil {
-		return nil, status.Error(codes.Internal, "mesh node not initialized")
+	if req.MeshId == "" {
+		return nil, status.Error(codes.InvalidArgument, "mesh_id is required")
 	}
 
-	conns := node.GetConnections()
-	connections := make([]*meshv1.Connection, 0, len(conns))
+	// TODO: Implement full mesh establishment
+	// 1. Get all nodes in mesh
+	// 2. Attempt connections between all node pairs
+	// 3. Update topology database
 
-	for peerID, conn := range conns {
-		connections = append(connections, &meshv1.Connection{
-			PeerId:   peerID,
-			Status:   conn.Status,
-			LastSeen: 0, // TODO: Implement last seen tracking
-		})
-	}
-
-	return &meshv1.ListConnectionsResponse{
-		Connections: connections,
-	}, nil
-}
-
-// ConsensusService methods
-
-func (s *Server) CreateGroup(ctx context.Context, req *meshv1.CreateGroupRequest) (*meshv1.CreateGroupResponse, error) {
-	defer s.trackOperation()()
-
-	if req.GroupId == "" {
-		return nil, status.Error(codes.InvalidArgument, "group ID is required")
-	}
-
-	// Check if group already exists
-	if _, exists := s.engine.GetConsensusGroup(req.GroupId); exists {
-		return nil, status.Error(codes.AlreadyExists, "group already exists")
-	}
-
-	// Get database connections from engine
-	postgres := s.engine.GetDatabase()
-	redis := s.engine.GetRedis()
-
-	if postgres == nil {
-		return nil, status.Error(codes.Internal, "PostgreSQL connection not available")
-	}
-	if redis == nil {
-		return nil, status.Error(codes.Internal, "Redis connection not available")
-	}
-
-	// Create consensus group configuration
-	cfg := consensus.Config{
-		GroupID:      req.GroupId,
-		NodeID:       fmt.Sprintf("node-%s", req.GroupId), // Generate a node ID based on group ID
-		DataDir:      fmt.Sprintf("/data/consensus/%s", req.GroupId),
-		BindAddr:     ":0", // Use dynamic port allocation
-		Peers:        req.InitialMembers,
-		SnapshotPath: fmt.Sprintf("/data/snapshots/%s", req.GroupId),
-		PostgreSQL:   postgres,
-		Redis:        redis,
-	}
-
-	logger := s.engine.GetLogger()
-	if logger == nil {
-		return nil, status.Error(codes.Internal, "logger not available")
-	}
-
-	// Create the consensus group
-	group, err := consensus.NewGroup(cfg, logger)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to create group: %v", err)
-	}
-
-	// Start the group
-	if err := group.Start(); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to start group: %v", err)
-	}
-
-	// Add to engine's group management
-	s.engine.AddConsensusGroup(req.GroupId, group)
-
-	return &meshv1.CreateGroupResponse{
+	return &meshv1.TopologyStatus{
 		Success: true,
 	}, nil
 }
 
-func (s *Server) JoinGroup(ctx context.Context, req *meshv1.JoinGroupRequest) (*meshv1.JoinGroupResponse, error) {
+// Data publishing methods
+
+// SendNodeUpdate publishes node-authorized updates
+func (s *Server) SendNodeUpdate(ctx context.Context, req *meshv1.NodeUpdate) (*meshv1.BroadcastResult, error) {
 	defer s.trackOperation()()
 
-	if req.GroupId == "" {
-		return nil, status.Error(codes.InvalidArgument, "group ID is required")
+	if req.NodeId == "" {
+		return nil, status.Error(codes.InvalidArgument, "node_id is required")
+	}
+	if req.MeshId == "" {
+		return nil, status.Error(codes.InvalidArgument, "mesh_id is required")
 	}
 
-	group, exists := s.engine.GetConsensusGroup(req.GroupId)
-	if !exists {
-		return nil, status.Error(codes.NotFound, "group not found")
-	}
+	// TODO: Implement node update broadcasting
+	// 1. Validate signature
+	// 2. Update local node state
+	// 3. Broadcast to all connected nodes
+	// 4. Store in delivery log
 
-	// Add the new peer to the group
-	// Construct peer address based on node ID (this should be configurable)
-	peerAddr := fmt.Sprintf(":%d", 8080+len(group.GetLeader())) // Simple port assignment
-	if err := group.AddPeer(req.NodeId, peerAddr); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to add peer: %v", err)
-	}
-
-	return &meshv1.JoinGroupResponse{
-		Success: true,
+	return &meshv1.BroadcastResult{
+		Success:   true,
+		MessageId: int64(time.Now().UnixNano()), // Use proper message ID
 	}, nil
 }
 
-func (s *Server) LeaveGroup(ctx context.Context, req *meshv1.LeaveGroupRequest) (*meshv1.LeaveGroupResponse, error) {
+// SendMeshUpdate publishes mesh-wide updates (requires MCG consensus)
+func (s *Server) SendMeshUpdate(ctx context.Context, req *meshv1.MeshUpdate) (*meshv1.BroadcastResult, error) {
 	defer s.trackOperation()()
 
-	if req.GroupId == "" {
-		return nil, status.Error(codes.InvalidArgument, "group ID is required")
+	if req.MeshId == "" {
+		return nil, status.Error(codes.InvalidArgument, "mesh_id is required")
+	}
+	if req.UpdateType == "" {
+		return nil, status.Error(codes.InvalidArgument, "update_type is required")
 	}
 
-	group, exists := s.engine.GetConsensusGroup(req.GroupId)
-	if !exists {
-		return nil, status.Error(codes.NotFound, "group not found")
-	}
+	// TODO: Implement mesh update with MCG consensus
+	// 1. Append to MCG log
+	// 2. Wait for Raft commit
+	// 3. Trigger guaranteed fanout to every node
+	// 4. Use outbox pattern for reliability
 
-	// Remove the peer from the group
-	if err := group.RemovePeer(req.NodeId); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to remove peer: %v", err)
-	}
-
-	return &meshv1.LeaveGroupResponse{
-		Success: true,
+	return &meshv1.BroadcastResult{
+		Success:   true,
+		MessageId: int64(time.Now().UnixNano()),
 	}, nil
 }
 
-func (s *Server) GetGroupStatus(ctx context.Context, req *meshv1.GetGroupStatusRequest) (*meshv1.GetGroupStatusResponse, error) {
+// SendInternalDBUpdate publishes database CDC replication events
+func (s *Server) SendInternalDBUpdate(ctx context.Context, req *meshv1.DBUpdate) (*meshv1.BroadcastResult, error) {
 	defer s.trackOperation()()
 
-	if req.GroupId == "" {
-		return nil, status.Error(codes.InvalidArgument, "group ID is required")
+	if req.UpdateId == "" {
+		return nil, status.Error(codes.InvalidArgument, "update_id is required")
+	}
+	if req.TableName == "" {
+		return nil, status.Error(codes.InvalidArgument, "table_name is required")
+	}
+	if req.Operation == "" {
+		return nil, status.Error(codes.InvalidArgument, "operation is required")
 	}
 
-	group, exists := s.engine.GetConsensusGroup(req.GroupId)
-	if !exists {
-		return nil, status.Error(codes.NotFound, "group not found")
-	}
+	// TODO: Implement internal DB update replication
+	// 1. Append to MCG log for mesh-wide propagation
+	// 2. Wait for commit
+	// 3. Each node applies to local PostgreSQL
+	// 4. Track completion in delivery log
 
-	state := group.GetState()
-	leader := group.GetLeader()
-	term := group.GetTerm()
-	members := group.GetMembers()
-
-	return &meshv1.GetGroupStatusResponse{
-		GroupId:  req.GroupId,
-		LeaderId: leader,
-		Members:  members,
-		State:    meshv1.GroupState(state),
-		Term:     int64(term),
+	return &meshv1.BroadcastResult{
+		Success:   true,
+		MessageId: int64(time.Now().UnixNano()),
 	}, nil
+}
+
+// Client data stream methods
+
+// OpenClientDataStream creates a new client data stream
+func (s *Server) OpenClientDataStream(ctx context.Context, req *meshv1.OpenClientDataStreamReq) (*meshv1.StreamHandle, error) {
+	defer s.trackOperation()()
+
+	if req.TenantId == "" {
+		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if len(req.TargetNodes) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "target_nodes are required")
+	}
+
+	// TODO: Implement stream creation
+	// 1. Form/join DSG for stream participants
+	// 2. Elect Raft leader
+	// 3. Assign stream_id and initialize committed_seq
+	// 4. Precompute N best paths per target
+
+	streamID := generateID()
+
+	// Store stream in PostgreSQL
+	stream := &storage.MeshStream{
+		ID:       streamID,
+		TenantID: req.TenantId,
+		DstNodes: req.TargetNodes,
+		QoS:      req.Qos,
+		Priority: int(req.Priority),
+		Created:  time.Now(),
+	}
+	_ = stream // TODO: Store in database
+
+	return &meshv1.StreamHandle{
+		StreamId:    streamID,
+		TenantId:    req.TenantId,
+		TargetNodes: req.TargetNodes,
+		Status:      "ACTIVE",
+		CreatedAt:   time.Now().Unix(),
+	}, nil
+}
+
+// CloseClientDataStream closes an existing client data stream
+func (s *Server) CloseClientDataStream(ctx context.Context, req *meshv1.StreamHandle) (*emptypb.Empty, error) {
+	defer s.trackOperation()()
+
+	if req.StreamId == "" {
+		return nil, status.Error(codes.InvalidArgument, "stream_id is required")
+	}
+
+	// TODO: Implement stream closure
+	// 1. Flush pending messages
+	// 2. Update stream status in database
+	// 3. Notify DSG members
+	// 4. Clean up routing state
+
+	return &emptypb.Empty{}, nil
+}
+
+// PublishClientData publishes encrypted client data chunks
+func (s *Server) PublishClientData(ctx context.Context, req *meshv1.Chunk) (*meshv1.PublishResult, error) {
+	defer s.trackOperation()()
+
+	if req.StreamId == "" {
+		return nil, status.Error(codes.InvalidArgument, "stream_id is required")
+	}
+	if req.TenantId == "" {
+		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if len(req.Payload) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "payload is required")
+	}
+
+	// TODO: Implement client data publishing
+	// 1. Encrypt payload with tenant-specific keys
+	// 2. Persist chunk to outbox
+	// 3. Append to DSG log
+	// 4. On Raft commit, schedule chunk across paths
+	// 5. Track delivery to all target nodes
+
+	messageID := generateID()
+
+	// Store in outbox
+	outboxEntry := &storage.MeshOutbox{
+		StreamID:  req.StreamId,
+		MessageID: messageID,
+		Payload:   req.Payload,
+		Status:    storage.OutboxStatusPending,
+		Created:   time.Now(),
+	}
+	_ = outboxEntry // TODO: Store in database
+
+	return &meshv1.PublishResult{
+		Success:   true,
+		MessageId: int64(time.Now().UnixNano()),
+	}, nil
+}
+
+// Status and monitoring methods
+
+// GetMeshStatus returns comprehensive mesh state
+func (s *Server) GetMeshStatus(ctx context.Context, req *emptypb.Empty) (*meshv1.MeshStatus, error) {
+	defer s.trackOperation()()
+
+	// TODO: Implement comprehensive status collection
+	// 1. Get mesh configuration from PostgreSQL
+	// 2. Collect node information and statuses
+	// 3. Get link state database information
+	// 4. Collect Raft group statuses
+	// 5. Determine overall mesh health
+
+	return &meshv1.MeshStatus{
+		MeshId:      "current-mesh-id",
+		MeshName:    "example-mesh",
+		Status:      "ACTIVE",
+		LastUpdated: time.Now().Unix(),
+	}, nil
+}
+
+// WatchMeshEvents streams real-time mesh events
+func (s *Server) WatchMeshEvents(req *meshv1.Filter, stream meshv1.MeshService_WatchMeshEventsServer) error {
+	defer s.trackOperation()()
+
+	// TODO: Implement event streaming
+	// 1. Subscribe to topology changes
+	// 2. Subscribe to node state changes
+	// 3. Subscribe to consensus events
+	// 4. Stream filtered events to client
+
+	// Mock event for now
+	event := &meshv1.MeshEvent{
+		EventId:   generateID(),
+		EventType: "NODE_JOINED",
+		Timestamp: time.Now().Unix(),
+	}
+
+	return stream.Send(event)
+}
+
+// MeshDataService methods (server-side streams)
+
+// SubscribeNodeUpdates streams node updates to subscribers
+func (s *Server) SubscribeNodeUpdates(req *meshv1.SubscribeReq, stream meshv1.MeshDataService_SubscribeNodeUpdatesServer) error {
+	defer s.trackOperation()()
+
+	// TODO: Implement node update streaming
+	// 1. Apply tenant filters
+	// 2. Subscribe to node update events
+	// 3. Stream updates with backpressure control
+	// 4. Handle client disconnect gracefully
+
+	return nil
+}
+
+// SubscribeMeshUpdates streams mesh-wide updates to subscribers
+func (s *Server) SubscribeMeshUpdates(req *meshv1.SubscribeReq, stream meshv1.MeshDataService_SubscribeMeshUpdatesServer) error {
+	defer s.trackOperation()()
+
+	// TODO: Implement mesh update streaming
+	return nil
+}
+
+// SubscribeInternalDBUpdates streams internal DB updates to subscribers
+func (s *Server) SubscribeInternalDBUpdates(req *meshv1.SubscribeReq, stream meshv1.MeshDataService_SubscribeInternalDBUpdatesServer) error {
+	defer s.trackOperation()()
+
+	// TODO: Implement DB update streaming
+	return nil
+}
+
+// SubscribeClientData streams client data to subscribers with exactly-once delivery
+func (s *Server) SubscribeClientData(req *meshv1.StreamSelector, stream meshv1.MeshDataService_SubscribeClientDataServer) error {
+	defer s.trackOperation()()
+
+	if req.TenantId == "" {
+		return status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+
+	// TODO: Implement client data streaming
+	// 1. Apply tenant and stream filters
+	// 2. Decrypt tenant-specific data
+	// 3. Ensure exactly-once delivery semantics
+	// 4. Handle acknowledgments and offset advancement
+	// 5. Implement backpressure via credit windows
+
+	return nil
 }
