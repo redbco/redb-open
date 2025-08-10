@@ -31,17 +31,8 @@ func (e *Engine) insertIntegration(ctx context.Context, in *pb.Integration) (*pb
         status
     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
 
-	tenantID := ""
-	if in.Metadata != nil {
-		if v, ok := in.Metadata.AsMap()["tenant_id"].(string); ok {
-			tenantID = v
-		}
-	}
-	if tenantID == "" {
-		return nil, fmt.Errorf("tenant_id is required in metadata")
-	}
 	_, err := e.db.Pool().Exec(ctx, sql,
-		in.Id, tenantID, in.Name, in.Description,
+		in.Id, in.TenantId, in.Name, in.Description,
 		in.Type.String(), cfg, in.CredentialKey, meta, in.SupportedOperations, "STATUS_CREATED",
 	)
 	if err != nil {

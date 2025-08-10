@@ -40,22 +40,23 @@ enum ExecutionMode {
 
 // Core Integration resource definition
 message Integration {
-    string id = 1;
-    string name = 2;
-    string description = 3;
-    IntegrationType type = 4;
+    string tenant_id = 1;
+    string id = 2;
+    string name = 3;
+    string description = 4;
+    IntegrationType type = 5;
     // Provider-specific configuration (LightRAG, LangChain, etc.)
-    google.protobuf.Struct config = 5;
+    google.protobuf.Struct config = 6;
     // Optional keyring reference or credential identifier
-    string credential_key = 6;
+    string credential_key = 7;
     // Arbitrary metadata
-    google.protobuf.Struct metadata = 7;
+    google.protobuf.Struct metadata = 8;
     // Integration capabilities and supported operations
-    repeated string supported_operations = 8;
+    repeated string supported_operations = 9;
     // Health status of the integration
-    IntegrationHealth health = 9;
-    google.protobuf.Timestamp created_at = 10;
-    google.protobuf.Timestamp updated_at = 11;
+    IntegrationHealth health = 10;
+    google.protobuf.Timestamp created_at = 11;
+    google.protobuf.Timestamp updated_at = 12;
 }
 
 // Health status of an integration
