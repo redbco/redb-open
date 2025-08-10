@@ -41,6 +41,7 @@ assignees: ''
 - [ ] **Service API** (`services/serviceapi/`)
 - [ ] **Query API** (`services/queryapi/`)
 - [ ] **Webhook Service** (`services/webhook/`)
+- [ ] **Integration Service** (`services/integration/`)
 - [ ] **MCP Server Service** (`services/mcpserver/`)
 - [ ] **CLI** (`cmd/cli/`)
 - [ ] **Shared Libraries** (`pkg/`)

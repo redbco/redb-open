@@ -15,4 +15,5 @@ use (
 	./services/transformation
 	./services/unifiedmodel
 	./services/webhook
+	./services/integration
 )

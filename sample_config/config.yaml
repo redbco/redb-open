@@ -81,7 +81,6 @@ services:
       - core
     environment:
       SERVICE_NAME: mesh
-    external_port: 8443
 
   anchor:
     enabled: true
@@ -97,6 +96,21 @@ services:
       SERVICE_NAME: anchor
 
   # API Services
+  integration:
+    enabled: true
+    required: true
+    executable: ./redb-integration
+    args:
+      - --port=50063
+      - --supervisor=localhost:50000
+    environment:
+      SERVICE_NAME: integration
+    dependencies:
+      - core
+    resources:
+      max_memory_mb: 2048
+      max_cpu_percent: 100
+
   serviceapi:
     enabled: true
     required: true
@@ -108,7 +122,6 @@ services:
       - core
     environment:
       SERVICE_NAME: serviceapi
-    external_port: 8081
 
   clientapi:
     enabled: true
@@ -121,7 +134,6 @@ services:
       - core
     environment:
       SERVICE_NAME: clientapi
-    external_port: 8080
   
   queryapi:
     enabled: true
@@ -134,7 +146,6 @@ services:
       - core
     environment:
       SERVICE_NAME: queryapi
-    external_port: 8082
 
   mcpserver:
     enabled: true

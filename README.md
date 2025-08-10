@@ -185,12 +185,12 @@ The reDB Node consists of 12 microservices orchestrated by a supervisor service,
        │          │  │          │  │   API    │
        └──────────┘  └──────────┘  └──────────┘
              │            │             │
-             ┼────────────┼─────────────┘
-             │            │
-       ┌─────▼────┐  ┌────▼─────┐
-       │ Webhook  │  │   MCP    │
-       │ Service  │  │ Server   │
-       └──────────┘  └──────────┘
+             ┼────────────┼─────────────┤
+             │            │             │
+       ┌─────▼────┐  ┌────▼─────┐  ┌────▼──────┐
+       │ Webhook  │  │   MCP    │  │Integration│
+       │ Service  │  │ Server   │  │  Service  │
+       └──────────┘  └──────────┘  └───────────┘
 ```
 
 ## Microservices Overview
@@ -215,7 +215,10 @@ Database abstraction layer with 16+ database adapters, schema translation, and c
 Database connectivity service managing direct connections, schema monitoring, and data replication across all supported databases.
 
 #### **Transformation Service** (`services/transformation/`) - Port 50054
-Data processing service providing transformation functions, obfuscation, anonymization, and schema-aware mutations.
+Data processing service providing internal transformation functions (e.g., formatting, hashing, encoding) and schema-aware mutations.
+
+#### **Integration Service** (`services/integration/`) - Port 50063
+Manages external integrations such as LLMs, RAG systems, and third-party processors. Provides CRUD for integration definitions and an execution endpoint to invoke integrations over gRPC.
 
 ### Network Services
 
@@ -397,7 +400,8 @@ redb-open/
 │   ├── queryapi/         # Database query execution interface
 │   ├── security/         # Authentication and authorization
 │   ├── serviceapi/       # Administrative and service management
-│   ├── transformation/   # Data processing and obfuscation
+│   ├── transformation/   # Internal data processing (no external integrations)
+│   ├── integration/      # External integrations (LLMs, RAG, custom)
 │   ├── unifiedmodel/     # Database abstraction and schema translation
 │   └── webhook/          # External system integration
 ├── pkg/                   # Shared libraries and utilities

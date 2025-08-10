@@ -3,7 +3,7 @@
 # Project variables
 BINARY_DIR := bin
 BUILD_DIR := build
-SERVICES := supervisor security unifiedmodel transformation mesh anchor core webhook clientapi serviceapi queryapi mcpserver cli
+SERVICES := supervisor security unifiedmodel transformation integration mesh anchor core webhook clientapi serviceapi queryapi mcpserver cli
 
 # Default to darwin arm64 build
 GOOS ?= darwin
@@ -37,7 +37,8 @@ PROTO_FILES := api/proto/common/v1/common.proto \
 			   api/proto/mesh/v1/mesh.proto \
                api/proto/anchor/v1/anchor.proto \
 			   api/proto/core/v1/core.proto \
-			   api/proto/webhook/v1/webhook.proto
+			   api/proto/webhook/v1/webhook.proto \
+			   api/proto/integration/v1/integration.proto
 
 .PHONY: all clean build test proto dev local
 

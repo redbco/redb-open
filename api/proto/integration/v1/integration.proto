@@ -1,0 +1,489 @@
+syntax = "proto3";
+
+package redbco.redbopen.integration.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/integration/v1;integrationv1";
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "api/proto/common/v1/common.proto";
+
+// Integration types supported by the system
+enum IntegrationType {
+    INTEGRATION_TYPE_UNSPECIFIED = 0;
+    INTEGRATION_TYPE_LLM = 1;
+    INTEGRATION_TYPE_RAG = 2;
+    INTEGRATION_TYPE_WEBHOOK = 3;
+    INTEGRATION_TYPE_CUSTOM = 4;
+    INTEGRATION_TYPE_VECTOR_DB = 5; // For vector database integrations
+    INTEGRATION_TYPE_EMBEDDING = 6; // For embedding model integrations
+}
+
+// RAG-specific operation types
+enum RAGOperation {
+    RAG_OPERATION_UNSPECIFIED = 0;
+    RAG_OPERATION_INGEST = 1;      // Ingest documents into RAG system
+    RAG_OPERATION_QUERY = 2;       // Query the RAG system
+    RAG_OPERATION_DELETE = 3;      // Delete documents from RAG system
+    RAG_OPERATION_UPDATE = 4;      // Update existing documents
+    RAG_OPERATION_STATUS = 5;      // Get RAG system status
+    RAG_OPERATION_LIST_DOCS = 6;   // List ingested documents
+}
+
+// Execution modes for integration operations
+enum ExecutionMode {
+    EXECUTION_MODE_UNSPECIFIED = 0;
+    EXECUTION_MODE_SYNC = 1;        // Synchronous execution
+    EXECUTION_MODE_ASYNC = 2;       // Asynchronous execution with job tracking
+    EXECUTION_MODE_STREAM = 3;      // Streaming execution for large datasets
+}
+
+// Core Integration resource definition
+message Integration {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+    IntegrationType type = 4;
+    // Provider-specific configuration (LightRAG, LangChain, etc.)
+    google.protobuf.Struct config = 5;
+    // Optional keyring reference or credential identifier
+    string credential_key = 6;
+    // Arbitrary metadata
+    google.protobuf.Struct metadata = 7;
+    // Integration capabilities and supported operations
+    repeated string supported_operations = 8;
+    // Health status of the integration
+    IntegrationHealth health = 9;
+    google.protobuf.Timestamp created_at = 10;
+    google.protobuf.Timestamp updated_at = 11;
+}
+
+// Health status of an integration
+message IntegrationHealth {
+    enum HealthStatus {
+        HEALTH_STATUS_UNSPECIFIED = 0;
+        HEALTH_STATUS_HEALTHY = 1;
+        HEALTH_STATUS_DEGRADED = 2;
+        HEALTH_STATUS_UNHEALTHY = 3;
+        HEALTH_STATUS_UNKNOWN = 4;
+    }
+    
+    HealthStatus status = 1;
+    string message = 2;
+    google.protobuf.Timestamp last_check = 3;
+    map<string, string> details = 4; // Additional health details
+}
+
+// Document structure for RAG operations
+message Document {
+    string id = 1;
+    string content = 2;
+    google.protobuf.Struct metadata = 3;
+    SourceInfo source = 4;
+    google.protobuf.Timestamp created_at = 5;
+}
+
+// Source information for documents
+message SourceInfo {
+    string database_type = 1;      // e.g., "mongodb", "postgres"
+    string database_id = 2;        // Database instance identifier
+    string collection_table = 3;   // Collection or table name
+    string record_id = 4;          // Original record identifier
+    google.protobuf.Struct query_info = 5; // Query used to fetch this document
+}
+
+// Embedding representation
+message Embedding {
+    string id = 1;
+    repeated double vector = 2;
+    string content = 3;                    // Text content that was embedded
+    google.protobuf.Struct metadata = 4;   // Associated metadata
+    string model = 5;                      // Embedding model used
+}
+
+// RAG ingestion result
+message IngestResult {
+    string document_id = 1;
+    repeated string chunk_ids = 2;         // IDs of generated chunks
+    repeated Embedding embeddings = 3;     // Generated embeddings
+    google.protobuf.Struct metrics = 4;    // Processing metrics
+    string error_message = 5;              // Error if ingestion failed
+}
+
+// RAG query result
+message QueryResult {
+    repeated RetrievedChunk chunks = 1;    // Retrieved relevant chunks
+    string generated_response = 2;         // Generated answer (if applicable)
+    google.protobuf.Struct metadata = 3;   // Query metadata and metrics
+    double confidence_score = 4;           // Overall confidence
+}
+
+// Retrieved chunk from RAG query
+message RetrievedChunk {
+    string id = 1;
+    string content = 2;
+    double similarity_score = 3;
+    google.protobuf.Struct metadata = 4;
+    string source_document_id = 5;
+}
+
+// Job tracking for async operations
+message ExecutionJob {
+    string job_id = 1;
+    string integration_id = 2;
+    string operation = 3;
+    JobStatus status = 4;
+    google.protobuf.Struct progress = 5;   // Progress information
+    google.protobuf.Struct result = 6;     // Final result (when completed)
+    string error_message = 7;
+    google.protobuf.Timestamp created_at = 8;
+    google.protobuf.Timestamp updated_at = 9;
+    google.protobuf.Timestamp completed_at = 10;
+}
+
+enum JobStatus {
+    JOB_STATUS_UNSPECIFIED = 0;
+    JOB_STATUS_PENDING = 1;
+    JOB_STATUS_RUNNING = 2;
+    JOB_STATUS_COMPLETED = 3;
+    JOB_STATUS_FAILED = 4;
+    JOB_STATUS_CANCELLED = 5;
+}
+
+// CRUD Service + Execute for invoking an integration
+service IntegrationService {
+    // Management
+    rpc CreateIntegration(CreateIntegrationRequest) returns (CreateIntegrationResponse);
+    rpc GetIntegration(GetIntegrationRequest) returns (GetIntegrationResponse);
+    rpc UpdateIntegration(UpdateIntegrationRequest) returns (UpdateIntegrationResponse);
+    rpc DeleteIntegration(DeleteIntegrationRequest) returns (DeleteIntegrationResponse);
+    rpc ListIntegrations(ListIntegrationsRequest) returns (ListIntegrationsResponse);
+    
+    // Health checking
+    rpc CheckHealth(CheckHealthRequest) returns (CheckHealthResponse);
+    
+    // Generic execution (maintains backward compatibility)
+    rpc ExecuteIntegration(ExecuteIntegrationRequest) returns (ExecuteIntegrationResponse);
+    
+    // Streaming execution for large operations
+    rpc ExecuteIntegrationStream(ExecuteIntegrationStreamRequest) returns (stream ExecuteIntegrationStreamResponse);
+    
+    // Job management for async operations
+    rpc GetJob(GetJobRequest) returns (GetJobResponse);
+    rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+    rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+}
+
+// RAG-specific service for enhanced RAG operations
+service RAGService {
+    // Document ingestion
+    rpc IngestDocuments(IngestDocumentsRequest) returns (IngestDocumentsResponse);
+    rpc IngestDocumentsStream(stream IngestDocumentsStreamRequest) returns (stream IngestDocumentsStreamResponse);
+    
+    // RAG queries
+    rpc QueryRAG(QueryRAGRequest) returns (QueryRAGResponse);
+    
+    // Document management
+    rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse);
+    rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
+    rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
+    rpc UpdateDocument(UpdateDocumentRequest) returns (UpdateDocumentResponse);
+    
+    // Pipeline operations (your 3-step process)
+    rpc ExecuteRAGPipeline(ExecuteRAGPipelineRequest) returns (ExecuteRAGPipelineResponse);
+    rpc ExecuteRAGPipelineStream(ExecuteRAGPipelineStreamRequest) returns (stream ExecuteRAGPipelineStreamResponse);
+}
+
+// Existing messages with enhancements
+message CreateIntegrationRequest {
+    Integration integration = 1;
+    bool validate_config = 2;  // Validate configuration before creating
+}
+
+message CreateIntegrationResponse {
+    Integration integration = 1;
+    string status_message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+message GetIntegrationRequest {
+    string id = 1;
+    bool include_health = 2;  // Include health check in response
+}
+
+message GetIntegrationResponse {
+    Integration integration = 1;
+    string status_message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+message UpdateIntegrationRequest {
+    Integration integration = 1;
+    bool validate_config = 2;
+}
+
+message UpdateIntegrationResponse {
+    Integration integration = 1;
+    string status_message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+message DeleteIntegrationRequest {
+    string id = 1;
+    bool force = 2;  // Force delete even if there are running jobs
+}
+
+message DeleteIntegrationResponse {
+    string status_message = 1;
+    redbco.redbopen.common.v1.Status status = 2;
+}
+
+message ListIntegrationsRequest {
+    IntegrationType type = 1;
+    int32 page_size = 2;
+    string page_token = 3;
+    bool include_health = 4;
+}
+
+message ListIntegrationsResponse {
+    repeated Integration integrations = 1;
+    string next_page_token = 2;
+    string status_message = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message CheckHealthRequest {
+    string id = 1;  // Integration ID
+}
+
+message CheckHealthResponse {
+    IntegrationHealth health = 1;
+    string status_message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Enhanced execution request
+message ExecuteIntegrationRequest {
+    string id = 1;
+    string operation = 2;
+    google.protobuf.Struct payload = 3;
+    google.protobuf.Struct parameters = 4;
+    ExecutionMode mode = 5;  // Sync, async, or stream
+}
+
+message ExecuteIntegrationResponse {
+    google.protobuf.Struct payload = 1;
+    string job_id = 2;  // Present for async operations
+    string status_message = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Streaming execution
+message ExecuteIntegrationStreamRequest {
+    string id = 1;
+    string operation = 2;
+    google.protobuf.Struct payload = 3;
+    google.protobuf.Struct parameters = 4;
+}
+
+message ExecuteIntegrationStreamResponse {
+    google.protobuf.Struct payload = 1;
+    bool is_final = 2;  // Indicates if this is the final response
+    string status_message = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Job management
+message GetJobRequest {
+    string job_id = 1;
+}
+
+message GetJobResponse {
+    ExecutionJob job = 1;
+    string status_message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+message ListJobsRequest {
+    string integration_id = 1;  // Filter by integration
+    JobStatus status = 2;       // Filter by status
+    int32 page_size = 3;
+    string page_token = 4;
+}
+
+message ListJobsResponse {
+    repeated ExecutionJob jobs = 1;
+    string next_page_token = 2;
+    string status_message = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message CancelJobRequest {
+    string job_id = 1;
+}
+
+message CancelJobResponse {
+    string status_message = 1;
+    redbco.redbopen.common.v1.Status status = 2;
+}
+
+// RAG-specific messages
+message IngestDocumentsRequest {
+    string integration_id = 1;
+    repeated Document documents = 2;
+    google.protobuf.Struct processing_options = 3;  // Chunking, embedding options
+    ExecutionMode mode = 4;
+}
+
+message IngestDocumentsResponse {
+    repeated IngestResult results = 1;
+    string job_id = 2;  // For async operations
+    string status_message = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message IngestDocumentsStreamRequest {
+    string integration_id = 1;
+    repeated Document documents = 2;
+    google.protobuf.Struct processing_options = 3;
+    bool is_final = 4;  // Indicates end of stream
+}
+
+message IngestDocumentsStreamResponse {
+    repeated IngestResult results = 1;
+    google.protobuf.Struct progress = 2;
+    string status_message = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message QueryRAGRequest {
+    string integration_id = 1;
+    string query = 2;
+    int32 max_results = 3;
+    google.protobuf.Struct filters = 4;      // Metadata filters
+    google.protobuf.Struct parameters = 5;   // Model parameters, temperature, etc.
+}
+
+message QueryRAGResponse {
+    QueryResult result = 1;
+    string status_message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+message ListDocumentsRequest {
+    string integration_id = 1;
+    google.protobuf.Struct filters = 2;
+    int32 page_size = 3;
+    string page_token = 4;
+}
+
+message ListDocumentsResponse {
+    repeated Document documents = 1;
+    string next_page_token = 2;
+    string status_message = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message GetDocumentRequest {
+    string integration_id = 1;
+    string document_id = 2;
+}
+
+message GetDocumentResponse {
+    Document document = 1;
+    repeated Embedding embeddings = 2;  // Associated embeddings
+    string status_message = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message DeleteDocumentRequest {
+    string integration_id = 1;
+    string document_id = 2;
+}
+
+message DeleteDocumentResponse {
+    string status_message = 1;
+    redbco.redbopen.common.v1.Status status = 2;
+}
+
+message UpdateDocumentRequest {
+    string integration_id = 1;
+    Document document = 2;
+    google.protobuf.Struct processing_options = 3;
+}
+
+message UpdateDocumentResponse {
+    Document document = 1;
+    IngestResult result = 2;
+    string status_message = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// RAG Pipeline operations (your 3-step process)
+message ExecuteRAGPipelineRequest {
+    string integration_id = 1;
+    SourceConfiguration source = 2;
+    ProcessingConfiguration processing = 3;
+    TargetConfiguration target = 4;
+    ExecutionMode mode = 5;
+}
+
+message SourceConfiguration {
+    string database_type = 1;
+    string database_id = 2;
+    string query = 3;
+    google.protobuf.Struct filters = 4;
+    int32 batch_size = 5;
+}
+
+message ProcessingConfiguration {
+    repeated string cleanup_rules = 1;
+    repeated string transformations = 2;
+    google.protobuf.Struct rag_parameters = 3;  // Chunking, embedding parameters
+}
+
+message TargetConfiguration {
+    string database_type = 1;
+    string database_id = 2;
+    string collection_name = 3;
+    repeated string metadata_fields = 4;
+    google.protobuf.Struct storage_options = 5;
+}
+
+message ExecuteRAGPipelineResponse {
+    RAGPipelineResult result = 1;
+    string job_id = 2;  // For async operations
+    string status_message = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message RAGPipelineResult {
+    int32 processed_documents = 1;
+    int32 stored_embeddings = 2;
+    int32 failed_documents = 3;
+    google.protobuf.Struct metrics = 4;  // Execution metrics
+    repeated string errors = 5;
+}
+
+message ExecuteRAGPipelineStreamRequest {
+    string integration_id = 1;
+    SourceConfiguration source = 2;
+    ProcessingConfiguration processing = 3;
+    TargetConfiguration target = 4;
+}
+
+message ExecuteRAGPipelineStreamResponse {
+    oneof response {
+        RAGPipelineProgress progress = 1;
+        RAGPipelineResult final_result = 2;
+    }
+    string status_message = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message RAGPipelineProgress {
+    int32 documents_processed = 1;
+    int32 documents_remaining = 2;
+    string current_stage = 3;  // "extraction", "processing", "storage"
+    google.protobuf.Struct stage_metrics = 4;
+}

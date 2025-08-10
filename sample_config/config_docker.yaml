@@ -97,6 +97,21 @@ services:
       SERVICE_NAME: anchor
 
   # API Services
+  integration:
+    enabled: true
+    required: true
+    executable: ./bin/redb-integration
+    args:
+      - --port=50063
+      - --supervisor=localhost:50000
+    environment:
+      SERVICE_NAME: integration
+    dependencies:
+      - core
+    resources:
+      max_memory_mb: 2048
+      max_cpu_percent: 100
+
   serviceapi:
     enabled: true
     required: true

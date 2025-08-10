@@ -26,6 +26,7 @@ services:
       - "50060:50060"  # webhook (internal)
       - "50061:50061"  # mcpserver (internal)
       - "50062:50062"  # core (internal)
+      - "50063:50063"  # integration (internal)
     environment:
       # Database configuration (for external databases only)
       # - REDB_POSTGRES_USER=postgres
