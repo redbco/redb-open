@@ -7,6 +7,7 @@ use (
 	./services/anchor
 	./services/clientapi
 	./services/core
+	./services/integration
 	./services/mcpserver
 	./services/mesh
 	./services/queryapi
@@ -15,5 +16,4 @@ use (
 	./services/transformation
 	./services/unifiedmodel
 	./services/webhook
-	./services/integration
 )
