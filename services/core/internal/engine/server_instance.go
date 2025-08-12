@@ -88,7 +88,7 @@ func (s *Server) ConnectInstance(ctx context.Context, req *corev1.ConnectInstanc
 	}
 
 	// Create the instance using available fields from ConnectInstanceRequest
-	createdInstance, err := instanceService.Create(ctx, req.TenantId, req.WorkspaceName, req.InstanceName, req.InstanceDescription, req.InstanceType, req.InstanceVendor, req.Host, req.Username, req.Password, req.NodeId, req.Port, req.GetEnabled(), req.GetSsl(), req.GetSslMode(), req.GetEnvironmentId(), req.OwnerId, sslCert, sslKey, sslRootCert)
+	createdInstance, err := instanceService.Create(ctx, req.TenantId, req.WorkspaceName, req.InstanceName, req.InstanceDescription, req.InstanceType, req.InstanceVendor, req.Host, req.Username, req.Password, req.NodeId, req.Port, req.GetEnabled(), req.GetSsl(), req.GetSslMode(), req.GetEnvironmentId(), req.OwnerId, sslCert, sslKey, sslRootCert, nil)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to create instance: %v", err)

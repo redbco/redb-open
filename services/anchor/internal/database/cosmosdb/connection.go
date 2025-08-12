@@ -13,9 +13,15 @@ import (
 
 // Connect establishes a connection to a CosmosDB database
 func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
-	decryptedPassword, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+	var decryptedPassword string
+	if cfg.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	// Build endpoint URL
@@ -63,9 +69,15 @@ func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
 
 // ConnectInstance establishes a connection to a CosmosDB instance
 func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) {
-	decryptedPassword, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+	var decryptedPassword string
+	if cfg.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	// Convert instance config to database config for reuse

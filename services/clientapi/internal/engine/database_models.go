@@ -52,8 +52,8 @@ type ConnectDatabaseRequest struct {
 	DatabaseVendor      string  `json:"database_vendor" validate:"required"`
 	Host                string  `json:"host" validate:"required"`
 	Port                int32   `json:"port" validate:"required"`
-	Username            string  `json:"username" validate:"required"`
-	Password            string  `json:"password" validate:"required"`
+	Username            string  `json:"username"`
+	Password            string  `json:"password"`
 	DBName              string  `json:"db_name" validate:"required"`
 	NodeID              *string `json:"node_id,omitempty"`
 	Enabled             *bool   `json:"enabled,omitempty"`

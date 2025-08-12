@@ -53,6 +53,8 @@ func getAdapter(schemaType string) (adapters.SchemaIngester, error) {
 		return &adapters.SnowflakeIngester{}, nil
 	case "pinecone":
 		return &adapters.PineconeIngester{}, nil
+	case "chroma":
+		return &adapters.ChromaIngester{}, nil
 	case "edgedb":
 		return &adapters.EdgeDBIngester{}, nil
 	default:

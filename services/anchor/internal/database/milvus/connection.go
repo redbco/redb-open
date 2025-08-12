@@ -20,8 +20,12 @@ const (
 
 // Connect establishes a connection to a Milvus database
 func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
-	if config.DatabaseVendor != "milvus" {
-		return nil, fmt.Errorf("invalid database provider: %s, expected 'milvus'", config.DatabaseVendor)
+	provider := config.ConnectionType
+	if provider == "" {
+		provider = config.DatabaseVendor
+	}
+	if provider != "milvus" {
+		return nil, fmt.Errorf("invalid database provider: %s, expected 'milvus'", provider)
 	}
 
 	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
@@ -71,8 +75,12 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 
 // ConnectInstance establishes a connection to a Milvus instance
 func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
-	if config.DatabaseVendor != "milvus" {
-		return nil, fmt.Errorf("invalid database provider: %s, expected 'milvus'", config.DatabaseVendor)
+	provider := config.ConnectionType
+	if provider == "" {
+		provider = config.DatabaseVendor
+	}
+	if provider != "milvus" {
+		return nil, fmt.Errorf("invalid database provider: %s, expected 'milvus'", provider)
 	}
 
 	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)

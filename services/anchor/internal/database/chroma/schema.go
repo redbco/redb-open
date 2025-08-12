@@ -1,13 +1,11 @@
 package chroma
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"time"
 
+	chromav2 "github.com/amikos-tech/chroma-go/pkg/api/v2"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
@@ -47,59 +45,14 @@ func CreateCollection(client *ChromaClient, collectionName string, metadata map[
 		return fmt.Errorf("collection name cannot be empty")
 	}
 
-	// Check if collection already exists
-	collections, err := listCollections(client)
-	if err != nil {
-		return fmt.Errorf("error listing collections: %v", err)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	for _, existingCollection := range collections {
-		if existingCollection == collectionName {
-			return fmt.Errorf("collection %s already exists", collectionName)
-		}
-	}
-
-	// Create collection
-	url := fmt.Sprintf("%s/collections", client.BaseURL)
-
-	requestBody := map[string]interface{}{
-		"name": collectionName,
-	}
-
-	if metadata != nil {
-		requestBody["metadata"] = metadata
-	}
-
-	jsonBody, err := json.Marshal(requestBody)
-	if err != nil {
-		return fmt.Errorf("error marshaling request: %v", err)
-	}
-
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return fmt.Errorf("error creating request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Add authentication if provided
-	if client.Username != "" && client.Password != "" {
-		req.SetBasicAuth(client.Username, client.Password)
-	}
-
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("error executing request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("create collection failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
+	// Use chroma-go GetOrCreate with metadata
+	_, err := client.API.GetOrCreateCollection(ctx, collectionName,
+		chromav2.WithCollectionMetadataCreate(chromav2.NewMetadataFromMap(metadata)),
+	)
+	return err
 }
 
 // DropCollection deletes a collection from Chroma
@@ -108,29 +61,7 @@ func DropCollection(client *ChromaClient, collectionName string) error {
 		return fmt.Errorf("collection name cannot be empty")
 	}
 
-	url := fmt.Sprintf("%s/collections/%s", client.BaseURL, collectionName)
-
-	req, err := http.NewRequest("DELETE", url, nil)
-	if err != nil {
-		return fmt.Errorf("error creating request: %v", err)
-	}
-
-	// Add authentication if provided
-	if client.Username != "" && client.Password != "" {
-		req.SetBasicAuth(client.Username, client.Password)
-	}
-
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("error executing request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("delete collection failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return client.API.DeleteCollection(ctx, collectionName)
 }

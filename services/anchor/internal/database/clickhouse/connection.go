@@ -29,9 +29,15 @@ type ClickhouseConn interface {
 // Connect establishes a connection to a Clickhouse database
 func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 
-	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+	var decryptedPassword string
+	if config.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	// Build connection options
@@ -100,9 +106,15 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 // ConnectInstance establishes a connection to a Clickhouse instance
 func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
 
-	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+	var decryptedPassword string
+	if config.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	// Build connection options

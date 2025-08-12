@@ -91,7 +91,9 @@ type Instance struct {
 }
 
 // Create creates a new instance
-func (s *Service) Create(ctx context.Context, tenantID, workspaceName, name, description, instanceType, vendor, host, username, password string, nodeID *string, port int32, enabled bool, ssl bool, sslMode string, environmentID, ownerID string, sslCert, sslKey, sslRootCert *string) (*Instance, error) {
+// userDBNameOpt allows passing the user-specified logical database name when available
+// so we can select the correct system database for vendors that require it.
+func (s *Service) Create(ctx context.Context, tenantID, workspaceName, name, description, instanceType, vendor, host, username, password string, nodeID *string, port int32, enabled bool, ssl bool, sslMode string, environmentID, ownerID string, sslCert, sslKey, sslRootCert *string, userDBNameOpt *string) (*Instance, error) {
 	s.logger.Infof("Creating instance in database for tenant: %s, workspace: %s, name: %s", tenantID, workspaceName, name)
 
 	// First, check if the tenant exists
@@ -165,9 +167,22 @@ func (s *Service) Create(ctx context.Context, tenantID, workspaceName, name, des
 		version = "unknown" // Use latest for specific vendors
 	}
 
-	// Determine system database name based on vendor type
-	// For databases without separate system databases, this will return "system" as default
-	systemDBName := getSystemDatabaseName(instanceType, "system")
+	// Determine system database name based on vendor/type
+	// If a user database name is available (e.g., ConnectDatabase flow), prefer it for vendors
+	// without separate system databases. Otherwise, fall back to vendor-specific system DB.
+	var providedUserDB string
+	if userDBNameOpt != nil && *userDBNameOpt != "" {
+		providedUserDB = *userDBNameOpt
+	}
+	systemDBName := getSystemDatabaseName(instanceType, providedUserDB)
+	if systemDBName == "" {
+		// Ensure non-empty value; some connectors ignore this, but keep sensible default
+		if providedUserDB != "" {
+			systemDBName = providedUserDB
+		} else {
+			systemDBName = "system"
+		}
+	}
 
 	// Initialize empty metadata and policy arrays
 	emptyMetadata := "{}"

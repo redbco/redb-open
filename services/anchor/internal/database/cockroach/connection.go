@@ -17,9 +17,15 @@ import (
 func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 	var connString strings.Builder
 
-	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+	var decryptedPassword string
+	if config.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	// Build base connection string
@@ -71,9 +77,15 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
 	var connString strings.Builder
 
-	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+	var decryptedPassword string
+	if config.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	// Build base connection string

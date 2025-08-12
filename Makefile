@@ -74,6 +74,10 @@ build-%:
 		CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
 		-o $(BINARY_DIR)/redb-$* ./cmd/$*/cmd; \
+	elif [ "$*" = "anchor" ]; then \
+		CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
+		-o $(BINARY_DIR)/redb-$* ./services/$*/cmd; \
 	else \
 		CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
@@ -128,28 +132,34 @@ build-all: $(BUILD_DIR)
 	@for os in linux darwin windows; do \
 		for arch in amd64 arm64; do \
 			mkdir -p $(BUILD_DIR)/$$os-$$arch; \
-			for service in $(SERVICES); do \
+				for service in $(SERVICES); do \
 				if [ "$$service" = "supervisor" ]; then \
 					echo "Building supervisor for $$os/$$arch..."; \
-					GOOS=$$os GOARCH=$$arch \
-					CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
+						GOOS=$$os GOARCH=$$arch \
+						CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
 					-ldflags "$(VERSION_FLAGS)" \
 					-o $(BUILD_DIR)/$$os-$$arch/redb-node \
 					./cmd/supervisor/cmd; \
 				elif [ "$$service" = "cli" ]; then \
 					echo "Building cli for $$os/$$arch..."; \
-					GOOS=$$os GOARCH=$$arch \
-					CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
+						GOOS=$$os GOARCH=$$arch \
+						CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
 					-ldflags "$(VERSION_FLAGS)" \
 					-o $(BUILD_DIR)/$$os-$$arch/redb-cli \
 					./cmd/cli/cmd; \
 				else \
-					echo "Building $$service for $$os/$$arch..."; \
-					GOOS=$$os GOARCH=$$arch \
-					CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
-					-ldflags "$(VERSION_FLAGS)" \
-					-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
-					./services/$$service/cmd; \
+						echo "Building $$service for $$os/$$arch..."; \
+						if [ "$$service" = "anchor" ]; then \
+							GOOS=$$os GOARCH=$$arch CGO_ENABLED=1 \
+							go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
+							-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
+							./services/$$service/cmd; \
+						else \
+							GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 \
+							go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
+							-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
+							./services/$$service/cmd; \
+						fi; \
 				fi \
 			done \
 		done \

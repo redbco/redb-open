@@ -94,6 +94,7 @@ func (s *Server) ConnectDatabase(ctx context.Context, req *corev1.ConnectDatabas
 	// Get services
 	databaseService := database.NewService(s.engine.db, s.engine.logger)
 	instanceService := instance.NewService(s.engine.db, s.engine.logger)
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
 
 	// Set default values
 	enabled := true
@@ -142,17 +143,25 @@ func (s *Server) ConnectDatabase(ctx context.Context, req *corev1.ConnectDatabas
 		req.SslCert,
 		req.SslKey,
 		req.SslRootCert,
+		&req.DbName,
 	)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to create instance: %v", err)
 	}
 
+	// Resolve workspace ID from workspace name for database creation
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get workspace ID: %v", err)
+	}
+
 	// Create database object
 	databaseObj, err := databaseService.Create(
 		ctx,
 		req.TenantId,
-		req.WorkspaceName,
+		workspaceID,
 		req.DatabaseName,
 		req.DatabaseDescription,
 		req.DatabaseType,

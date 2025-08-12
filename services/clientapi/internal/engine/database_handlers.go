@@ -248,8 +248,8 @@ func (dh *DatabaseHandlers) ConnectDatabase(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Validate required fields
-	if req.DatabaseName == "" || req.DatabaseType == "" || req.DatabaseVendor == "" || req.Host == "" || req.Username == "" || req.Password == "" || req.DBName == "" {
-		dh.writeErrorResponse(w, http.StatusBadRequest, "Required fields missing", "database_name, database_type, database_vendor, host, username, password, and db_name are required")
+	if req.DatabaseName == "" || req.DatabaseType == "" || req.DatabaseVendor == "" || req.Host == "" || req.DBName == "" {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "Required fields missing", "database_name, database_type, database_vendor, host, and db_name are required")
 		return
 	}
 

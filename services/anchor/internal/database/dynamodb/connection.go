@@ -16,9 +16,15 @@ import (
 
 // Connect establishes a connection to a DynamoDB database
 func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
-	decryptedPassword, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+	var decryptedPassword string
+	if cfg.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	// Build AWS config
@@ -49,9 +55,15 @@ func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
 
 // ConnectInstance establishes a connection to a DynamoDB instance
 func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) {
-	decryptedPassword, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+	var decryptedPassword string
+	if cfg.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	// Convert instance config to database config for reuse

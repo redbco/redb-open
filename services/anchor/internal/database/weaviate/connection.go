@@ -20,8 +20,12 @@ const (
 
 // Connect establishes a connection to a Weaviate database
 func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
-	if config.DatabaseVendor != "weaviate" {
-		return nil, fmt.Errorf("invalid database provider: %s, expected 'weaviate'", config.DatabaseVendor)
+	provider := config.ConnectionType
+	if provider == "" {
+		provider = config.DatabaseVendor
+	}
+	if provider != "weaviate" {
+		return nil, fmt.Errorf("invalid database provider: %s, expected 'weaviate'", provider)
 	}
 
 	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
@@ -71,8 +75,12 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 
 // ConnectInstance establishes a connection to a Weaviate instance
 func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
-	if config.DatabaseVendor != "weaviate" {
-		return nil, fmt.Errorf("invalid database provider: %s, expected 'weaviate'", config.DatabaseVendor)
+	provider := config.ConnectionType
+	if provider == "" {
+		provider = config.DatabaseVendor
+	}
+	if provider != "weaviate" {
+		return nil, fmt.Errorf("invalid database provider: %s, expected 'weaviate'", provider)
 	}
 
 	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)

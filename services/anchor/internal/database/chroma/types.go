@@ -1,5 +1,9 @@
 package chroma
 
+import (
+	chromav2 "github.com/amikos-tech/chroma-go/pkg/api/v2"
+)
+
 // ChromaDetails contains information about a Chroma vector database
 type ChromaDetails struct {
 	UniqueIdentifier string `json:"uniqueIdentifier"`
@@ -59,11 +63,15 @@ type ChromaQueryResult struct {
 
 // ChromaClient represents a client for interacting with Chroma
 type ChromaClient struct {
+	// API is the underlying chroma-go v2 client
+	API chromav2.Client
+
+	// Retain connection params for metadata and fallbacks
 	BaseURL     string
 	Host        string
 	Port        int
 	Username    string
 	Password    string
 	SSL         bool
-	IsConnected int32 // Add this field for health checks
+	IsConnected int32
 }
