@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/anchor/internal/database/cassandra"
 	"github.com/redbco/redb-open/services/anchor/internal/database/clickhouse"
@@ -305,33 +306,33 @@ func (dm *DatabaseManager) ExecuteCommand(databaseID string, command string) ([]
 	}
 
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		return postgres.ExecuteCommand(context.Background(), client.DB, command)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		return mysql.ExecuteCommand(context.Background(), client.DB, command)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		return mariadb.ExecuteCommand(context.Background(), client.DB, command)
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		return cockroach.ExecuteCommand(context.Background(), client.DB, command)
-	case "redis":
+	case string(dbcapabilities.Redis):
 		return redis.ExecuteCommand(context.Background(), client.DB, command)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		return mongodb.ExecuteCommand(context.Background(), client.DB, command)
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		return mssql.ExecuteCommand(context.Background(), client.DB, command)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		return cassandra.ExecuteCommand(context.Background(), client.DB, command)
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		return edgedb.ExecuteCommand(context.Background(), client.DB, command)
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		return snowflake.ExecuteCommand(context.Background(), client.DB, command)
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		return clickhouse.ExecuteCommand(context.Background(), client.DB, command)
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		return pinecone.ExecuteCommand(context.Background(), client.DB, command)
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		return elasticsearch.ExecuteCommand(context.Background(), client.DB, command)
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		return neo4j.ExecuteCommand(context.Background(), client.DB, command)
 	default:
 		return nil, fmt.Errorf("unsupported database type: %s", client.DatabaseType)

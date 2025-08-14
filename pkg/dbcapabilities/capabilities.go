@@ -646,3 +646,20 @@ func SupportsCDC(id DatabaseID) bool {
 	c, ok := Get(id)
 	return ok && c.SupportsCDC
 }
+
+// GetByConnectionType returns the Capability by looking up using a connection type string.
+// This is useful for refactoring existing code that uses connection type strings.
+func GetByConnectionType(connectionType string) (Capability, bool) {
+	return GetByName(connectionType)
+}
+
+// MustGetByConnectionType returns the Capability by connection type or panics if unknown.
+func MustGetByConnectionType(connectionType string) Capability {
+	return MustGetByName(connectionType)
+}
+
+// IsValidConnectionType checks if a connection type string is valid.
+func IsValidConnectionType(connectionType string) bool {
+	_, ok := ParseID(connectionType)
+	return ok
+}

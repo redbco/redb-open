@@ -11,6 +11,7 @@ import (
 	"github.com/gocql/gocql"
 	"github.com/jackc/pgx/v5/pgxpool"
 	neo4jgo "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/services/anchor/internal/database/cassandra"
 	"github.com/redbco/redb-open/services/anchor/internal/database/chroma"
 	"github.com/redbco/redb-open/services/anchor/internal/database/clickhouse"
@@ -48,115 +49,115 @@ func (dm *DatabaseManager) GetDataFromDatabase(databaseID string, tableName stri
 	}
 
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return nil, fmt.Errorf("invalid postgres connection type")
 		}
 		return postgres.FetchData(pool, tableName, limit)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return nil, fmt.Errorf("invalid mysql connection type")
 		}
 		return mysql.FetchData(db, tableName, limit, dm.logger)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return nil, fmt.Errorf("invalid mariadb connection type")
 		}
 		return mariadb.FetchData(db, tableName, limit)
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return nil, fmt.Errorf("invalid cockroach connection type")
 		}
 		return cockroach.FetchData(pool, tableName, limit)
-	case "redis":
+	case string(dbcapabilities.Redis):
 		client, ok := client.DB.(*goredis.Client)
 		if !ok {
 			return nil, fmt.Errorf("invalid redis connection type")
 		}
 		return redis.FetchData(client, tableName, limit)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		db, ok := client.DB.(*mongo.Database)
 		if !ok {
 			return nil, fmt.Errorf("invalid mongodb connection type")
 		}
 		return mongodb.FetchData(db, tableName, limit)
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return nil, fmt.Errorf("invalid mssql connection type")
 		}
 		return mssql.FetchData(db, tableName, limit)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		session, ok := client.DB.(*gocql.Session)
 		if !ok {
 			return nil, fmt.Errorf("invalid cassandra connection type")
 		}
 		return cassandra.FetchData(session, tableName, limit)
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		gelClient, ok := client.DB.(*gel.Client)
 		if !ok {
 			return nil, fmt.Errorf("invalid edgedb connection type")
 		}
 		return edgedb.FetchData(gelClient, tableName, limit)
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return nil, fmt.Errorf("invalid snowflake connection type")
 		}
 		return snowflake.FetchData(db, tableName, limit)
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		conn, ok := client.DB.(clickhouse.ClickhouseConn)
 		if !ok {
 			return nil, fmt.Errorf("invalid clickhouse connection type")
 		}
 		return clickhouse.FetchData(conn, tableName, limit)
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		client, ok := client.DB.(*pinecone.PineconeClient)
 		if !ok {
 			return nil, fmt.Errorf("invalid pinecone connection type")
 		}
 		return pinecone.FetchData(client, tableName, "", limit)
-	case "chroma":
+	case string(dbcapabilities.Chroma):
 		client, ok := client.DB.(*chroma.ChromaClient)
 		if !ok {
 			return nil, fmt.Errorf("invalid chroma connection type")
 		}
 		return chroma.FetchData(client, tableName, limit)
-	case "milvus":
+	case string(dbcapabilities.Milvus):
 		client, ok := client.DB.(*milvus.MilvusClient)
 		if !ok {
 			return nil, fmt.Errorf("invalid milvus connection type")
 		}
 		return milvus.FetchData(client, tableName, limit)
-	case "weaviate":
+	case string(dbcapabilities.Weaviate):
 		client, ok := client.DB.(*weaviate.WeaviateClient)
 		if !ok {
 			return nil, fmt.Errorf("invalid weaviate connection type")
 		}
 		return weaviate.FetchData(client, tableName, limit)
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		client, ok := client.DB.(*elasticsearch.ElasticsearchClient)
 		if !ok {
 			return nil, fmt.Errorf("invalid elasticsearch connection type")
 		}
 		return elasticsearch.FetchData(client, tableName, limit)
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		driver, ok := client.DB.(neo4jgo.DriverWithContext)
 		if !ok {
 			return nil, fmt.Errorf("invalid neo4j connection type")
 		}
 		return neo4j.FetchData(driver, tableName, false, limit)
-	case "dynamodb":
+	case string(dbcapabilities.DynamoDB):
 		dynamoClient, ok := client.DB.(*awsdynamodb.Client)
 		if !ok {
 			return nil, fmt.Errorf("invalid DynamoDB connection type")
 		}
 		return dynamodb.FetchData(dynamoClient, tableName, limit)
-	case "cosmosdb":
+	case string(dbcapabilities.CosmosDB):
 		cosmosClient, ok := client.DB.(*azcosmos.Client)
 		if !ok {
 			return nil, fmt.Errorf("invalid CosmosDB connection type")
@@ -181,115 +182,115 @@ func (dm *DatabaseManager) InsertDataToDatabase(databaseID string, tableName str
 	}
 
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return 0, fmt.Errorf("invalid postgres connection type")
 		}
 		return postgres.InsertData(pool, tableName, data)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return 0, fmt.Errorf("invalid mysql connection type")
 		}
 		return mysql.InsertData(db, tableName, data, dm.logger)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return 0, fmt.Errorf("invalid mariadb connection type")
 		}
 		return mariadb.InsertData(db, tableName, data)
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return 0, fmt.Errorf("invalid cockroach connection type")
 		}
 		return cockroach.InsertData(pool, tableName, data)
-	case "redis":
+	case string(dbcapabilities.Redis):
 		client, ok := client.DB.(*goredis.Client)
 		if !ok {
 			return 0, fmt.Errorf("invalid redis connection type")
 		}
 		return redis.InsertData(client, tableName, data)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		db, ok := client.DB.(*mongo.Database)
 		if !ok {
 			return 0, fmt.Errorf("invalid mongodb connection type")
 		}
 		return mongodb.InsertData(db, tableName, data)
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return 0, fmt.Errorf("invalid mssql connection type")
 		}
 		return mssql.InsertData(db, tableName, data)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		session, ok := client.DB.(*gocql.Session)
 		if !ok {
 			return 0, fmt.Errorf("invalid cassandra connection type")
 		}
 		return cassandra.InsertData(session, tableName, data)
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		gelClient, ok := client.DB.(*gel.Client)
 		if !ok {
 			return 0, fmt.Errorf("invalid edgedb connection type")
 		}
 		return edgedb.InsertData(gelClient, tableName, data)
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return 0, fmt.Errorf("invalid snowflake connection type")
 		}
 		return snowflake.InsertData(db, tableName, data)
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		conn, ok := client.DB.(clickhouse.ClickhouseConn)
 		if !ok {
 			return 0, fmt.Errorf("invalid clickhouse connection type")
 		}
 		return clickhouse.InsertData(conn, tableName, data)
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		client, ok := client.DB.(*pinecone.PineconeClient)
 		if !ok {
 			return 0, fmt.Errorf("invalid pinecone connection type")
 		}
 		return pinecone.InsertData(client, tableName, "", data)
-	case "chroma":
+	case string(dbcapabilities.Chroma):
 		client, ok := client.DB.(*chroma.ChromaClient)
 		if !ok {
 			return 0, fmt.Errorf("invalid chroma connection type")
 		}
 		return chroma.InsertData(client, tableName, data)
-	case "milvus":
+	case string(dbcapabilities.Milvus):
 		client, ok := client.DB.(*milvus.MilvusClient)
 		if !ok {
 			return 0, fmt.Errorf("invalid milvus connection type")
 		}
 		return milvus.InsertData(client, tableName, data)
-	case "weaviate":
+	case string(dbcapabilities.Weaviate):
 		client, ok := client.DB.(*weaviate.WeaviateClient)
 		if !ok {
 			return 0, fmt.Errorf("invalid weaviate connection type")
 		}
 		return weaviate.InsertData(client, tableName, data)
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		client, ok := client.DB.(*elasticsearch.ElasticsearchClient)
 		if !ok {
 			return 0, fmt.Errorf("invalid elasticsearch connection type")
 		}
 		return elasticsearch.InsertData(client, tableName, data)
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		driver, ok := client.DB.(neo4jgo.DriverWithContext)
 		if !ok {
 			return 0, fmt.Errorf("invalid neo4j connection type")
 		}
 		return neo4j.InsertData(driver, tableName, false, data)
-	case "dynamodb":
+	case string(dbcapabilities.DynamoDB):
 		dynamoClient, ok := client.DB.(*awsdynamodb.Client)
 		if !ok {
 			return 0, fmt.Errorf("invalid DynamoDB connection type")
 		}
 		return dynamodb.InsertData(dynamoClient, tableName, data)
-	case "cosmosdb":
+	case string(dbcapabilities.CosmosDB):
 		cosmosClient, ok := client.DB.(*azcosmos.Client)
 		if !ok {
 			return 0, fmt.Errorf("invalid CosmosDB connection type")
@@ -314,85 +315,85 @@ func (dm *DatabaseManager) UpsertDataToDatabase(databaseID string, tableName str
 	}
 
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return 0, fmt.Errorf("invalid postgres connection type")
 		}
 		return postgres.UpsertData(pool, tableName, data, uniqueColumns)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return 0, fmt.Errorf("invalid mysql connection type")
 		}
 		return mysql.UpsertData(db, tableName, data, uniqueColumns, dm.logger)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return 0, fmt.Errorf("invalid mariadb connection type")
 		}
 		return mariadb.UpsertData(db, tableName, data, uniqueColumns)
-	//case "cockroach":
+	//case string(dbcapabilities.CockroachDB):
 	//	pool, ok := client.DB.(*pgxpool.Pool)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid cockroach connection type")
 	//	}
 	//	return cockroach.UpsertData(pool, tableName, data, uniqueColumns)
-	//case "redis":
+	//case string(dbcapabilities.Redis):
 	//	client, ok := client.DB.(*goredis.Client)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid redis connection type")
 	//	}
 	//	return redis.UpsertData(client, tableName, data, uniqueColumns)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		db, ok := client.DB.(*mongo.Database)
 		if !ok {
 			return 0, fmt.Errorf("invalid mongodb connection type")
 		}
 		return mongodb.UpsertData(db, tableName, data, uniqueColumns)
-	//case "mssql":
+	//case string(dbcapabilities.SQLServer):
 	//	db, ok := client.DB.(*sql.DB)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid mssql connection type")
 	//	}
 	//	return mssql.UpsertData(db, tableName, data, uniqueColumns)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		session, ok := client.DB.(*gocql.Session)
 		if !ok {
 			return 0, fmt.Errorf("invalid cassandra connection type")
 		}
 		return cassandra.UpsertData(session, tableName, data, uniqueColumns)
-	//case "edgedb":
+	//case string(dbcapabilities.EdgeDB):
 	//	gelClient, ok := client.DB.(*gel.Client)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid edgedb connection type")
 	//	}
 	//	return edgedb.UpsertData(gelClient, tableName, data, uniqueColumns)
-	//case "snowflake":
+	//case string(dbcapabilities.Snowflake):
 	//	db, ok := client.DB.(*sql.DB)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid snowflake connection type")
 	//	}
 	//	return snowflake.UpsertData(db, tableName, data, uniqueColumns)
-	//case "clickhouse":
+	//case string(dbcapabilities.ClickHouse):
 	//	conn, ok := client.DB.(clickhouse.ClickhouseConn)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid clickhouse connection type")
 	//	}
 	//	return clickhouse.UpsertData(conn, tableName, data, uniqueColumns)
-	//case "pinecone":
+	//case string(dbcapabilities.Pinecone):
 	//	client, ok := client.DB.(*pinecone.PineconeClient)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid pinecone connection type")
 	//	}
 	//	return pinecone.UpsertData(client, tableName, "", data, uniqueColumns)
-	//case "elasticsearch":
+	//case string(dbcapabilities.Elasticsearch):
 	//	client, ok := client.DB.(*elasticsearch.ElasticsearchClient)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid elasticsearch connection type")
 	//	}
 	//	return elasticsearch.UpsertData(client, tableName, data, uniqueColumns)
-	//case "neo4j":
+	//case string(dbcapabilities.Neo4j):
 	//	driver, ok := client.DB.(neo4jgo.DriverWithContext)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid neo4j connection type")
@@ -417,85 +418,85 @@ func (dm *DatabaseManager) UpdateDataInDatabase(databaseID string, tableName str
 	}
 
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return 0, fmt.Errorf("invalid postgres connection type")
 		}
 		return postgres.UpdateData(pool, tableName, data, whereColumns)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return 0, fmt.Errorf("invalid mysql connection type")
 		}
 		return mysql.UpdateData(db, tableName, data, whereColumns, dm.logger)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return 0, fmt.Errorf("invalid mariadb connection type")
 		}
 		return mariadb.UpdateData(db, tableName, data, whereColumns)
-	//case "cockroach":
+	//case string(dbcapabilities.CockroachDB):
 	//	pool, ok := client.DB.(*pgxpool.Pool)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid cockroach connection type")
 	//	}
 	//	return cockroach.UpdateData(pool, tableName, data, whereColumns)
-	//case "redis":
+	//case string(dbcapabilities.Redis):
 	//	client, ok := client.DB.(*goredis.Client)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid redis connection type")
 	//	}
 	//	return redis.UpdateData(client, tableName, data, whereColumns)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		db, ok := client.DB.(*mongo.Database)
 		if !ok {
 			return 0, fmt.Errorf("invalid mongodb connection type")
 		}
 		return mongodb.UpdateData(db, tableName, data, whereColumns)
-	//case "mssql":
+	//case string(dbcapabilities.SQLServer):
 	//	db, ok := client.DB.(*sql.DB)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid mssql connection type")
 	//	}
 	//	return mssql.UpdateData(db, tableName, data, whereColumns)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		session, ok := client.DB.(*gocql.Session)
 		if !ok {
 			return 0, fmt.Errorf("invalid cassandra connection type")
 		}
 		return cassandra.UpdateData(session, tableName, data, whereColumns)
-	//case "edgedb":
+	//case string(dbcapabilities.EdgeDB):
 	//	gelClient, ok := client.DB.(*gel.Client)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid edgedb connection type")
 	//	}
 	//	return edgedb.UpdateData(gelClient, tableName, data, whereColumns)
-	//case "snowflake":
+	//case string(dbcapabilities.Snowflake):
 	//	db, ok := client.DB.(*sql.DB)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid snowflake connection type")
 	//	}
 	//	return snowflake.UpdateData(db, tableName, data, whereColumns)
-	//case "clickhouse":
+	//case string(dbcapabilities.ClickHouse):
 	//	conn, ok := client.DB.(clickhouse.ClickhouseConn)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid clickhouse connection type")
 	//	}
 	//	return clickhouse.UpdateData(conn, tableName, data, whereColumns)
-	//case "pinecone":
+	//case string(dbcapabilities.Pinecone):
 	//	client, ok := client.DB.(*pinecone.PineconeClient)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid pinecone connection type")
 	//	}
 	//	return pinecone.UpdateData(client, tableName, "", data, whereColumns)
-	//case "elasticsearch":
+	//case string(dbcapabilities.Elasticsearch):
 	//	client, ok := client.DB.(*elasticsearch.ElasticsearchClient)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid elasticsearch connection type")
 	//	}
 	//	return elasticsearch.UpdateData(client, tableName, data, whereColumns)
-	//case "neo4j":
+	//case string(dbcapabilities.Neo4j):
 	//	driver, ok := client.DB.(neo4jgo.DriverWithContext)
 	//	if !ok {
 	//		return 0, fmt.Errorf("invalid neo4j connection type")
@@ -520,103 +521,103 @@ func (dm *DatabaseManager) WipeDatabase(databaseID string) error {
 	}
 
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return fmt.Errorf("invalid postgres connection type")
 		}
 		return postgres.WipeDatabase(pool)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return fmt.Errorf("invalid mysql connection type")
 		}
 		return mysql.WipeDatabase(db, dm.logger)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return fmt.Errorf("invalid mariadb connection type")
 		}
 		return mariadb.WipeDatabase(db)
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return fmt.Errorf("invalid cockroach connection type")
 		}
 		return cockroach.WipeDatabase(pool)
-	case "redis":
+	case string(dbcapabilities.Redis):
 		client, ok := client.DB.(*goredis.Client)
 		if !ok {
 			return fmt.Errorf("invalid redis connection type")
 		}
 		return redis.WipeDatabase(client)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		db, ok := client.DB.(*mongo.Database)
 		if !ok {
 			return fmt.Errorf("invalid mongodb connection type")
 		}
 		return mongodb.WipeDatabase(db)
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return fmt.Errorf("invalid mssql connection type")
 		}
 		return mssql.WipeDatabase(db)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		session, ok := client.DB.(*gocql.Session)
 		if !ok {
 			return fmt.Errorf("invalid cassandra connection type")
 		}
 		return cassandra.WipeDatabase(session)
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		gelClient, ok := client.DB.(*gel.Client)
 		if !ok {
 			return fmt.Errorf("invalid edgedb connection type")
 		}
 		return edgedb.WipeDatabase(gelClient)
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return fmt.Errorf("invalid snowflake connection type")
 		}
 		return snowflake.WipeDatabase(db)
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		conn, ok := client.DB.(clickhouse.ClickhouseConn)
 		if !ok {
 			return fmt.Errorf("invalid clickhouse connection type")
 		}
 		return clickhouse.WipeDatabase(conn)
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		client, ok := client.DB.(*pinecone.PineconeClient)
 		if !ok {
 			return fmt.Errorf("invalid pinecone connection type")
 		}
 		return pinecone.WipeDatabase(client)
-	case "chroma":
+	case string(dbcapabilities.Chroma):
 		client, ok := client.DB.(*chroma.ChromaClient)
 		if !ok {
 			return fmt.Errorf("invalid chroma connection type")
 		}
 		return chroma.WipeDatabase(client)
-	case "milvus":
+	case string(dbcapabilities.Milvus):
 		client, ok := client.DB.(*milvus.MilvusClient)
 		if !ok {
 			return fmt.Errorf("invalid milvus connection type")
 		}
 		return milvus.WipeDatabase(client)
-	case "weaviate":
+	case string(dbcapabilities.Weaviate):
 		client, ok := client.DB.(*weaviate.WeaviateClient)
 		if !ok {
 			return fmt.Errorf("invalid weaviate connection type")
 		}
 		return weaviate.WipeDatabase(client)
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		client, ok := client.DB.(*elasticsearch.ElasticsearchClient)
 		if !ok {
 			return fmt.Errorf("invalid elasticsearch connection type")
 		}
 		return elasticsearch.WipeDatabase(client)
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		driver, ok := client.DB.(neo4jgo.DriverWithContext)
 		if !ok {
 			return fmt.Errorf("invalid neo4j connection type")

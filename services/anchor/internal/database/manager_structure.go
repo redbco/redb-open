@@ -10,6 +10,7 @@ import (
 	"github.com/gocql/gocql"
 	"github.com/jackc/pgx/v5/pgxpool"
 	neo4jgo "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/services/anchor/internal/database/cassandra"
 	"github.com/redbco/redb-open/services/anchor/internal/database/chroma"
 	"github.com/redbco/redb-open/services/anchor/internal/database/clickhouse"
@@ -45,107 +46,107 @@ func (dm *DatabaseManager) GetDatabaseStructure(id string) (interface{}, error) 
 	}
 
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return nil, fmt.Errorf("invalid postgres connection type")
 		}
 		return postgres.DiscoverSchema(pool)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		return mysql.DiscoverSchema(client.DB)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		return mariadb.DiscoverSchema(client.DB)
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return nil, fmt.Errorf("invalid cockroach connection type")
 		}
 		return cockroach.DiscoverSchema(pool)
-	case "redis":
+	case string(dbcapabilities.Redis):
 		client, ok := client.DB.(*goredis.Client)
 		if !ok {
 			return nil, fmt.Errorf("invalid redis connection type")
 		}
 		return redis.DiscoverSchema(client)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		db, ok := client.DB.(*mongo.Database)
 		if !ok {
 			return nil, fmt.Errorf("invalid mongodb connection type")
 		}
 		return mongodb.DiscoverSchema(db)
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return nil, fmt.Errorf("invalid mssql connection type")
 		}
 		return mssql.DiscoverSchema(db)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		session, ok := client.DB.(*gocql.Session)
 		if !ok {
 			return nil, fmt.Errorf("invalid cassandra connection type")
 		}
 		return cassandra.DiscoverSchema(session)
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		gelClient, ok := client.DB.(*gel.Client)
 		if !ok {
 			return nil, fmt.Errorf("invalid edgedb connection type")
 		}
 		return edgedb.DiscoverSchema(gelClient)
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return nil, fmt.Errorf("invalid snowflake connection type")
 		}
 		return snowflake.DiscoverSchema(db)
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		conn, ok := client.DB.(clickhouse.ClickhouseConn)
 		if !ok {
 			return nil, fmt.Errorf("invalid clickhouse connection type")
 		}
 		return clickhouse.DiscoverSchema(conn)
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		client, ok := client.DB.(*pinecone.PineconeClient)
 		if !ok {
 			return nil, fmt.Errorf("invalid pinecone connection type")
 		}
 		return pinecone.DiscoverSchema(client)
-	case "chroma":
+	case string(dbcapabilities.Chroma):
 		client, ok := client.DB.(*chroma.ChromaClient)
 		if !ok {
 			return nil, fmt.Errorf("invalid chroma connection type")
 		}
 		return chroma.DiscoverSchema(client)
-	case "milvus":
+	case string(dbcapabilities.Milvus):
 		client, ok := client.DB.(*milvus.MilvusClient)
 		if !ok {
 			return nil, fmt.Errorf("invalid milvus connection type")
 		}
 		return milvus.DiscoverSchema(client)
-	case "weaviate":
+	case string(dbcapabilities.Weaviate):
 		client, ok := client.DB.(*weaviate.WeaviateClient)
 		if !ok {
 			return nil, fmt.Errorf("invalid weaviate connection type")
 		}
 		return weaviate.DiscoverSchema(client)
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		client, ok := client.DB.(*elasticsearch.ElasticsearchClient)
 		if !ok {
 			return nil, fmt.Errorf("invalid elasticsearch connection type")
 		}
 		return elasticsearch.DiscoverSchema(client)
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		driver, ok := client.DB.(neo4jgo.DriverWithContext)
 		if !ok {
 			return nil, fmt.Errorf("invalid neo4j connection type")
 		}
 		return neo4j.DiscoverSchema(driver)
-	//case "db2":
+	//case string(dbcapabilities.DB2):
 	//	db, ok := client.DB.(*sql.DB)
 	//	if !ok {
 	//		return nil, fmt.Errorf("invalid db2 connection type")
 	//	}
 	//	return db2.DiscoverSchema(db)
-	//case "oracle":
+	//case string(dbcapabilities.Oracle):
 	//	db, ok := client.DB.(*sql.DB)
 	//	if !ok {
 	//		return nil, fmt.Errorf("invalid oracle connection type")
@@ -170,104 +171,104 @@ func (dm *DatabaseManager) DeployDatabaseStructure(databaseID string, structure 
 	}
 
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return fmt.Errorf("invalid postgres connection type")
 		}
 		return postgres.CreateStructure(pool, structure)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return fmt.Errorf("invalid mysql connection type")
 		}
 		return mysql.CreateStructure(db, structure)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return fmt.Errorf("invalid mariadb connection type")
 		}
 		return mariadb.CreateStructure(db, structure)
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return fmt.Errorf("invalid cockroach connection type")
 		}
 		return cockroach.CreateStructure(pool, structure)
 	// Redis does not have a schema deployment feature
-	//case "redis":
+	//case string(dbcapabilities.Redis):
 	//	client, ok := client.DB.(*goredis.Client)
 	//	if !ok {
 	//		return fmt.Errorf("invalid redis connection type")
 	//	}
 	//	return redis.CreateStructure(client, structure)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		db, ok := client.DB.(*mongo.Database)
 		if !ok {
 			return fmt.Errorf("invalid mongodb connection type")
 		}
 		return mongodb.CreateStructure(db, structure)
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return fmt.Errorf("invalid mssql connection type")
 		}
 		return mssql.CreateStructure(db, structure)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		session, ok := client.DB.(*gocql.Session)
 		if !ok {
 			return fmt.Errorf("invalid cassandra connection type")
 		}
 		return cassandra.CreateStructure(session, structure)
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		gelClient, ok := client.DB.(*gel.Client)
 		if !ok {
 			return fmt.Errorf("invalid edgedb connection type")
 		}
 		return edgedb.CreateStructure(gelClient, structure)
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return fmt.Errorf("invalid snowflake connection type")
 		}
 		return snowflake.CreateStructure(db, structure)
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		conn, ok := client.DB.(clickhouse.ClickhouseConn)
 		if !ok {
 			return fmt.Errorf("invalid clickhouse connection type")
 		}
 		return clickhouse.CreateStructure(conn, structure)
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		client, ok := client.DB.(*pinecone.PineconeClient)
 		if !ok {
 			return fmt.Errorf("invalid pinecone connection type")
 		}
 		return pinecone.CreateStructure(client, structure)
-	case "chroma":
+	case string(dbcapabilities.Chroma):
 		client, ok := client.DB.(*chroma.ChromaClient)
 		if !ok {
 			return fmt.Errorf("invalid chroma connection type")
 		}
 		return chroma.CreateStructure(client, structure)
-	case "milvus":
+	case string(dbcapabilities.Milvus):
 		client, ok := client.DB.(*milvus.MilvusClient)
 		if !ok {
 			return fmt.Errorf("invalid milvus connection type")
 		}
 		return milvus.CreateStructure(client, structure)
-	case "weaviate":
+	case string(dbcapabilities.Weaviate):
 		client, ok := client.DB.(*weaviate.WeaviateClient)
 		if !ok {
 			return fmt.Errorf("invalid weaviate connection type")
 		}
 		return weaviate.CreateStructure(client, structure)
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		client, ok := client.DB.(*elasticsearch.ElasticsearchClient)
 		if !ok {
 			return fmt.Errorf("invalid elasticsearch connection type")
 		}
 		return elasticsearch.CreateStructure(client, structure)
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		driver, ok := client.DB.(neo4jgo.DriverWithContext)
 		if !ok {
 			return fmt.Errorf("invalid neo4j connection type")
@@ -292,33 +293,33 @@ func (dm *DatabaseManager) CreateDatabase(databaseID string, options map[string]
 	}
 
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		return postgres.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		return mysql.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		return mariadb.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		return cockroach.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "redis":
+	case string(dbcapabilities.Redis):
 		return redis.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		return mongodb.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		return mssql.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		return cassandra.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		return edgedb.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		return snowflake.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		return clickhouse.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		return pinecone.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		return elasticsearch.CreateDatabase(context.Background(), client.DB, databaseID, options)
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		return neo4j.CreateDatabase(context.Background(), client.DB, databaseID, options)
 	default:
 		return fmt.Errorf("unsupported database type: %s", client.DatabaseType)
@@ -339,33 +340,33 @@ func (dm *DatabaseManager) DropDatabase(databaseID string, options map[string]in
 	}
 
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		return postgres.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		return mysql.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		return mariadb.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		return cockroach.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "redis":
+	case string(dbcapabilities.Redis):
 		return redis.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		return mongodb.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		return mssql.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		return cassandra.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		return edgedb.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		return snowflake.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		return clickhouse.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		return pinecone.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		return elasticsearch.DropDatabase(context.Background(), client.DB, databaseID, options)
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		return neo4j.DropDatabase(context.Background(), client.DB, databaseID, options)
 	default:
 		return fmt.Errorf("unsupported database type: %s", client.DatabaseType)
