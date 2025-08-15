@@ -4,6 +4,8 @@
 
 package unifiedmodel
 
+import "github.com/redbco/redb-open/pkg/dbcapabilities"
+
 // Type safety enums for common object types
 type ObjectType string
 
@@ -87,6 +89,9 @@ const (
 
 // UnifiedModel is a unified model for all database types
 type UnifiedModel struct {
+	// Database Structure Type
+	DatabaseType dbcapabilities.DatabaseType `json:"database_type"`
+
 	// Structural organization (optional levels depending on engine)
 	Catalogs  map[string]Catalog  `json:"catalogs"`
 	Databases map[string]Database `json:"databases"`

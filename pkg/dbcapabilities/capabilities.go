@@ -2,50 +2,50 @@ package dbcapabilities
 
 import "strings"
 
-// DatabaseID is the canonical identifier for a database technology supported by reDB.
+// DatabaseType is the canonical identifier for a database technology supported by reDB.
 // Use these constants to look up capability information.
-type DatabaseID string
+type DatabaseType string
 
 const (
 	// Relational SQL
-	PostgreSQL  DatabaseID = "postgres"
-	MySQL       DatabaseID = "mysql"
-	MariaDB     DatabaseID = "mariadb"
-	SQLServer   DatabaseID = "mssql"
-	Oracle      DatabaseID = "oracle"
-	TiDB        DatabaseID = "tidb"
-	ClickHouse  DatabaseID = "clickhouse"
-	DB2         DatabaseID = "db2"
-	CockroachDB DatabaseID = "cockroach"
-	DuckDB      DatabaseID = "duckdb"
+	PostgreSQL  DatabaseType = "postgres"
+	MySQL       DatabaseType = "mysql"
+	MariaDB     DatabaseType = "mariadb"
+	SQLServer   DatabaseType = "mssql"
+	Oracle      DatabaseType = "oracle"
+	TiDB        DatabaseType = "tidb"
+	ClickHouse  DatabaseType = "clickhouse"
+	DB2         DatabaseType = "db2"
+	CockroachDB DatabaseType = "cockroach"
+	DuckDB      DatabaseType = "duckdb"
 
 	// NoSQL / Other paradigms
-	Cassandra     DatabaseID = "cassandra"
-	DynamoDB      DatabaseID = "dynamodb"
-	MongoDB       DatabaseID = "mongodb"
-	Redis         DatabaseID = "redis"
-	Neo4j         DatabaseID = "neo4j"
-	Elasticsearch DatabaseID = "elasticsearch"
-	CosmosDB      DatabaseID = "cosmosdb"
+	Cassandra     DatabaseType = "cassandra"
+	DynamoDB      DatabaseType = "dynamodb"
+	MongoDB       DatabaseType = "mongodb"
+	Redis         DatabaseType = "redis"
+	Neo4j         DatabaseType = "neo4j"
+	Elasticsearch DatabaseType = "elasticsearch"
+	CosmosDB      DatabaseType = "cosmosdb"
 
 	// Analytics / Columnar / Cloud warehouses
-	Snowflake DatabaseID = "snowflake"
+	Snowflake DatabaseType = "snowflake"
 
 	// Vectors / AI
-	Milvus   DatabaseID = "milvus"
-	Weaviate DatabaseID = "weaviate"
-	Pinecone DatabaseID = "pinecone"
-	Chroma   DatabaseID = "chroma"
-	LanceDB  DatabaseID = "lancedb"
+	Milvus   DatabaseType = "milvus"
+	Weaviate DatabaseType = "weaviate"
+	Pinecone DatabaseType = "pinecone"
+	Chroma   DatabaseType = "chroma"
+	LanceDB  DatabaseType = "lancedb"
 
 	// Other
-	EdgeDB DatabaseID = "edgedb"
+	EdgeDB DatabaseType = "edgedb"
 
 	// Object Storage
-	S3        DatabaseID = "s3"
-	GCS       DatabaseID = "gcs"
-	AzureBlob DatabaseID = "azure_blob"
-	MinIO     DatabaseID = "minio"
+	S3        DatabaseType = "s3"
+	GCS       DatabaseType = "gcs"
+	AzureBlob DatabaseType = "azure_blob"
+	MinIO     DatabaseType = "minio"
 )
 
 // DataParadigm enumerates the primary data storage paradigms a database supports.
@@ -69,8 +69,8 @@ type Capability struct {
 	// Human-friendly vendor or product name, e.g., "PostgreSQL".
 	Name string `json:"name"`
 
-	// Canonical ID used across the codebase (see DatabaseID constants), e.g., "postgres".
-	ID DatabaseID `json:"id"`
+	// Canonical ID used across the codebase (see DatabaseType constants), e.g., "postgres".
+	ID DatabaseType `json:"id"`
 
 	// Whether the database exposes a built-in/system database and its typical names.
 	HasSystemDatabase bool     `json:"hasSystemDatabase"`
@@ -105,7 +105,7 @@ type Capability struct {
 }
 
 // All is a registry of capabilities keyed by the canonical database ID.
-var All = map[DatabaseID]Capability{
+var All = map[DatabaseType]Capability{
 	PostgreSQL: {
 		Name:                     "PostgreSQL",
 		ID:                       PostgreSQL,
@@ -318,7 +318,7 @@ var All = map[DatabaseID]Capability{
 		HasSystemDatabase:        true,
 		SystemDatabases:          []string{"system"},
 		SupportsCDC:              false,
-		HasUniqueIdentifier:      true, // Unique ID: databaseId.
+		HasUniqueIdentifier:      true, // Unique ID: DatabaseType.
 		SupportsClustering:       true,
 		ClusteringMechanisms:     []string{"active-active"},
 		SupportedVendors:         []string{"custom", "neo4j-aura"},
@@ -523,11 +523,11 @@ var All = map[DatabaseID]Capability{
 	},
 }
 
-// nameToID is a normalized lookup index from any known name/alias to the canonical DatabaseID.
-var nameToID map[string]DatabaseID
+// nameToID is a normalized lookup index from any known name/alias to the canonical DatabaseType.
+var nameToID map[string]DatabaseType
 
 func init() {
-	nameToID = make(map[string]DatabaseID, len(All)*2)
+	nameToID = make(map[string]DatabaseType, len(All)*2)
 	for id, cap := range All {
 		// Canonical ID
 		nameToID[strings.ToLower(string(id))] = id
@@ -546,8 +546,8 @@ func init() {
 }
 
 // ParseID attempts to resolve an arbitrary database name (canonical id, alias, or product name)
-// to a canonical DatabaseID. Returns false if unknown.
-func ParseID(name string) (DatabaseID, bool) {
+// to a canonical DatabaseType. Returns false if unknown.
+func ParseID(name string) (DatabaseType, bool) {
 	n := strings.ToLower(strings.TrimSpace(name))
 	if n == "" {
 		return "", false
@@ -598,8 +598,8 @@ func SupportsParadigmString(name string, p DataParadigm) bool {
 }
 
 // IDs returns the list of all known database IDs.
-func IDs() []DatabaseID {
-	out := make([]DatabaseID, 0, len(All))
+func IDs() []DatabaseType {
+	out := make([]DatabaseType, 0, len(All))
 	for id := range All {
 		out = append(out, id)
 	}
@@ -607,13 +607,13 @@ func IDs() []DatabaseID {
 }
 
 // Get returns capabilities for the given ID and a boolean indicating existence.
-func Get(id DatabaseID) (Capability, bool) {
+func Get(id DatabaseType) (Capability, bool) {
 	c, ok := All[id]
 	return c, ok
 }
 
 // MustGet returns capabilities for the given ID and panics if not found.
-func MustGet(id DatabaseID) Capability {
+func MustGet(id DatabaseType) Capability {
 	c, ok := Get(id)
 	if !ok {
 		panic("dbcapabilities: unknown database id: " + string(id))
@@ -622,7 +622,7 @@ func MustGet(id DatabaseID) Capability {
 }
 
 // SupportsParadigm reports whether the database supports a given data paradigm.
-func SupportsParadigm(id DatabaseID, p DataParadigm) bool {
+func SupportsParadigm(id DatabaseType, p DataParadigm) bool {
 	c, ok := Get(id)
 	if !ok {
 		return false
@@ -636,13 +636,13 @@ func SupportsParadigm(id DatabaseID, p DataParadigm) bool {
 }
 
 // HasSystemDB is a convenience accessor for HasSystemDatabase.
-func HasSystemDB(id DatabaseID) bool {
+func HasSystemDB(id DatabaseType) bool {
 	c, ok := Get(id)
 	return ok && c.HasSystemDatabase
 }
 
 // SupportsCDC reports whether CDC-style replication is supported.
-func SupportsCDC(id DatabaseID) bool {
+func SupportsCDC(id DatabaseType) bool {
 	c, ok := Get(id)
 	return ok && c.SupportsCDC
 }

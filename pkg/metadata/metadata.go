@@ -8,23 +8,23 @@ import (
 
 // DatabaseID is the canonical identifier for a database technology
 // (e.g., "postgres", "mysql", "mongodb", "snowflake", ...).
-type DatabaseID = dbcapabilities.DatabaseID
+type DatabaseType = dbcapabilities.DatabaseType
 
 // InstanceMetadata captures node/cluster-level facts about a running database service.
 // It is designed to be technology-agnostic while exposing enough structure to model
 // relational, NoSQL, graph, vector, and cloud warehouse engines.
 type InstanceMetadata struct {
 	// Identity
-	InstanceID string      `json:"instance_id"`          // Stable ID you assign (e.g., UUID)
-	Name       string      `json:"name"`                 // Human-friendly name
-	Type       DatabaseID  `json:"type"`                 // One of the DatabaseID constants
-	UniqueID   string      `json:"unique_id,omitempty"`  // Unique ID for the instance
-	Edition    string      `json:"edition,omitempty"`    // e.g., "Community", "Enterprise", "Cloud", "Serverless"
-	Version    VersionInfo `json:"version"`              // Semantic + build info
-	ClusterID  string      `json:"cluster_id,omitempty"` // Logical cluster/fleet identifier, if any
-	NodeID     string      `json:"node_id,omitempty"`    // Per-node ID within a cluster
-	Role       string      `json:"role,omitempty"`       // e.g., "primary", "replica", "coordinator", "data", "standalone"
-	IsLeader   bool        `json:"is_leader,omitempty"`  // Whether this node is a leader/primary
+	InstanceID string       `json:"instance_id"`          // Stable ID you assign (e.g., UUID)
+	Name       string       `json:"name"`                 // Human-friendly name
+	Type       DatabaseType `json:"type"`                 // One of the DatabaseType constants
+	UniqueID   string       `json:"unique_id,omitempty"`  // Unique ID for the instance
+	Edition    string       `json:"edition,omitempty"`    // e.g., "Community", "Enterprise", "Cloud", "Serverless"
+	Version    VersionInfo  `json:"version"`              // Semantic + build info
+	ClusterID  string       `json:"cluster_id,omitempty"` // Logical cluster/fleet identifier, if any
+	NodeID     string       `json:"node_id,omitempty"`    // Per-node ID within a cluster
+	Role       string       `json:"role,omitempty"`       // e.g., "primary", "replica", "coordinator", "data", "standalone"
+	IsLeader   bool         `json:"is_leader,omitempty"`  // Whether this node is a leader/primary
 
 	// Deployment & networking
 	Deployment    DeploymentInfo    `json:"deployment"`          // Where/how it runs
@@ -72,13 +72,13 @@ type InstanceMetadata struct {
 // (e.g., "default", "db0", or the engine’s recommended conventional name).
 type DatabaseMetadata struct {
 	// Identity & binding
-	DatabaseID string     `json:"database_id"`         // Stable ID you assign (e.g., UUID)
-	InstanceID string     `json:"instance_id"`         // Foreign key to InstanceMetadata.InstanceID
-	Type       DatabaseID `json:"type"`                // One of the DatabaseID constants
-	UniqueID   string     `json:"unique_id,omitempty"` // Unique ID for the logical database
-	Name       string     `json:"name"`                // Database / keyspace / namespace name
-	Owner      string     `json:"owner,omitempty"`     // Owner / principal where applicable
-	CreatedAt  *time.Time `json:"created_at,omitempty"`
+	DatabaseID string       `json:"database_id"`         // Stable ID you assign (e.g., UUID)
+	InstanceID string       `json:"instance_id"`         // Foreign key to InstanceMetadata.InstanceID
+	Type       DatabaseType `json:"type"`                // One of the DatabaseType constants
+	UniqueID   string       `json:"unique_id,omitempty"` // Unique ID for the logical database
+	Name       string       `json:"name"`                // Database / keyspace / namespace name
+	Owner      string       `json:"owner,omitempty"`     // Owner / principal where applicable
+	CreatedAt  *time.Time   `json:"created_at,omitempty"`
 
 	// Localization & defaults (override instance-level where applicable)
 	Charset       string   `json:"charset,omitempty"`
