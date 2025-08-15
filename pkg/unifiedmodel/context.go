@@ -30,6 +30,47 @@ const (
 	EnrichmentCategoryRelationships  EnrichmentCategory = "relationships"
 )
 
+// Change types for structural differences
+type ChangeType string
+
+const (
+	ChangeTypeAdded    ChangeType = "added"
+	ChangeTypeRemoved  ChangeType = "removed"
+	ChangeTypeModified ChangeType = "modified"
+	ChangeTypeRenamed  ChangeType = "renamed"
+	ChangeTypeMoved    ChangeType = "moved"
+)
+
+// Severity levels for changes
+type ChangeSeverity string
+
+const (
+	ChangeSeverityMinor    ChangeSeverity = "minor"    // Cosmetic changes
+	ChangeSeverityMajor    ChangeSeverity = "major"    // Significant changes
+	ChangeSeverityCritical ChangeSeverity = "critical" // Breaking changes
+)
+
+// Migration complexity levels
+type MigrationComplexity string
+
+const (
+	MigrationComplexityNone   MigrationComplexity = "none"   // No migration needed
+	MigrationComplexityLow    MigrationComplexity = "low"    // Simple changes
+	MigrationComplexityMedium MigrationComplexity = "medium" // Moderate effort
+	MigrationComplexityHigh   MigrationComplexity = "high"   // Complex migration
+)
+
+// Enrichment impact levels
+type EnrichmentImpact string
+
+const (
+	EnrichmentImpactNone     EnrichmentImpact = "none"     // No impact
+	EnrichmentImpactLow      EnrichmentImpact = "low"      // Minimal impact
+	EnrichmentImpactMedium   EnrichmentImpact = "medium"   // Moderate impact
+	EnrichmentImpactHigh     EnrichmentImpact = "high"     // Significant impact
+	EnrichmentImpactCritical EnrichmentImpact = "critical" // Critical impact
+)
+
 // ComparisonOptions configures how schema comparison is performed
 type ComparisonOptions struct {
 	// Comparison behavior
@@ -157,40 +198,7 @@ type ObjectChange struct {
 	EnrichmentImpact *EnrichmentImpact  `json:"enrichment_impact,omitempty"`
 }
 
-// ChangeType represents the type of change detected
-type ChangeType string
-
-const (
-	ChangeTypeAdded    ChangeType = "added"
-	ChangeTypeRemoved  ChangeType = "removed"
-	ChangeTypeModified ChangeType = "modified"
-	ChangeTypeRenamed  ChangeType = "renamed"
-	ChangeTypeMoved    ChangeType = "moved"
-)
-
-// ChangeSeverity indicates the impact level of a change
-type ChangeSeverity string
-
-const (
-	ChangeSeverityMinor    ChangeSeverity = "minor"
-	ChangeSeverityMajor    ChangeSeverity = "major"
-	ChangeSeverityCritical ChangeSeverity = "critical"
-)
-
-// EnrichmentImpact describes the impact of enrichment changes
-type EnrichmentImpact string
-
-const (
-	EnrichmentImpactNone     EnrichmentImpact = "none"
-	EnrichmentImpactLow      EnrichmentImpact = "low"
-	EnrichmentImpactMedium   EnrichmentImpact = "medium"
-	EnrichmentImpactHigh     EnrichmentImpact = "high"
-	EnrichmentImpactCritical EnrichmentImpact = "critical"
-)
-
-// MigrationComplexity indicates how complex a migration would be
-type MigrationComplexity string
-
+// MigrationComplexity constants (continued from earlier definition)
 const (
 	MigrationComplexityTrivial  MigrationComplexity = "trivial"
 	MigrationComplexitySimple   MigrationComplexity = "simple"

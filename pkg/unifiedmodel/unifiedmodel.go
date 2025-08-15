@@ -247,6 +247,11 @@ type UnifiedModel struct {
 	FailoverGroups   map[string]FailoverGroup   `json:"failover_groups"`
 }
 
+// GetBasicMetrics generates basic metrics (counts and simple calculations) from this UnifiedModel
+func (um *UnifiedModel) GetBasicMetrics(schemaID string) *UnifiedModelMetrics {
+	return GenerateBasicMetrics(um, schemaID)
+}
+
 // --- Structural containers ---
 
 type Catalog struct {

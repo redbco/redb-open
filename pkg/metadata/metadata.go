@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 )
 
 // DatabaseID is the canonical identifier for a database technology
@@ -15,16 +16,16 @@ type DatabaseType = dbcapabilities.DatabaseType
 // relational, NoSQL, graph, vector, and cloud warehouse engines.
 type InstanceMetadata struct {
 	// Identity
-	InstanceID string       `json:"instance_id"`          // Stable ID you assign (e.g., UUID)
-	Name       string       `json:"name"`                 // Human-friendly name
-	Type       DatabaseType `json:"type"`                 // One of the DatabaseType constants
-	UniqueID   string       `json:"unique_id,omitempty"`  // Unique ID for the instance
-	Edition    string       `json:"edition,omitempty"`    // e.g., "Community", "Enterprise", "Cloud", "Serverless"
-	Version    VersionInfo  `json:"version"`              // Semantic + build info
-	ClusterID  string       `json:"cluster_id,omitempty"` // Logical cluster/fleet identifier, if any
-	NodeID     string       `json:"node_id,omitempty"`    // Per-node ID within a cluster
-	Role       string       `json:"role,omitempty"`       // e.g., "primary", "replica", "coordinator", "data", "standalone"
-	IsLeader   bool         `json:"is_leader,omitempty"`  // Whether this node is a leader/primary
+	InstanceID   string       `json:"instance_id"`          // Stable ID you assign (e.g., UUID)
+	Name         string       `json:"name"`                 // Human-friendly name
+	DatabaseType DatabaseType `json:"database_type"`        // One of the DatabaseType constants
+	UniqueID     string       `json:"unique_id,omitempty"`  // Unique ID for the instance
+	Edition      string       `json:"edition,omitempty"`    // e.g., "Community", "Enterprise", "Cloud", "Serverless"
+	Version      VersionInfo  `json:"version"`              // Semantic + build info
+	ClusterID    string       `json:"cluster_id,omitempty"` // Logical cluster/fleet identifier, if any
+	NodeID       string       `json:"node_id,omitempty"`    // Per-node ID within a cluster
+	Role         string       `json:"role,omitempty"`       // e.g., "primary", "replica", "coordinator", "data", "standalone"
+	IsLeader     bool         `json:"is_leader,omitempty"`  // Whether this node is a leader/primary
 
 	// Deployment & networking
 	Deployment    DeploymentInfo    `json:"deployment"`          // Where/how it runs
@@ -72,13 +73,13 @@ type InstanceMetadata struct {
 // (e.g., "default", "db0", or the engine’s recommended conventional name).
 type DatabaseMetadata struct {
 	// Identity & binding
-	DatabaseID string       `json:"database_id"`         // Stable ID you assign (e.g., UUID)
-	InstanceID string       `json:"instance_id"`         // Foreign key to InstanceMetadata.InstanceID
-	Type       DatabaseType `json:"type"`                // One of the DatabaseType constants
-	UniqueID   string       `json:"unique_id,omitempty"` // Unique ID for the logical database
-	Name       string       `json:"name"`                // Database / keyspace / namespace name
-	Owner      string       `json:"owner,omitempty"`     // Owner / principal where applicable
-	CreatedAt  *time.Time   `json:"created_at,omitempty"`
+	DatabaseID   string       `json:"database_id"`         // Stable ID you assign (e.g., UUID)
+	InstanceID   string       `json:"instance_id"`         // Foreign key to InstanceMetadata.InstanceID
+	DatabaseType DatabaseType `json:"database_type"`       // One of the DatabaseType constants
+	UniqueID     string       `json:"unique_id,omitempty"` // Unique ID for the logical database
+	Name         string       `json:"name"`                // Database / keyspace / namespace name
+	Owner        string       `json:"owner,omitempty"`     // Owner / principal where applicable
+	CreatedAt    *time.Time   `json:"created_at,omitempty"`
 
 	// Localization & defaults (override instance-level where applicable)
 	Charset       string   `json:"charset,omitempty"`
@@ -87,9 +88,8 @@ type DatabaseMetadata struct {
 	DefaultSchema string   `json:"default_schema,omitempty"` // For engines with schemas (e.g., PostgreSQL)
 	Schemas       []string `json:"schemas,omitempty"`        // List of schemas / namespaces inside this logical DB
 
-	// Size & object counts (best-effort, can be estimated)
-	SizeBytes    int64        `json:"size_bytes,omitempty"`
-	ObjectCounts ObjectCounts `json:"object_counts"`
+	// Metrics (comprehensive analytics for the database)
+	Metrics *unifiedmodel.UnifiedModelMetrics `json:"metrics,omitempty"`
 
 	// Data topology scoped to this logical database
 	Replication  ReplicationInfo  `json:"replication"`  // Publications/subscriptions, replicas, consistency
@@ -244,39 +244,6 @@ type LimitInfo struct {
 	MaxTablesPerSchema  int `json:"max_tables_per_schema,omitempty"`
 	MaxIndexesPerTable  int `json:"max_indexes_per_table,omitempty"`
 	MaxConnections      int `json:"max_connections,omitempty"`
-}
-
-type ObjectCounts struct {
-	// Relational
-	Schemas    int `json:"schemas,omitempty"`
-	Tables     int `json:"tables,omitempty"`
-	Views      int `json:"views,omitempty"`
-	MatViews   int `json:"materialized_views,omitempty"`
-	Indexes    int `json:"indexes,omitempty"`
-	Sequences  int `json:"sequences,omitempty"`
-	Functions  int `json:"functions,omitempty"`
-	Procedures int `json:"procedures,omitempty"`
-	Triggers   int `json:"triggers,omitempty"`
-	Types      int `json:"types,omitempty"`
-
-	// NoSQL / Document
-	Collections int   `json:"collections,omitempty"`
-	Documents   int64 `json:"documents,omitempty"`
-
-	// Graph
-	Graphs       int `json:"graphs,omitempty"`
-	VertexLabels int `json:"vertex_labels,omitempty"`
-	EdgeLabels   int `json:"edge_labels,omitempty"`
-
-	// Vector / Indexes
-	VectorIndexes int `json:"vector_indexes,omitempty"`
-
-	// Warehouse / Files
-	Stages         int `json:"stages,omitempty"`
-	ExternalTables int `json:"external_tables,omitempty"`
-
-	// Streams
-	Streams int `json:"streams,omitempty"`
 }
 
 type CDCInfo struct {
