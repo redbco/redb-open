@@ -1,4 +1,89 @@
+// Package unifiedmodel provides a unified schema representation for all supported database technologies.
+// This package models 165+ database object types across all major paradigms:
+// Relational, Document, Graph, Vector, Key-Value, Columnar, Wide-Column, Search Index, Time-Series, Object Storage
+
 package unifiedmodel
+
+// Type safety enums for common object types
+type ObjectType string
+
+const (
+	// Data container types
+	ObjectTypeTable            ObjectType = "table"
+	ObjectTypeCollection       ObjectType = "collection"
+	ObjectTypeView             ObjectType = "view"
+	ObjectTypeMaterializedView ObjectType = "materialized_view"
+	ObjectTypeTemporaryTable   ObjectType = "temporary_table"
+	ObjectTypeMemoryTable      ObjectType = "memory_table"
+	// Graph types
+	ObjectTypeNode         ObjectType = "node"
+	ObjectTypeRelationship ObjectType = "relationship"
+	ObjectTypeGraph        ObjectType = "graph"
+	// Vector types
+	ObjectTypeVector      ObjectType = "vector"
+	ObjectTypeVectorIndex ObjectType = "vector_index"
+	ObjectTypeEmbedding   ObjectType = "embedding"
+	// Search types
+	ObjectTypeSearchIndex ObjectType = "search_index"
+	ObjectTypeDocument    ObjectType = "document"
+)
+
+type ConstraintType string
+
+const (
+	ConstraintTypePrimaryKey ConstraintType = "primary_key"
+	ConstraintTypeForeignKey ConstraintType = "foreign_key"
+	ConstraintTypeUnique     ConstraintType = "unique"
+	ConstraintTypeCheck      ConstraintType = "check"
+	ConstraintTypeNotNull    ConstraintType = "not_null"
+	ConstraintTypeExclusion  ConstraintType = "exclusion"
+	ConstraintTypeDefault    ConstraintType = "default"
+)
+
+type IndexType string
+
+const (
+	IndexTypeBTree      IndexType = "btree"
+	IndexTypeHash       IndexType = "hash"
+	IndexTypeGIN        IndexType = "gin"
+	IndexTypeGiST       IndexType = "gist"
+	IndexTypeBitmap     IndexType = "bitmap"
+	IndexTypeClustered  IndexType = "clustered"
+	IndexTypeCovering   IndexType = "covering"
+	IndexTypeExpression IndexType = "expression"
+	IndexTypeSparse     IndexType = "sparse"
+	IndexTypePartial    IndexType = "partial"
+	IndexTypeFullText   IndexType = "fulltext"
+	IndexTypeSpatial    IndexType = "spatial"
+	IndexTypeVector     IndexType = "vector"
+)
+
+type PolicyType string
+
+const (
+	PolicyTypeRowSecurity   PolicyType = "row_security"
+	PolicyTypeColumnMasking PolicyType = "column_masking"
+	PolicyTypeDataMasking   PolicyType = "data_masking"
+	PolicyTypeAccessControl PolicyType = "access_control"
+	PolicyTypeAudit         PolicyType = "audit"
+	PolicyTypePassword      PolicyType = "password"
+	PolicyTypeSession       PolicyType = "session"
+	PolicyTypeEncryption    PolicyType = "encryption"
+	PolicyTypeRetention     PolicyType = "retention"
+)
+
+type TextSearchComponentType string
+
+const (
+	TextSearchTypeParser        TextSearchComponentType = "parser"
+	TextSearchTypeDictionary    TextSearchComponentType = "dictionary"
+	TextSearchTypeTemplate      TextSearchComponentType = "template"
+	TextSearchTypeConfiguration TextSearchComponentType = "configuration"
+	TextSearchTypeAnalyzer      TextSearchComponentType = "analyzer"
+	TextSearchTypeTokenizer     TextSearchComponentType = "tokenizer"
+	TextSearchTypeFilter        TextSearchComponentType = "filter"
+	TextSearchTypeNormalizer    TextSearchComponentType = "normalizer"
+)
 
 // UnifiedModel is a unified model for all database types
 type UnifiedModel struct {
@@ -115,14 +200,7 @@ type UnifiedModel struct {
 	Thresholds     map[string]Threshold     `json:"thresholds"`
 
 	// Text processing / search configuration
-	Analyzers                map[string]Analyzer                `json:"analyzers"`
-	Tokenizers               map[string]Tokenizer               `json:"tokenizers"`
-	Filters                  map[string]Filter                  `json:"filters"`
-	Normalizers              map[string]Normalizer              `json:"normalizers"`
-	TextSearchParsers        map[string]TextSearchParser        `json:"text_search_parsers"`
-	TextSearchDictionaries   map[string]TextSearchDictionary    `json:"text_search_dictionaries"`
-	TextSearchTemplates      map[string]TextSearchTemplate      `json:"text_search_templates"`
-	TextSearchConfigurations map[string]TextSearchConfiguration `json:"text_search_configurations"`
+	TextSearchComponents map[string]TextSearchComponent `json:"text_search_components"`
 
 	// Metadata and documentation
 	Comments    map[string]Comment    `json:"comments"`
@@ -448,7 +526,7 @@ type Type struct {
 
 type Index struct {
 	Name       string         `json:"name"`
-	Type       string         `json:"type,omitempty"` // btree, hash, gin, gist, bitmap, clustered, covering, expression, sparse, unique
+	Type       IndexType      `json:"type,omitempty"` // Use IndexType enum for type safety
 	Columns    []string       `json:"columns,omitempty"`
 	Fields     []string       `json:"fields,omitempty"`
 	Expression string         `json:"expression,omitempty"`
@@ -459,7 +537,7 @@ type Index struct {
 
 type Constraint struct {
 	Name       string         `json:"name"`
-	Type       string         `json:"type"` // check, foreign_key, unique, primary_key, not_null, exclusion
+	Type       ConstraintType `json:"type"` // Use ConstraintType enum for type safety
 	Columns    []string       `json:"columns,omitempty"`
 	Expression string         `json:"expression,omitempty"`
 	Reference  Reference      `json:"reference,omitempty"`
@@ -632,7 +710,8 @@ type Grant struct {
 
 type Policy struct {
 	Name       string         `json:"name"`
-	Scope      string         `json:"scope"`
+	Type       PolicyType     `json:"type"`  // Use PolicyType enum for type safety
+	Scope      string         `json:"scope"` // database, schema, table, column, function, etc.
 	Object     string         `json:"object,omitempty"`
 	Definition string         `json:"definition"`
 	Options    map[string]any `json:"options,omitempty"`
@@ -817,46 +896,14 @@ type Threshold struct {
 
 // Text processing
 
-type Analyzer struct {
-	Name    string         `json:"name"`
-	Options map[string]any `json:"options,omitempty"`
-}
-
-type Tokenizer struct {
-	Name    string         `json:"name"`
-	Options map[string]any `json:"options,omitempty"`
-}
-
-type Filter struct {
-	Name    string         `json:"name"`
-	Options map[string]any `json:"options,omitempty"`
-}
-
-type Normalizer struct {
-	Name    string         `json:"name"`
-	Options map[string]any `json:"options,omitempty"`
-}
-
-type TextSearchParser struct {
-	Name    string         `json:"name"`
-	Options map[string]any `json:"options,omitempty"`
-}
-
-type TextSearchDictionary struct {
-	Name    string         `json:"name"`
-	Options map[string]any `json:"options,omitempty"`
-}
-
-type TextSearchTemplate struct {
-	Name    string         `json:"name"`
-	Options map[string]any `json:"options,omitempty"`
-}
-
-type TextSearchConfiguration struct {
-	Name         string         `json:"name"`
-	Parser       string         `json:"parser,omitempty"`
-	Dictionaries []string       `json:"dictionaries,omitempty"`
-	Options      map[string]any `json:"options,omitempty"`
+type TextSearchComponent struct {
+	Name         string                  `json:"name"`
+	Type         TextSearchComponentType `json:"type"`                   // parser, dictionary, template, configuration, analyzer, tokenizer, filter, normalizer
+	Parser       string                  `json:"parser,omitempty"`       // For configuration type
+	Dictionaries []string                `json:"dictionaries,omitempty"` // For configuration type
+	Chain        []string                `json:"chain,omitempty"`        // For analyzer type (tokenizer + filters)
+	Options      map[string]any          `json:"options,omitempty"`
+	Comment      string                  `json:"comment,omitempty"`
 }
 
 // Metadata and documentation
