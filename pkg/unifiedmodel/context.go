@@ -50,6 +50,29 @@ const (
 	ChangeSeverityCritical ChangeSeverity = "critical" // Breaking changes
 )
 
+// Warning types for conversions
+type WarningType string
+
+const (
+	WarningTypeFeatureLoss   WarningType = "feature_loss"   // Feature not supported in target
+	WarningTypeDataTypeLoss  WarningType = "data_type_loss" // Data type conversion may lose data
+	WarningTypePerformance   WarningType = "performance"    // Performance implications
+	WarningTypeCompliance    WarningType = "compliance"     // Compliance/security concerns
+	WarningTypeCompatibility WarningType = "compatibility"  // Compatibility issues
+	WarningTypeValidation    WarningType = "validation"     // Validation required
+)
+
+// ConversionWarning represents a warning during schema conversion
+type ConversionWarning struct {
+	WarningType WarningType `json:"warning_type"`
+	ObjectType  ObjectType  `json:"object_type"`
+	ObjectName  string      `json:"object_name,omitempty"`
+	Message     string      `json:"message"`
+	Severity    string      `json:"severity"`
+	Suggestion  string      `json:"suggestion,omitempty"`
+	Details     string      `json:"details,omitempty"`
+}
+
 // Migration complexity levels
 type MigrationComplexity string
 
