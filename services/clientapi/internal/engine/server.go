@@ -99,6 +99,20 @@ func (s *Server) setupRoutes() {
 	// Health check endpoint (global, no tenant)
 	s.router.HandleFunc("/health", s.handleHealth).Methods(http.MethodGet)
 
+	// Global OPTIONS handler for CORS preflight requests
+	// This must be registered before other routes to catch all OPTIONS requests
+	s.router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			// CORS headers are already set by the CORS middleware
+			// Just return 200 OK for preflight requests
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// If not OPTIONS, this handler should not be reached due to more specific routes
+		// But if it is, return 404
+		http.NotFound(w, r)
+	}).Methods(http.MethodOptions)
+
 	// Tenant-specific routes with tenant_url in path
 	// Pattern: /{tenant_url}/api/v1/...
 	tenantRouter := s.router.PathPrefix("/{tenant_url}/api/v1").Subrouter()

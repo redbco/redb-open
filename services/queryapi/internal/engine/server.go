@@ -19,11 +19,40 @@ func NewServer(engine *Engine) *Server {
 		engine: engine,
 		router: mux.NewRouter(),
 	}
+	s.setupMiddleware()
 	s.setupRoutes()
 	return s
 }
 
+func (s *Server) setupMiddleware() {
+	// CORS middleware
+	s.router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	})
+}
+
 func (s *Server) setupRoutes() {
+	// Global OPTIONS handler for CORS preflight requests
+	s.router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			// CORS headers are already set by middleware
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// If not OPTIONS, return 404 for unmatched routes
+		http.NotFound(w, r)
+	}).Methods(http.MethodOptions)
 	// Query endpoint
 	s.router.HandleFunc("/query", s.handleQuery).Methods(http.MethodPost)
 
