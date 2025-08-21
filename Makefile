@@ -13,9 +13,21 @@ GO_BUILD_FLAGS := -v
 # Detect operating system
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-    HOST_OS := darwin
+	HOST_OS := darwin
 else
-    HOST_OS := linux
+	HOST_OS := linux
+endif
+
+# Detect host architecture (map kernel arch to GOARCH)
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),x86_64)
+	HOST_ARCH := amd64
+else ifeq ($(UNAME_M),aarch64)
+	HOST_ARCH := arm64
+else ifeq ($(UNAME_M),arm64)
+	HOST_ARCH := arm64
+else
+	HOST_ARCH := $(UNAME_M)
 endif
 
 # Version information
@@ -59,9 +71,9 @@ clean:
 # Build all services (cross-compile for Linux by default)
 build: $(BINARY_DIR) $(addprefix build-,$(SERVICES))
 
-# Local development build (builds for host OS)
-local: GOOS=$(HOST_OS)
-local: build
+# Local development build (builds for host OS/ARCH)
+local:
+	$(MAKE) GOOS=$(HOST_OS) GOARCH=$(HOST_ARCH) build
 
 # Generic build rule for services
 build-%: 
