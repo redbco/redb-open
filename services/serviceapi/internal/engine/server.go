@@ -63,6 +63,17 @@ func (s *Server) setupRoutes() {
 	// Health check endpoint
 	s.router.HandleFunc("/health", s.handleHealth).Methods(http.MethodGet)
 
+	// Global OPTIONS handler for CORS preflight requests
+	s.router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			// CORS headers are already set by middleware
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// If not OPTIONS, return 404 for unmatched routes
+		http.NotFound(w, r)
+	}).Methods(http.MethodOptions)
+
 	// Initial setup endpoint (no authentication required)
 	s.router.HandleFunc("/api/v1/setup", s.handleInitialSetup).Methods(http.MethodPost)
 
