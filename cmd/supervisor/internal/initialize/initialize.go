@@ -251,7 +251,7 @@ func (i *Initializer) AutoInitialize(ctx context.Context) error {
 		i.logger.Info("System is already fully initialized, skipping initialization steps")
 		i.logger.Info("Node auto-initialization completed successfully!")
 		i.logger.Info("Database schema and node setup completed.")
-		i.logger.Info("Use the Service API to create the initial tenant and user.")
+		i.logger.Info("Use the API to create the initial tenant and user.")
 		i.logger.Info("You can now start the supervisor service normally.")
 		return nil
 	}
@@ -274,7 +274,7 @@ func (i *Initializer) AutoInitialize(ctx context.Context) error {
 
 	i.logger.Info("Node auto-initialization completed successfully!")
 	i.logger.Info("Database schema and node setup completed.")
-	i.logger.Info("Use the Service API to create the initial tenant and user.")
+	i.logger.Info("Use the API to create the initial tenant and user.")
 	i.logger.Info("You can now start the supervisor service normally.")
 
 	return nil

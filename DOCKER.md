@@ -67,23 +67,22 @@ The Docker setup includes:
 **Ports Exposed**:
 
 **HTTP API Ports (External Access)**:
-- `8080`: Client API (HTTP) - Main API for CLI and web clients
-- `8081`: Service API (HTTP) - Administrative API
-- `8082`: Query API (HTTP) - Database query execution
+- `3000`: Client Dashboard (HTTP)
+- `8080`: Client API (HTTP)
 
 **Internal gRPC Ports (Service Communication)**:
 - `50000`: Supervisor (internal)
 - `50051`: Security service (internal)
-- `50053`: Unified Model service (internal)
+- `50052`: Unified Model service (internal)
+- `50053`: Webhook service (internal)
 - `50054`: Transformation service (internal)
-- `50055`: Anchor service (internal)
+- `50055`: Core service (internal)
 - `50056`: Mesh service (internal)
-- `50057`: Service API gRPC (internal)
-- `50058`: Query API gRPC (internal)
+- `50057`: Anchor service (internal)
+- `50058`: Integration service (internal)
 - `50059`: Client API gRPC (internal)
-- `50060`: Webhook service (internal)
-- `50061`: MCP Server (internal)
-- `50062`: Core service (internal)
+- `50060`: MCP Server (internal)
+
 
 ## Environment Variables
 
@@ -112,7 +111,7 @@ The Docker container uses a file-based keyring for secure storage of credentials
 
 ### Initial Setup
 
-**Note**: The initial tenant, user, and workspace are now created via the Service API endpoint `/api/v1/setup`. No environment variables are needed for this process.
+**Note**: The initial tenant, user, and workspace are now created via the Client API endpoint `/api/v1/setup`. No environment variables are needed for this process.
 
 For external database connections (if needed), you can use these environment variables:
 

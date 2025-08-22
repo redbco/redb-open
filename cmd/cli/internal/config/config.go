@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/redbco/redb-open/pkg/keyring"
 	"gopkg.in/yaml.v3"
@@ -27,9 +26,8 @@ type Config struct {
 }
 
 type APIEndpoints struct {
-	ClientAPI  string `yaml:"client_api"`
-	ServiceAPI string `yaml:"service_api"`
-	QueryAPI   string `yaml:"query_api"`
+	ClientAPI string `yaml:"client_api"`
+	// ServiceAPI and QueryAPI have been consolidated into ClientAPI
 }
 
 var (
@@ -46,9 +44,7 @@ func Init(configFile string) error {
 
 	globalConfig = &Config{
 		APIEndpoints: APIEndpoints{
-			ClientAPI:  "/api/v1",
-			ServiceAPI: "/service/v1",
-			QueryAPI:   "/query/v1",
+			ClientAPI: "/api/v1",
 		},
 		DefaultHost: "localhost:8080",
 		Timeout:     30,
@@ -223,8 +219,8 @@ func GetTenantURL() (string, error) {
 	return fmt.Sprintf("%s/%s", baseURL, tenant), nil
 }
 
-// GetServiceAPIURL constructs the service API base URL (port 8081)
-func GetServiceAPIURL() (string, error) {
+// GetGlobalAPIURL constructs the global API base URL (for endpoints without tenant prefix)
+func GetGlobalAPIURL() (string, error) {
 	username, err := GetUsername()
 	if err != nil {
 		return "", fmt.Errorf("no user logged in: %v", err)
@@ -240,14 +236,18 @@ func GetServiceAPIURL() (string, error) {
 		hostname = "http://" + hostname
 	}
 
-	// Replace port 8080 with 8081 for service API
-	if strings.Contains(hostname, ":8080") {
-		hostname = strings.Replace(hostname, ":8080", ":8081", 1)
-	} else if !strings.Contains(hostname, ":") {
-		// If no port specified, assume it's localhost and add port 8081
-		hostname = strings.Replace(hostname, "localhost", "localhost:8081", 1)
-		hostname = strings.Replace(hostname, "127.0.0.1", "127.0.0.1:8081", 1)
+	return hostname, nil
+}
+
+// GetGlobalAPIURLNoAuth constructs the global API base URL without requiring authentication
+// This is used for endpoints like setup and tenant listing that don't require login
+func GetGlobalAPIURLNoAuth() string {
+	hostname := globalConfig.DefaultHost
+
+	// Ensure protocol is included
+	if hostname[:7] != "http://" && hostname[:8] != "https://" {
+		hostname = "http://" + hostname
 	}
 
-	return hostname, nil
+	return hostname
 }

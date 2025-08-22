@@ -127,9 +127,7 @@ redb-open/
 │   ├── core/             # Central business logic hub
 │   ├── mcpserver/        # AI/LLM integration (MCP protocol)
 │   ├── mesh/             # Distributed coordination and consensus
-│   ├── queryapi/         # Database query execution interface
 │   ├── security/         # Authentication and authorization
-│   ├── serviceapi/       # Administrative and service management
 │   ├── transformation/   # Data processing and obfuscation
 │   ├── unifiedmodel/     # Database abstraction and schema translation
 │   └── webhook/          # External system integration

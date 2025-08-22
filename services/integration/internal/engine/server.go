@@ -182,7 +182,8 @@ func (s *IntegrationServer) ensureOrchestrator(ctx context.Context) error {
 	}
 	anchorAddr := s.engine.config.Get("services.anchor.grpc_address")
 	if anchorAddr == "" {
-		anchorAddr = "localhost:50055"
+		// TODO: make this dynamic
+		anchorAddr = "localhost:50057"
 	}
 	conn, err := pkggrpc.NewClient(ctx, anchorAddr, pkggrpc.DefaultClientOptions())
 	if err != nil {

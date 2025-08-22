@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	port           = flag.Int("port", 50055, "The server port")
+	port           = flag.Int("port", 50057, "The server port")
 	supervisorAddr = flag.String("supervisor", "localhost:50000", "Supervisor address")
 	standalone     = flag.Bool("standalone", false, "Run in standalone mode without supervisor connection")
 	serviceVersion = "1.0.0"

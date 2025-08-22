@@ -156,43 +156,6 @@ redb@redb-demo:~$
 
 The reDB Node consists of 12 microservices orchestrated by a supervisor service, providing a comprehensive platform for managing heterogeneous database environments.
 
-### Core System Architecture
-
-```
-┌────────────────────────────────────────────────────────┐
-│                   Supervisor Service                   │
-│               (Orchestrates all services)              │
-└─────────────────────────┬──────────────────────────────┘
-                          │
-             ┌────────────┼─────────────┐
-             │            │             │
-       ┌──────────┐ ┌─────────────┐ ┌───▼────┐
-       │ Security │ │Unified Model│ │  Core  │
-       │ Service  │ │   Service   │ │Service │
-       └──────────┘ └─────────────┘ └────────┘
-             │            │             │
-             ┼────────────┼─────────────┤
-             │            │             │
-       ┌─────▼────┐  ┌────▼─────┐  ┌────▼─────┐
-       │ Anchor   │  │  Mesh    │  │Transform │
-       │ Service  │  │ Service  │  │ Service  │
-       └──────────┘  └──────────┘  └──────────┘
-             │            │             │
-             ┼────────────┼─────────────┤
-             │            │             │
-       ┌─────▼────┐  ┌────▼─────┐  ┌────▼─────┐
-       │Client API│  │Query API │  │ Service  │
-       │          │  │          │  │   API    │
-       └──────────┘  └──────────┘  └──────────┘
-             │            │             │
-             ┼────────────┼─────────────┤
-             │            │             │
-       ┌─────▼────┐  ┌────▼─────┐  ┌────▼──────┐
-       │ Webhook  │  │   MCP    │  │Integration│
-       │ Service  │  │ Server   │  │  Service  │
-       └──────────┘  └──────────┘  └───────────┘
-```
-
 ## Microservices Overview
 
 ### Foundation Services
@@ -203,21 +166,21 @@ Central service orchestrator managing lifecycle, health monitoring, and configur
 #### **Security Service** (`services/security/`) - Internal gRPC Port 50051
 Authentication and authorization hub providing JWT tokens, session management, RBAC, and multi-tenant security.
 
-#### **Core Service** (`services/core/`) - Internal gRPC Port 50062
+#### **Core Service** (`services/core/`) - Internal gRPC Port 50055
 Central business logic hub managing tenants, workspaces, databases, repositories, mappings, and policies.
 
 ### Data Services
 
-#### **Unified Model Service** (`services/unifiedmodel/`) - Internal gRPC Port 50053
+#### **Unified Model Service** (`services/unifiedmodel/`) - Internal gRPC Port 50052
 Database abstraction layer with 16+ database adapters, schema translation, and cross-database type conversion.
 
-#### **Anchor Service** (`services/anchor/`) - Internal gRPC Port 50055
+#### **Anchor Service** (`services/anchor/`) - Internal gRPC Port 50057
 Database connectivity service managing direct connections, schema monitoring, and data replication across all supported databases.
 
 #### **Transformation Service** (`services/transformation/`) - Internal gRPC Port 50054
 Data processing service providing internal transformation functions (e.g., formatting, hashing, encoding) and schema-aware mutations.
 
-#### **Integration Service** (`services/integration/`) - Internal gRPC Port 50063
+#### **Integration Service** (`services/integration/`) - Internal gRPC Port 50058
 Manages external integrations such as LLMs, RAG systems, and third-party processors. Provides CRUD for integration definitions and an execution endpoint to invoke integrations over gRPC.
 
 ### Network Services
@@ -227,21 +190,15 @@ Distributed coordination service handling inter-node communication, consensus ma
 
 ### API Services
 
-#### **Client API** (`services/clientapi/`) - Internal gRPC Port 50059, HTTP Port 8080
+#### **Client API** (`services/clientapi/`) - Internal gRPC Port 50059, External HTTP Port 8080
 Primary REST API providing 50+ endpoints for resource management, serving CLI and web clients.
-
-#### **Service API** (`services/serviceapi/`) - Internal gRPC Port 50057, HTTP Port 8081
-Administrative REST API for tenant management, mesh operations, and service configuration.
-
-#### **Query API** (`services/queryapi/`) - Internal gRPC Port 50058, HTTP Port 8082
-Database query execution API supporting multi-database queries, result transformation, and transaction management.
 
 ### Integration Services
 
-#### **Webhook Service** (`services/webhook/`) - Internal gRPC Port 50060
+#### **Webhook Service** (`services/webhook/`) - Internal gRPC Port 50053
 External system integration via webhooks for sending events to external systems.
 
-#### **MCP Server Service** (`services/mcpserver/`) - Internal gRPC Port 50061
+#### **MCP Server Service** (`services/mcpserver/`) - Internal gRPC Port 50060
 Model Context Protocol server enabling AI/LLM integration with database resources, tools, and prompt templates.
 
 ### Client Applications
@@ -249,7 +206,7 @@ Model Context Protocol server enabling AI/LLM integration with database resource
 #### **CLI** (`cmd/cli/`)
 Command-line interface for system management, database operations, and administrative tasks.
 
-#### **Client Dashboard** (`web/client-dashboard/`) - Port 3000
+#### **Client Dashboard** (`web/client-dashboard/`) - External HTTP Port 3000
 Multi-tenant web dashboard providing comprehensive operational management across three architectural levels:
 
 - **Tenant Level**: Organization-wide operations including workspace management, mesh infrastructure monitoring, user access control, and integration management (RAG, LLM, Webhooks)

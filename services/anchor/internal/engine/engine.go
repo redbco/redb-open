@@ -142,7 +142,8 @@ func (e *Engine) Start(ctx context.Context) error {
 		// Initialize gRPC connection to UnifiedModel service
 		umAddr := e.config.Get("services.supervisor.service_locations.unifiedmodel")
 		if umAddr == "" {
-			umAddr = "localhost:50053" // default unifiedmodel service port
+			// TODO: make this dynamic
+			umAddr = "localhost:50052" // default unifiedmodel service port
 		}
 		e.umConn, err = grpc.Dial(umAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {

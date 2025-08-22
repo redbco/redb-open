@@ -181,7 +181,8 @@ func (s *Server) ConnectDatabase(ctx context.Context, req *corev1.ConnectDatabas
 	}
 
 	// Get anchor service address
-	anchorAddr := "localhost:50055" // Default anchor service address
+	// TODO: make this dynamic
+	anchorAddr := "localhost:50057" // Default anchor service address
 	if s.engine.config != nil {
 		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
 			anchorAddr = addr
@@ -318,7 +319,8 @@ func (s *Server) ConnectDatabaseWithInstance(ctx context.Context, req *corev1.Co
 	}
 
 	// Get anchor service address
-	anchorAddr := "localhost:50055" // Default anchor service address
+	// TODO: make this dynamic
+	anchorAddr := "localhost:50057" // Default anchor service address
 	if s.engine.config != nil {
 		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
 			anchorAddr = addr
@@ -416,7 +418,8 @@ func (s *Server) ReconnectDatabase(ctx context.Context, req *corev1.ReconnectDat
 	}
 
 	// Get anchor service address
-	anchorAddr := "localhost:50055" // Default anchor service address
+	// TODO: make this dynamic
+	anchorAddr := "localhost:50057" // Default anchor service address
 	if s.engine.config != nil {
 		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
 			anchorAddr = addr
@@ -588,7 +591,8 @@ func (s *Server) DisconnectDatabase(ctx context.Context, req *corev1.DisconnectD
 	}
 
 	// Call anchor service to disconnect the instance
-	anchorAddr := "localhost:50055" // Default anchor service address
+	// TODO: make this dynamic
+	anchorAddr := "localhost:50057" // Default anchor service address
 	if s.engine.config != nil {
 		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
 			anchorAddr = addr
@@ -687,7 +691,8 @@ func (s *Server) WipeDatabase(ctx context.Context, req *corev1.WipeDatabaseReque
 	}
 
 	// Get anchor service address
-	anchorAddr := "localhost:50055" // Default anchor service address
+	// TODO: make this dynamic
+	anchorAddr := "localhost:50057" // Default anchor service address
 	if s.engine.config != nil {
 		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
 			anchorAddr = addr
@@ -799,7 +804,8 @@ func (s *Server) TransformData(ctx context.Context, req *corev1.TransformDataReq
 	}
 
 	// Get anchor service address
-	anchorAddr := "localhost:50055" // Default anchor service address
+	// TODO: make this dynamic
+	anchorAddr := "localhost:50057" // Default anchor service address
 	if s.engine.config != nil {
 		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
 			anchorAddr = addr
@@ -1020,7 +1026,8 @@ func (s *Server) TransformDataStream(req *corev1.TransformDataStreamRequest, str
 	}
 
 	// Get anchor service address
-	anchorAddr := "localhost:50055" // Default anchor service address
+	// TODO: make this dynamic
+	anchorAddr := "localhost:50057" // Default anchor service address
 	if s.engine.config != nil {
 		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
 			anchorAddr = addr
@@ -1258,7 +1265,8 @@ func (s *Server) DropDatabase(ctx context.Context, req *corev1.DropDatabaseReque
 	}
 
 	// Get anchor service address
-	anchorAddr := "localhost:50055" // Default anchor service address
+	// TODO: make this dynamic
+	anchorAddr := "localhost:50057" // Default anchor service address
 	if s.engine.config != nil {
 		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
 			anchorAddr = addr
