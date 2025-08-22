@@ -28,6 +28,7 @@ const (
 	sslCertPathKey     argKey = "ssl-cert"
 	sslKeyPathKey      argKey = "ssl-key"
 	sslRootCertPathKey argKey = "ssl-root-cert"
+	nameKey            argKey = "name"
 )
 
 func scanArgs(args []string) map[argKey]string {
@@ -49,6 +50,7 @@ func scanArgs(args []string) map[argKey]string {
 		sslCertPathKey,
 		sslKeyPathKey,
 		sslRootCertPathKey,
+		nameKey,
 	}
 	m := make(map[argKey]string, len(keys))
 
