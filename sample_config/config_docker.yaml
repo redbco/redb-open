@@ -4,6 +4,12 @@ supervisor:
   heartbeat_timeout: 30s
   shutdown_timeout: 60s
 
+license:
+  distribution: "open-source"
+
+database:
+  name: redb
+
 logging:
   level: info
   retention_days: 7

@@ -132,7 +132,8 @@ func (e *Engine) Start(ctx context.Context) error {
 		// Initialize gRPC connection to Core service
 		coreAddr := e.config.Get("services.supervisor.service_locations.core")
 		if coreAddr == "" {
-			coreAddr = "localhost:50062" // default core service port
+			// TODO: make this dynamic
+			coreAddr = "localhost:50055" // default core service port
 		}
 		e.coreConn, err = grpc.Dial(coreAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {

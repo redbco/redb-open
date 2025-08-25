@@ -48,6 +48,12 @@ func (p *ServiceProcess) Start(ctx context.Context) error {
 		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("EXTERNAL_PORT=%d", p.config.ExternalPort))
 	}
 
+	// Add database configuration from supervisor config
+	// This allows microservices to access the database name from environment variables
+	if databaseName := os.Getenv("REDB_DATABASE_NAME"); databaseName != "" {
+		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_DATABASE_NAME=%s", databaseName))
+	}
+
 	// Set output
 	p.cmd.Stdout = os.Stdout
 	p.cmd.Stderr = os.Stderr

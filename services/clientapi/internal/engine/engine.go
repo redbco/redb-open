@@ -97,7 +97,8 @@ func (e *Engine) Start(ctx context.Context) error {
 	// Connect to core service
 	coreAddr := e.config.Get("services.core.grpc_address")
 	if coreAddr == "" {
-		coreAddr = "localhost:50062" // Fixed: Use correct core service port (matches core service default)
+		// TODO: make this dynamic
+		coreAddr = "localhost:50055" // default core service port
 	}
 
 	if e.logger != nil {
