@@ -336,36 +336,35 @@ func testHadoopCatalogConnection(client *IcebergClient) error {
 }
 
 // DiscoverDetails fetches the details of an Iceberg catalog
-func DiscoverDetails(db interface{}) (*IcebergDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	client, ok := db.(*IcebergClient)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection type")
 	}
 
-	details := &IcebergDetails{
-		DatabaseType:     "iceberg",
-		DatabaseEdition:  "Apache Iceberg",
-		CatalogName:      client.CatalogName,
-		CatalogType:      client.CatalogType,
-		WarehousePath:    client.WarehousePath,
-		UniqueIdentifier: fmt.Sprintf("iceberg-%s-%s", client.CatalogType, client.CatalogName),
-	}
+	details := make(map[string]interface{})
+	details["databaseType"] = "iceberg"
+	details["databaseEdition"] = "Apache Iceberg"
+	details["catalogName"] = client.CatalogName
+	details["catalogType"] = client.CatalogType
+	details["warehousePath"] = client.WarehousePath
+	details["uniqueIdentifier"] = fmt.Sprintf("iceberg-%s-%s", client.CatalogType, client.CatalogName)
 
 	// Determine storage backend from warehouse path
 	if strings.HasPrefix(client.WarehousePath, "s3://") {
-		details.StorageBackend = "S3"
+		details["storageBackend"] = "S3"
 	} else if strings.HasPrefix(client.WarehousePath, "gs://") {
-		details.StorageBackend = "GCS"
+		details["storageBackend"] = "GCS"
 	} else if strings.HasPrefix(client.WarehousePath, "abfs://") || strings.HasPrefix(client.WarehousePath, "adl://") {
-		details.StorageBackend = "Azure"
+		details["storageBackend"] = "Azure"
 	} else if strings.HasPrefix(client.WarehousePath, "hdfs://") {
-		details.StorageBackend = "HDFS"
+		details["storageBackend"] = "HDFS"
 	} else {
-		details.StorageBackend = "Local/Other"
+		details["storageBackend"] = "Local/Other"
 	}
 
 	// Get version information (this would require actual API calls)
-	details.Version = "1.0.0" // Placeholder
+	details["version"] = "1.0.0" // Placeholder
 
 	return details, nil
 }

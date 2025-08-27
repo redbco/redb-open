@@ -128,7 +128,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches database details
-func DiscoverDetails(client *WeaviateClient) (*WeaviateDetails, error) {
+func DiscoverDetails(client *WeaviateClient) (map[string]interface{}, error) {
 	// Get classes to determine database size
 	classes, err := listClasses(client)
 	if err != nil {
@@ -147,17 +147,18 @@ func DiscoverDetails(client *WeaviateClient) (*WeaviateDetails, error) {
 		totalCount += details.ObjectCount
 	}
 
-	return &WeaviateDetails{
-		UniqueIdentifier: fmt.Sprintf("weaviate_%s_%d", client.Host, client.Port),
-		DatabaseType:     "weaviate",
-		DatabaseEdition:  "community",
-		Version:          "1.0.0", // Weaviate doesn't expose version via API
-		DatabaseSize:     totalSize,
-		Host:             client.Host,
-		Port:             client.Port,
-		ClassCount:       int64(len(classes)),
-		TotalObjects:     totalCount,
-	}, nil
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = fmt.Sprintf("weaviate_%s_%d", client.Host, client.Port)
+	details["databaseType"] = "weaviate"
+	details["databaseEdition"] = "community"
+	details["version"] = "1.0.0" // Weaviate doesn't expose version via API
+	details["databaseSize"] = totalSize
+	details["host"] = client.Host
+	details["port"] = client.Port
+	details["classCount"] = int64(len(classes))
+	details["totalObjects"] = totalCount
+
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Weaviate database

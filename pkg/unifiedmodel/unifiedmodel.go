@@ -179,6 +179,7 @@ type UnifiedModel struct {
 	Partitions    map[string]Partition    `json:"partitions"`
 	SubPartitions map[string]SubPartition `json:"sub_partitions"`
 	Shards        map[string]Shard        `json:"shards"`
+	Keyspaces     map[string]Keyspace     `json:"keyspaces"`
 	Namespaces    map[string]Namespace    `json:"namespaces"`
 
 	// Structural definition objects
@@ -403,6 +404,7 @@ type TransientTable struct {
 type View struct {
 	Name       string            `json:"name"`
 	Definition string            `json:"definition"`
+	Comment    string            `json:"comment,omitempty"`
 	Columns    map[string]Column `json:"columns,omitempty"`
 	Options    map[string]any    `json:"options,omitempty"`
 }
@@ -529,6 +531,14 @@ type Shard struct {
 	Strategy string         `json:"strategy,omitempty"`
 	Key      []string       `json:"key,omitempty"`
 	Options  map[string]any `json:"options,omitempty"`
+}
+
+// TODO: This should be refactored (currently used by Cassandra)
+type Keyspace struct {
+	Name                string            `json:"name"`
+	ReplicationStrategy string            `json:"replicationStrategy"`
+	ReplicationOptions  map[string]string `json:"replicationOptions"`
+	DurableWrites       bool              `json:"durableWrites"`
 }
 
 type Namespace struct {
@@ -710,6 +720,7 @@ type PackageBody struct {
 
 type Module struct {
 	Name     string         `json:"name"`
+	Comment  string         `json:"comment,omitempty"`
 	Language string         `json:"language,omitempty"`
 	Code     string         `json:"code,omitempty"`
 	Options  map[string]any `json:"options,omitempty"`

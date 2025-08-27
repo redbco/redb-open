@@ -6,38 +6,97 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema fetches the current schema of an Apache Iceberg catalog
-func DiscoverSchema(db interface{}) (*IcebergSchema, error) {
+// DiscoverSchema fetches the current schema of an Apache Iceberg catalog and returns a UnifiedModel
+func DiscoverSchema(db interface{}) (*unifiedmodel.UnifiedModel, error) {
 	client, ok := db.(*IcebergClient)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection type")
 	}
 
-	schema := &IcebergSchema{}
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:   dbcapabilities.Iceberg,
+		Tables:         make(map[string]unifiedmodel.Table),
+		Namespaces:     make(map[string]unifiedmodel.Namespace),
+		Views:          make(map[string]unifiedmodel.View),
+		ExternalTables: make(map[string]unifiedmodel.ExternalTable),
+		Snapshots:      make(map[string]unifiedmodel.Snapshot),
+	}
+
 	var err error
 
 	// Discover namespaces (equivalent to schemas/databases)
-	schema.Namespaces, err = discoverNamespaces(client)
+	namespaces, err := discoverNamespaces(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering namespaces: %v", err)
 	}
 
+	// Convert namespaces to unified model
+	for _, namespace := range namespaces {
+		um.Namespaces[namespace.Name] = ConvertIcebergNamespace(namespace)
+	}
+
 	// Discover tables across all namespaces
-	schema.Tables, err = discoverTables(client)
+	tables, err := discoverTables(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
 
+	// Convert tables to unified model (Iceberg tables are external tables)
+	for _, table := range tables {
+		// Create external table for Iceberg
+		um.ExternalTables[table.Name] = unifiedmodel.ExternalTable{
+			Name:     table.Name,
+			Location: table.Schema, // Use schema as location reference
+		}
+
+		// Also create regular table entry for compatibility
+		convertedTable := unifiedmodel.Table{
+			Name:        table.Name,
+			Comment:     table.Schema,
+			Columns:     make(map[string]unifiedmodel.Column),
+			Indexes:     make(map[string]unifiedmodel.Index),
+			Constraints: make(map[string]unifiedmodel.Constraint),
+		}
+
+		// Convert columns
+		for _, col := range table.Columns {
+			var defaultValue string
+			if col.ColumnDefault != nil {
+				defaultValue = *col.ColumnDefault
+			}
+			convertedTable.Columns[col.Name] = unifiedmodel.Column{
+				Name:         col.Name,
+				DataType:     col.DataType,
+				Nullable:     col.IsNullable,
+				Default:      defaultValue,
+				IsPrimaryKey: col.IsPrimaryKey,
+			}
+		}
+
+		um.Tables[table.Name] = convertedTable
+	}
+
 	// Discover views (if supported by the catalog)
-	schema.Views, err = discoverViews(client)
+	views, err := discoverViews(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering views: %v", err)
 	}
 
-	return schema, nil
+	// Convert views to unified model
+	for _, view := range views {
+		um.Views[view.Name] = unifiedmodel.View{
+			Name:       view.Name,
+			Definition: view.Definition,
+		}
+	}
+
+	return um, nil
 }
 
 // CreateStructure creates database objects based on the provided parameters

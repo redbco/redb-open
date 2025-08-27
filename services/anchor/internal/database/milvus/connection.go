@@ -128,7 +128,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches database details
-func DiscoverDetails(client *MilvusClient) (*MilvusDetails, error) {
+func DiscoverDetails(client *MilvusClient) (map[string]interface{}, error) {
 	// Get collections to determine database size
 	collections, err := listCollections(client)
 	if err != nil {
@@ -147,17 +147,18 @@ func DiscoverDetails(client *MilvusClient) (*MilvusDetails, error) {
 		totalCount += details.RowCount
 	}
 
-	return &MilvusDetails{
-		UniqueIdentifier: fmt.Sprintf("milvus_%s_%d", client.Host, client.Port),
-		DatabaseType:     "milvus",
-		DatabaseEdition:  "community",
-		Version:          "2.0.0", // Milvus doesn't expose version via API
-		DatabaseSize:     totalSize,
-		Host:             client.Host,
-		Port:             client.Port,
-		CollectionCount:  int64(len(collections)),
-		TotalVectors:     totalCount,
-	}, nil
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = fmt.Sprintf("milvus_%s_%d", client.Host, client.Port)
+	details["databaseType"] = "milvus"
+	details["databaseEdition"] = "community"
+	details["version"] = "2.0.0" // Milvus doesn't expose version via API
+	details["databaseSize"] = totalSize
+	details["host"] = client.Host
+	details["port"] = client.Port
+	details["collectionCount"] = int64(len(collections))
+	details["totalVectors"] = totalCount
+
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Milvus database

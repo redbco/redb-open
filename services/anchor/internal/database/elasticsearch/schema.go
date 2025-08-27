@@ -8,46 +8,52 @@ import (
 	"strings"
 
 	"github.com/elastic/go-elasticsearch/v8"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema fetches the current schema of an Elasticsearch cluster
-func DiscoverSchema(esClient *ElasticsearchClient) (*ElasticsearchSchema, error) {
+// DiscoverSchema fetches the current schema of an Elasticsearch cluster and returns a UnifiedModel
+func DiscoverSchema(esClient *ElasticsearchClient) (*unifiedmodel.UnifiedModel, error) {
 	client := esClient.Client
-	schema := &ElasticsearchSchema{}
+
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:  dbcapabilities.Elasticsearch,
+		SearchIndexes: make(map[string]unifiedmodel.SearchIndex),
+		Pipelines:     make(map[string]unifiedmodel.Pipeline),
+	}
+
 	var err error
 
 	// Get indices
-	schema.Indices, err = discoverIndices(client)
+	indices, err := discoverIndices(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering indices: %v", err)
 	}
 
-	// Get index templates
-	schema.Templates, err = discoverTemplates(client)
-	if err != nil {
-		return nil, fmt.Errorf("error discovering templates: %v", err)
+	// Convert indices to unified model search indexes
+	for _, index := range indices {
+		searchIndex := ConvertElasticsearchIndex(index)
+		um.SearchIndexes[index.Name] = searchIndex
 	}
 
 	// Get ingest pipelines
-	schema.Pipelines, err = discoverPipelines(client)
+	pipelines, err := discoverPipelines(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering pipelines: %v", err)
 	}
 
-	// Get aliases
-	schema.Aliases, err = discoverAliases(client)
-	if err != nil {
-		return nil, fmt.Errorf("error discovering aliases: %v", err)
+	// Convert pipelines to unified model
+	for _, pipeline := range pipelines {
+		um.Pipelines[pipeline.Name] = ConvertElasticsearchPipeline(pipeline)
 	}
 
-	// Get component templates
-	schema.Components, err = discoverComponentTemplates(client)
-	if err != nil {
-		return nil, fmt.Errorf("error discovering component templates: %v", err)
-	}
+	// Note: Templates, aliases, and components are Elasticsearch-specific
+	// and don't have direct UnifiedModel equivalents, so we skip them
+	// for now but could be added as extensions or custom metadata
 
-	return schema, nil
+	return um, nil
 }
 
 // CreateStructure creates Elasticsearch indices and other objects based on the provided parameters

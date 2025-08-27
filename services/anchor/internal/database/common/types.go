@@ -416,7 +416,8 @@ type ProcedureInfo struct {
 }
 
 type ModuleInfo struct {
-	Name string `edgedb:"name"`
+	Name        string `edgedb:"name"`
+	Description string `edgedb:"description"`
 }
 
 type TypeInfo struct {

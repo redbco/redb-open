@@ -16,6 +16,8 @@ import (
 	"github.com/redbco/redb-open/services/anchor/internal/database/clickhouse"
 	"github.com/redbco/redb-open/services/anchor/internal/database/cockroach"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/cosmosdb"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dynamodb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/edgedb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
 	"github.com/redbco/redb-open/services/anchor/internal/database/iceberg"
@@ -34,7 +36,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
-// GetDatabaseStructure returns the structure of a database
+// GetDatabaseStructure returns the structure of a database as a UnifiedModel or legacy format
 func (dm *DatabaseManager) GetDatabaseStructure(id string) (interface{}, error) {
 	dm.safeLog("info", "Getting database structure for %s", id)
 	client, err := dm.GetDatabaseClient(id)
@@ -52,58 +54,69 @@ func (dm *DatabaseManager) GetDatabaseStructure(id string) (interface{}, error) 
 		if !ok {
 			return nil, fmt.Errorf("invalid postgres connection type")
 		}
+		// PostgreSQL now returns UnifiedModel
 		return postgres.DiscoverSchema(pool)
 	case string(dbcapabilities.MySQL):
+		// MySQL now returns UnifiedModel
 		return mysql.DiscoverSchema(client.DB)
 	case string(dbcapabilities.MariaDB):
+		// MariaDB now returns UnifiedModel
 		return mariadb.DiscoverSchema(client.DB)
 	case string(dbcapabilities.CockroachDB):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return nil, fmt.Errorf("invalid cockroach connection type")
 		}
+		// CockroachDB now returns UnifiedModel
 		return cockroach.DiscoverSchema(pool)
 	case string(dbcapabilities.Redis):
 		client, ok := client.DB.(*goredis.Client)
 		if !ok {
 			return nil, fmt.Errorf("invalid redis connection type")
 		}
+		// Redis now returns UnifiedModel
 		return redis.DiscoverSchema(client)
 	case string(dbcapabilities.MongoDB):
 		db, ok := client.DB.(*mongo.Database)
 		if !ok {
 			return nil, fmt.Errorf("invalid mongodb connection type")
 		}
+		// MongoDB now returns UnifiedModel
 		return mongodb.DiscoverSchema(db)
 	case string(dbcapabilities.SQLServer):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return nil, fmt.Errorf("invalid mssql connection type")
 		}
+		// Microsoft SQL Server now returns UnifiedModel
 		return mssql.DiscoverSchema(db)
 	case string(dbcapabilities.Cassandra):
 		session, ok := client.DB.(*gocql.Session)
 		if !ok {
 			return nil, fmt.Errorf("invalid cassandra connection type")
 		}
+		// Cassandra now returns UnifiedModel
 		return cassandra.DiscoverSchema(session)
 	case string(dbcapabilities.EdgeDB):
 		gelClient, ok := client.DB.(*gel.Client)
 		if !ok {
 			return nil, fmt.Errorf("invalid edgedb connection type")
 		}
+		// EdgeDB now returns UnifiedModel
 		return edgedb.DiscoverSchema(gelClient)
 	case string(dbcapabilities.Snowflake):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return nil, fmt.Errorf("invalid snowflake connection type")
 		}
+		// Snowflake now returns UnifiedModel
 		return snowflake.DiscoverSchema(db)
 	case string(dbcapabilities.ClickHouse):
 		conn, ok := client.DB.(clickhouse.ClickhouseConn)
 		if !ok {
 			return nil, fmt.Errorf("invalid clickhouse connection type")
 		}
+		// ClickHouse now returns UnifiedModel
 		return clickhouse.DiscoverSchema(conn)
 	case string(dbcapabilities.Pinecone):
 		client, ok := client.DB.(*pinecone.PineconeClient)
@@ -128,21 +141,31 @@ func (dm *DatabaseManager) GetDatabaseStructure(id string) (interface{}, error) 
 		if !ok {
 			return nil, fmt.Errorf("invalid weaviate connection type")
 		}
+		// Weaviate now returns UnifiedModel
 		return weaviate.DiscoverSchema(client)
 	case string(dbcapabilities.Elasticsearch):
 		client, ok := client.DB.(*elasticsearch.ElasticsearchClient)
 		if !ok {
 			return nil, fmt.Errorf("invalid elasticsearch connection type")
 		}
+		// Elasticsearch now returns UnifiedModel
 		return elasticsearch.DiscoverSchema(client)
 	case string(dbcapabilities.Neo4j):
 		driver, ok := client.DB.(neo4jgo.DriverWithContext)
 		if !ok {
 			return nil, fmt.Errorf("invalid neo4j connection type")
 		}
+		// Neo4j now returns UnifiedModel
 		return neo4j.DiscoverSchema(driver)
 	case string(dbcapabilities.Iceberg):
 		return iceberg.DiscoverSchema(client.DB)
+	case string(dbcapabilities.CosmosDB):
+		// CosmosDB now returns UnifiedModel
+		return cosmosdb.DiscoverSchema(client.DB)
+	case string(dbcapabilities.DynamoDB):
+		// DynamoDB now returns UnifiedModel
+		return dynamodb.DiscoverSchema(client.DB)
+
 	//case string(dbcapabilities.DB2):
 	//	db, ok := client.DB.(*sql.DB)
 	//	if !ok {

@@ -6,55 +6,125 @@ import (
 	"strings"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema fetches the current schema of a Neo4j database
-func DiscoverSchema(driver neo4j.DriverWithContext) (*Neo4jSchema, error) {
-	schema := &Neo4jSchema{}
-	var err error
+// DiscoverSchema fetches the current schema of a Neo4j database and returns a UnifiedModel
+func DiscoverSchema(driver neo4j.DriverWithContext) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:  dbcapabilities.Neo4j,
+		Graphs:        make(map[string]unifiedmodel.Graph),
+		Nodes:         make(map[string]unifiedmodel.Node),
+		Relationships: make(map[string]unifiedmodel.Relationship),
+		Indexes:       make(map[string]unifiedmodel.Index),
+		Constraints:   make(map[string]unifiedmodel.Constraint),
+		Procedures:    make(map[string]unifiedmodel.Procedure),
+		Functions:     make(map[string]unifiedmodel.Function),
+	}
 
 	ctx := context.Background()
 	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
 
-	// Get node labels and their properties
-	schema.Labels, err = discoverLabels(ctx, session)
+	var err error
+
+	// Get node labels and their properties, convert to nodes
+	labels, err := discoverLabels(ctx, session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering labels: %v", err)
 	}
+	for _, label := range labels {
+		node := ConvertNeo4jLabelToNode(label)
+		um.Nodes[label.Name] = node
+	}
 
-	// Get relationship types and their properties
-	schema.RelationshipTypes, err = discoverRelationshipTypes(ctx, session)
+	// Get relationship types and their properties, convert to relationships
+	relationshipTypes, err := discoverRelationshipTypes(ctx, session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering relationship types: %v", err)
 	}
+	for _, relType := range relationshipTypes {
+		relationship := ConvertNeo4jRelationshipType(relType)
+		um.Relationships[relType.Name] = relationship
+	}
+
+	// Create a main graph that contains all nodes and relationships
+	mainGraph := unifiedmodel.Graph{
+		Name:        "main",
+		NodeLabels:  make(map[string]unifiedmodel.Node),
+		RelTypes:    make(map[string]unifiedmodel.Relationship),
+		Indexes:     make(map[string]unifiedmodel.Index),
+		Constraints: make(map[string]unifiedmodel.Constraint),
+	}
+
+	// Add all nodes and relationships to the main graph
+	for name, node := range um.Nodes {
+		mainGraph.NodeLabels[name] = node
+	}
+	for name, rel := range um.Relationships {
+		mainGraph.RelTypes[name] = rel
+	}
 
 	// Get constraints
-	schema.Constraints, err = discoverConstraints(ctx, session)
+	constraints, err := discoverConstraints(ctx, session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering constraints: %v", err)
 	}
+	for _, constraint := range constraints {
+		unifiedConstraint := ConvertNeo4jConstraint(constraint)
+		um.Constraints[constraint.Name] = unifiedConstraint
+		mainGraph.Constraints[constraint.Name] = unifiedConstraint
+	}
 
 	// Get indexes
-	schema.Indexes, err = discoverIndexes(ctx, session)
+	indexes, err := discoverIndexes(ctx, session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering indexes: %v", err)
 	}
+	for _, index := range indexes {
+		unifiedIndex := unifiedmodel.Index{
+			Name:    index.Name,
+			Columns: index.Columns,
+			Unique:  index.IsUnique,
+		}
+		um.Indexes[index.Name] = unifiedIndex
+		mainGraph.Indexes[index.Name] = unifiedIndex
+	}
+
+	// Add the main graph to the unified model
+	um.Graphs["main"] = mainGraph
 
 	// Get procedures
-	schema.Procedures, err = discoverProcedures(ctx, session)
+	procedures, err := discoverProcedures(ctx, session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering procedures: %v", err)
 	}
+	for _, procedure := range procedures {
+		um.Procedures[procedure.Name] = unifiedmodel.Procedure{
+			Name:       procedure.Name,
+			Language:   "cypher", // Neo4j procedures are typically written in Cypher or Java
+			Definition: procedure.Body,
+		}
+	}
 
 	// Get functions
-	schema.Functions, err = discoverFunctions(ctx, session)
+	functions, err := discoverFunctions(ctx, session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering functions: %v", err)
 	}
+	for _, function := range functions {
+		um.Functions[function.Name] = unifiedmodel.Function{
+			Name:       function.Name,
+			Language:   "cypher", // Neo4j functions are typically written in Cypher
+			Returns:    function.ReturnType,
+			Definition: function.Body,
+		}
+	}
 
-	return schema, nil
+	return um, nil
 }
 
 // CreateStructure creates database objects based on the provided parameters

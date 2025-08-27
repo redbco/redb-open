@@ -8,15 +8,22 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema fetches the current schema of a Pinecone database
-// This is a more detailed implementation than the one in connection.go
-func DiscoverSchema(client *PineconeClient) (*PineconeSchema, error) {
-	schema := &PineconeSchema{}
+// DiscoverSchema fetches the current schema of a Pinecone database and returns a UnifiedModel
+func DiscoverSchema(client *PineconeClient) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:  dbcapabilities.Pinecone,
+		VectorIndexes: make(map[string]unifiedmodel.VectorIndex),
+		Collections:   make(map[string]unifiedmodel.Collection),
+		Vectors:       make(map[string]unifiedmodel.Vector),
+		Embeddings:    make(map[string]unifiedmodel.Embedding),
+		Namespaces:    make(map[string]unifiedmodel.Namespace),
+	}
 
 	// Get indexes
 	indexNames, err := listIndexes(client)
@@ -24,7 +31,7 @@ func DiscoverSchema(client *PineconeClient) (*PineconeSchema, error) {
 		return nil, fmt.Errorf("error fetching indexes: %v", err)
 	}
 
-	// Get details for each index
+	// Get details for each index and convert to unified model
 	for _, indexName := range indexNames {
 		indexDetails, err := describeIndex(client, indexName)
 		if err != nil {
@@ -61,22 +68,35 @@ func DiscoverSchema(client *PineconeClient) (*PineconeSchema, error) {
 			MetadataConfig: indexDetails.MetadataConfig,
 		}
 
-		schema.Indexes = append(schema.Indexes, indexInfo)
+		// Convert to vector index
+		vectorIndex := ConvertPineconeIndex(indexInfo)
+		um.VectorIndexes[indexName] = vectorIndex
+
+		// Create namespaces for this index
+		for _, namespace := range indexStats.Namespaces {
+			um.Namespaces[namespace] = unifiedmodel.Namespace{
+				Name: namespace,
+			}
+		}
 	}
 
 	// Get collections (if supported by the Pinecone version)
 	collections, err := listCollections(client)
 	if err == nil {
 		for _, collName := range collections {
-			collDetails, err := describeCollection(client, collName)
+			_, err := describeCollection(client, collName)
 			if err != nil {
 				continue // Skip this collection if we can't get details
 			}
-			schema.Collections = append(schema.Collections, collDetails)
+
+			// Add collection to unified model
+			um.Collections[collName] = unifiedmodel.Collection{
+				Name: collName,
+			}
 		}
 	}
 
-	return schema, nil
+	return um, nil
 }
 
 // CreateStructure creates database objects based on the provided parameters
@@ -354,60 +374,16 @@ func configureIndex(client *PineconeClient, indexName string, pods int, replicas
 // These functions are included for compatibility with the PostgreSQL interface
 // but they're not fully implemented for Pinecone
 
-func discoverTablesAndColumns(pool *pgxpool.Pool) (map[string]*common.TableInfo, []string, error) {
-	return nil, nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func fetchPartitioningInfo(pool *pgxpool.Pool, table *common.TableInfo) error {
-	return fmt.Errorf("not implemented for Pinecone")
-}
-
-func getSchemas(pool *pgxpool.Pool) ([]common.DatabaseSchemaInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func discoverEnumTypes(pool *pgxpool.Pool) ([]common.EnumInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func getFunctions(pool *pgxpool.Pool) ([]common.FunctionInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func getTriggers(pool *pgxpool.Pool) ([]common.TriggerInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func getSequences(pool *pgxpool.Pool) ([]common.SequenceInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func getExtensions(pool *pgxpool.Pool) ([]common.ExtensionInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func CreateTable(tx pgx.Tx, tableInfo common.TableInfo, enumTypes []common.EnumInfo) error {
-	return fmt.Errorf("not implemented for Pinecone")
-}
-
-func AddTableConstraints(tx pgx.Tx, tableInfo common.TableInfo) error {
-	return fmt.Errorf("not implemented for Pinecone")
-}
-
-func createEnumType(tx pgx.Tx, enumName string, enumValues []string) error {
-	return fmt.Errorf("not implemented for Pinecone")
-}
-
-// ConvertToCommonSchema converts a PineconeSchema to a common.SchemaInfo
+// ConvertToCommonSchema converts a Pinecone UnifiedModel to a common.SchemaInfo
 // This is useful for compatibility with systems that expect the common schema format
-func ConvertToCommonSchema(pineconeSchema *PineconeSchema) *common.SchemaInfo {
+func ConvertToCommonSchema(um *unifiedmodel.UnifiedModel) *common.SchemaInfo {
 	commonSchema := &common.SchemaInfo{
 		SchemaType: "pinecone",
-		Tables:     make([]common.TableInfo, 0, len(pineconeSchema.Indexes)),
+		Tables:     make([]common.TableInfo, 0, len(um.VectorIndexes)),
 	}
 
 	// Convert indexes to tables
-	for _, index := range pineconeSchema.Indexes {
+	for _, index := range um.VectorIndexes {
 		tableInfo := common.TableInfo{
 			Name:      index.Name,
 			Schema:    "default",

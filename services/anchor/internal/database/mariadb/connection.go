@@ -137,17 +137,16 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 	}, nil
 }
 
-// DiscoverDetails retrieves details about a MariaDB database
-func DiscoverDetails(db interface{}) (*MariaDBDetails, error) {
+// DiscoverDetails retrieves basic details about a MariaDB database for metadata purposes
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	sqlDB, ok := db.(*sql.DB)
 	if !ok {
 		return nil, fmt.Errorf("invalid MariaDB connection type")
 	}
 
-	details := &MariaDBDetails{
-		UniqueIdentifier: common.GenerateUniqueID(),
-		DatabaseType:     "mariadb",
-	}
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = common.GenerateUniqueID()
+	details["databaseType"] = "mariadb"
 
 	// Get database version
 	var version string
@@ -155,8 +154,8 @@ func DiscoverDetails(db interface{}) (*MariaDBDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database version: %w", err)
 	}
-	details.Version = version
-	details.DatabaseEdition = "MariaDB"
+	details["version"] = version
+	details["databaseEdition"] = "MariaDB"
 
 	// Get database size (approximate for MariaDB)
 	var sizeBytes int64
@@ -169,7 +168,7 @@ func DiscoverDetails(db interface{}) (*MariaDBDetails, error) {
 		// If we can't get the size, set it to 0 but continue
 		sizeBytes = 0
 	}
-	details.DatabaseSize = sizeBytes
+	details["databaseSize"] = sizeBytes
 
 	return details, nil
 }

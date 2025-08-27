@@ -2,24 +2,38 @@ package chroma
 
 import (
 	chromav2 "github.com/amikos-tech/chroma-go/pkg/api/v2"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 )
 
-// ChromaDetails contains information about a Chroma vector database
-type ChromaDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	Host             string `json:"host"`
-	Port             int    `json:"port"`
-	CollectionCount  int64  `json:"collectionCount"`
-	TotalVectors     int64  `json:"totalVectors"`
+// CreateChromaUnifiedModel creates a UnifiedModel for Chroma with database details
+func CreateChromaUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:  dbcapabilities.Chroma,
+		VectorIndexes: make(map[string]unifiedmodel.VectorIndex),
+		Collections:   make(map[string]unifiedmodel.Collection),
+		Vectors:       make(map[string]unifiedmodel.Vector),
+		Embeddings:    make(map[string]unifiedmodel.Embedding),
+	}
+	return um
 }
 
-// ChromaSchema represents the schema of a Chroma vector database
-type ChromaSchema struct {
-	Collections []ChromaCollectionInfo `json:"collections"`
+// ConvertChromaCollection converts ChromaCollectionInfo to unifiedmodel.VectorIndex for Chroma
+func ConvertChromaCollection(collectionInfo ChromaCollectionInfo) unifiedmodel.VectorIndex {
+	return unifiedmodel.VectorIndex{
+		Name:      collectionInfo.Name,
+		Dimension: collectionInfo.Dimension,
+		Metric:    collectionInfo.DistanceFunction,
+	}
+}
+
+// ConvertChromaVector converts ChromaVector to unifiedmodel.Vector for Chroma
+func ConvertChromaVector(vectorInfo ChromaVector) unifiedmodel.Vector {
+	return unifiedmodel.Vector{
+		Name:      vectorInfo.ID,
+		Dimension: len(vectorInfo.Embedding),
+		Metric:    "cosine", // Default metric for Chroma
+	}
 }
 
 // ChromaCollectionInfo represents information about a Chroma collection

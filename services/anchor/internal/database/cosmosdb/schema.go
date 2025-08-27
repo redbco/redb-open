@@ -6,23 +6,27 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema discovers the database schema for CosmosDB
-func DiscoverSchema(db interface{}) (*DatabaseSchema, error) {
+// DiscoverSchema discovers the database schema for CosmosDB and returns a UnifiedModel
+func DiscoverSchema(db interface{}) (*unifiedmodel.UnifiedModel, error) {
 	client, ok := db.(*azcosmos.Client)
 	if !ok {
 		return nil, fmt.Errorf("invalid CosmosDB client type")
 	}
 
-	schema := &DatabaseSchema{
-		Containers: []common.TableInfo{},
-		EnumTypes:  []common.EnumInfo{},
-		Schemas:    []common.DatabaseSchemaInfo{},
-		Functions:  []common.FunctionInfo{},
-		Triggers:   []common.TriggerInfo{},
-		Procedures: []common.ProcedureInfo{},
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.CosmosDB,
+		Collections:  make(map[string]unifiedmodel.Collection),
+		Databases:    make(map[string]unifiedmodel.Database),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Triggers:     make(map[string]unifiedmodel.Trigger),
+		Procedures:   make(map[string]unifiedmodel.Procedure),
+		Indexes:      make(map[string]unifiedmodel.Index),
 	}
 
 	// List all databases
@@ -36,6 +40,11 @@ func DiscoverSchema(db interface{}) (*DatabaseSchema, error) {
 		}
 
 		for _, dbItem := range response.Databases {
+			// Add database to unified model
+			um.Databases[dbItem.ID] = unifiedmodel.Database{
+				Name: dbItem.ID,
+			}
+
 			// For each database, get its containers
 			database, err := client.NewDatabase(dbItem.ID)
 			if err != nil {
@@ -50,33 +59,33 @@ func DiscoverSchema(db interface{}) (*DatabaseSchema, error) {
 				}
 
 				for _, containerItem := range containerResponse.Containers {
-					// Create a TableInfo for each container
-					tableInfo := common.TableInfo{
-						Schema:      dbItem.ID, // Use database name as schema
-						Name:        containerItem.ID,
-						TableType:   "container", // CosmosDB containers
-						Columns:     []common.ColumnInfo{},
-						PrimaryKey:  []string{"id"}, // CosmosDB always has 'id' as primary key
-						Indexes:     []common.IndexInfo{},
-						Constraints: []common.Constraint{},
+					// Create a collection for each container
+					collection := unifiedmodel.Collection{
+						Name:    containerItem.ID,
+						Owner:   dbItem.ID, // Store database name in owner
+						Fields:  make(map[string]unifiedmodel.Field),
+						Indexes: make(map[string]unifiedmodel.Index),
 					}
 
-					// Add basic columns that all CosmosDB documents have
-					tableInfo.Columns = append(tableInfo.Columns, common.ColumnInfo{
-						Name:         "id",
-						DataType:     "string",
-						IsNullable:   false,
-						IsPrimaryKey: true,
-						IsUnique:     true,
-					})
+					// Add basic fields that all CosmosDB documents have
+					collection.Fields["id"] = unifiedmodel.Field{
+						Name: "id",
+						Type: "string",
+					}
 
-					schema.Containers = append(schema.Containers, tableInfo)
+					// Add partition key field if available
+					collection.Fields["_partitionKey"] = unifiedmodel.Field{
+						Name: "_partitionKey",
+						Type: "string",
+					}
+
+					um.Collections[containerItem.ID] = collection
 				}
 			}
 		}
 	}
 
-	return schema, nil
+	return um, nil
 }
 
 // CreateStructure creates database structures based on parameters
@@ -137,7 +146,7 @@ func CreateStructure(db interface{}, params common.StructureParams) error {
 }
 
 // DiscoverDetails fetches database details
-func DiscoverDetails(db interface{}) (*CosmosDBDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	_, ok := db.(*azcosmos.Client)
 	if !ok {
 		return nil, fmt.Errorf("invalid CosmosDB client type")
@@ -145,17 +154,16 @@ func DiscoverDetails(db interface{}) (*CosmosDBDetails, error) {
 
 	// Note: CosmosDB client doesn't provide direct access to account-level details
 	// In a real implementation, you would need additional Azure SDK clients
-	details := &CosmosDBDetails{
-		UniqueIdentifier: "cosmosdb-account",
-		DatabaseType:     "cosmosdb",
-		DatabaseEdition:  "Azure Cosmos DB",
-		Version:          "latest",
-		DatabaseSize:     0,         // Would need to calculate from all containers
-		AccountName:      "unknown", // Would need to be extracted from config
-		Region:           "unknown", // Would need to be extracted from config
-		ConsistencyLevel: "Session", // Default CosmosDB consistency level
-		API:              "SQL",     // Assuming SQL API
-	}
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = "cosmosdb-account"
+	details["databaseType"] = "cosmosdb"
+	details["databaseEdition"] = "Azure Cosmos DB"
+	details["version"] = "latest"
+	details["databaseSize"] = int64(0)      // Would need to calculate from all containers
+	details["accountName"] = "unknown"      // Would need to be extracted from config
+	details["region"] = "unknown"           // Would need to be extracted from config
+	details["consistencyLevel"] = "Session" // Default CosmosDB consistency level
+	details["api"] = "SQL"                  // Assuming SQL API
 
 	return details, nil
 }

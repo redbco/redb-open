@@ -8,30 +8,46 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema discovers the Milvus database schema
-func DiscoverSchema(client *MilvusClient) (*MilvusSchema, error) {
+// DiscoverSchema discovers the Milvus database schema and returns a UnifiedModel
+func DiscoverSchema(client *MilvusClient) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:  dbcapabilities.Milvus,
+		VectorIndexes: make(map[string]unifiedmodel.VectorIndex),
+		Collections:   make(map[string]unifiedmodel.Collection),
+		Vectors:       make(map[string]unifiedmodel.Vector),
+		Embeddings:    make(map[string]unifiedmodel.Embedding),
+	}
+
 	// Get all collections
 	collections, err := listCollections(client)
 	if err != nil {
 		return nil, fmt.Errorf("error listing collections: %v", err)
 	}
 
-	// Get details for each collection
-	collectionDetails := make([]MilvusCollectionInfo, 0, len(collections))
+	// Get details for each collection and convert to unified model
 	for _, collectionName := range collections {
 		details, err := describeCollection(client, collectionName)
 		if err != nil {
 			continue // Skip collections we can't describe
 		}
-		collectionDetails = append(collectionDetails, *details)
+
+		// Convert to vector index
+		vectorIndex := ConvertMilvusCollection(*details)
+		um.VectorIndexes[details.Name] = vectorIndex
+
+		// Also create a collection entry for compatibility
+		um.Collections[details.Name] = unifiedmodel.Collection{
+			Name: details.Name,
+		}
 	}
 
-	return &MilvusSchema{
-		Collections: collectionDetails,
-	}, nil
+	return um, nil
 }
 
 // CreateStructure creates database structures based on parameters

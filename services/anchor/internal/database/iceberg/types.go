@@ -3,28 +3,57 @@ package iceberg
 import (
 	"fmt"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// IcebergDetails contains information about an Apache Iceberg catalog/warehouse
-type IcebergDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	CatalogName      string `json:"catalogName"`
-	WarehousePath    string `json:"warehousePath"`
-	CatalogType      string `json:"catalogType"`    // REST, Hive, Hadoop, etc.
-	StorageBackend   string `json:"storageBackend"` // S3, HDFS, Azure, GCS, etc.
-	TableCount       int64  `json:"tableCount"`
-	TotalDataSize    int64  `json:"totalDataSize"`
+// CreateIcebergUnifiedModel creates a UnifiedModel for Iceberg with database details
+func CreateIcebergUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:   dbcapabilities.Iceberg,
+		Tables:         make(map[string]unifiedmodel.Table),
+		Namespaces:     make(map[string]unifiedmodel.Namespace),
+		Views:          make(map[string]unifiedmodel.View),
+		ExternalTables: make(map[string]unifiedmodel.ExternalTable),
+		Snapshots:      make(map[string]unifiedmodel.Snapshot),
+	}
+	return um
 }
 
-// IcebergSchema represents the schema structure of an Iceberg catalog
-type IcebergSchema struct {
-	Tables     []common.TableInfo     `json:"tables"`
-	Namespaces []IcebergNamespaceInfo `json:"namespaces"`
-	Views      []common.ViewInfo      `json:"views"`
+// ConvertIcebergTable converts IcebergTableInfo to unifiedmodel.Table for Iceberg
+func ConvertIcebergTable(tableInfo IcebergTableInfo) unifiedmodel.Table {
+	table := unifiedmodel.Table{
+		Name:        tableInfo.Name,
+		Comment:     tableInfo.Location, // Store location as comment for reference
+		Columns:     make(map[string]unifiedmodel.Column),
+		Indexes:     make(map[string]unifiedmodel.Index),
+		Constraints: make(map[string]unifiedmodel.Constraint),
+	}
+
+	// Convert columns
+	for _, col := range tableInfo.Columns {
+		var defaultValue string
+		if col.ColumnDefault != nil {
+			defaultValue = *col.ColumnDefault
+		}
+		table.Columns[col.Name] = unifiedmodel.Column{
+			Name:         col.Name,
+			DataType:     col.DataType,
+			Nullable:     col.IsNullable,
+			Default:      defaultValue,
+			IsPrimaryKey: col.IsPrimaryKey,
+		}
+	}
+
+	return table
+}
+
+// ConvertIcebergNamespace converts IcebergNamespaceInfo to unifiedmodel.Namespace for Iceberg
+func ConvertIcebergNamespace(namespaceInfo IcebergNamespaceInfo) unifiedmodel.Namespace {
+	return unifiedmodel.Namespace{
+		Name: namespaceInfo.Name,
+	}
 }
 
 // IcebergNamespaceInfo represents an Iceberg namespace (similar to schema)
@@ -176,7 +205,7 @@ func (i *IcebergReplicationSourceDetails) GetStatus() map[string]interface{} {
 
 func (i *IcebergReplicationSourceDetails) Start() error {
 	// Iceberg doesn't support traditional CDC
-	return fmt.Errorf("Apache Iceberg doesn't support traditional Change Data Capture (CDC)")
+	return fmt.Errorf("apache iceberg doesn't support traditional Change Data Capture (CDC)")
 }
 
 func (i *IcebergReplicationSourceDetails) Stop() error {

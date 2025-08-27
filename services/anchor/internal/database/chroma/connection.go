@@ -214,7 +214,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches database details
-func DiscoverDetails(client *ChromaClient) (*ChromaDetails, error) {
+func DiscoverDetails(client *ChromaClient) (map[string]interface{}, error) {
 	// Get collections to determine database size
 	collections, err := listCollections(client)
 	if err != nil {
@@ -233,17 +233,18 @@ func DiscoverDetails(client *ChromaClient) (*ChromaDetails, error) {
 		totalCount += details.Count
 	}
 
-	return &ChromaDetails{
-		UniqueIdentifier: fmt.Sprintf("chroma_%s_%d", client.Host, client.Port),
-		DatabaseType:     "chroma",
-		DatabaseEdition:  "community",
-		Version:          "1.0.0", // Chroma doesn't expose version via API
-		DatabaseSize:     totalSize,
-		Host:             client.Host,
-		Port:             client.Port,
-		CollectionCount:  int64(len(collections)),
-		TotalVectors:     totalCount,
-	}, nil
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = fmt.Sprintf("chroma_%s_%d", client.Host, client.Port)
+	details["databaseType"] = "chroma"
+	details["databaseEdition"] = "community"
+	details["version"] = "1.0.0" // Chroma doesn't expose version via API
+	details["databaseSize"] = totalSize
+	details["host"] = client.Host
+	details["port"] = client.Port
+	details["collectionCount"] = int64(len(collections))
+	details["totalVectors"] = totalCount
+
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Chroma database

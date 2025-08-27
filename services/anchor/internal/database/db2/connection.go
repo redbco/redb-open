@@ -133,14 +133,14 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of an IBM Db2 database
-func DiscoverDetails(db interface{}) (*Db2Details, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	sqlDB, ok := db.(*sql.DB)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details Db2Details
-	details.DatabaseType = "db2"
+	details := make(map[string]interface{})
+	details["databaseType"] = "db2"
 
 	// Get server version
 	var version string
@@ -148,7 +148,7 @@ func DiscoverDetails(db interface{}) (*Db2Details, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching version: %v", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Get database size (in bytes)
 	var size int64
@@ -158,7 +158,7 @@ func DiscoverDetails(db interface{}) (*Db2Details, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database size: %v", err)
 	}
-	details.DatabaseSize = size
+	details["databaseSize"] = size
 
 	// Get unique identifier (database name + instance name)
 	var dbName, instanceName string
@@ -166,7 +166,7 @@ func DiscoverDetails(db interface{}) (*Db2Details, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database identifier: %v", err)
 	}
-	details.UniqueIdentifier = fmt.Sprintf("%s_%s", instanceName, dbName)
+	details["uniqueIdentifier"] = fmt.Sprintf("%s_%s", instanceName, dbName)
 
 	// Get database edition
 	var productName string
@@ -176,16 +176,16 @@ func DiscoverDetails(db interface{}) (*Db2Details, error) {
 	}
 
 	if strings.Contains(strings.ToLower(productName), "enterprise") {
-		details.DatabaseEdition = "enterprise"
+		details["databaseEdition"] = "enterprise"
 	} else if strings.Contains(strings.ToLower(productName), "advanced") {
-		details.DatabaseEdition = "advanced"
+		details["databaseEdition"] = "advanced"
 	} else if strings.Contains(strings.ToLower(productName), "standard") {
-		details.DatabaseEdition = "standard"
+		details["databaseEdition"] = "standard"
 	} else {
-		details.DatabaseEdition = "community"
+		details["databaseEdition"] = "community"
 	}
 
-	return &details, nil
+	return details, nil
 }
 
 func getSslMode(config common.DatabaseConfig) string {

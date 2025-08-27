@@ -5,42 +5,77 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
-// DiscoverSchema fetches the current schema of a MongoDB database
-func DiscoverSchema(db *mongo.Database) (*MongoDBSchema, error) {
-	schema := &MongoDBSchema{}
+// DiscoverSchema fetches the current schema of a MongoDB database and returns a UnifiedModel
+func DiscoverSchema(db *mongo.Database) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.MongoDB,
+		Collections:  make(map[string]unifiedmodel.Collection),
+		Indexes:      make(map[string]unifiedmodel.Index),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Databases:    make(map[string]unifiedmodel.Database),
+	}
+
 	var err error
 
-	// Get collections
-	schema.Collections, err = discoverCollections(db)
+	// Get collections and convert to unified model format
+	collections, err := discoverCollections(db)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering collections: %v", err)
 	}
+	for _, collection := range collections {
+		unifiedCollection := ConvertMongoDBCollectionToUnified(collection)
+		um.Collections[collection.Name] = unifiedCollection
+	}
 
-	// Get indexes
-	schema.Indexes, err = discoverIndexes(db)
+	// Get indexes (global indexes across collections)
+	indexes, err := discoverIndexes(db)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering indexes: %v", err)
 	}
+	for _, index := range indexes {
+		um.Indexes[index.Name] = unifiedmodel.Index{
+			Name:    index.Name,
+			Columns: index.Columns,
+			Unique:  index.IsUnique,
+		}
+	}
 
-	// Get functions (stored JavaScript)
-	schema.Functions, err = discoverFunctions(db)
+	// Get functions (stored JavaScript functions)
+	functions, err := discoverFunctions(db)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering functions: %v", err)
 	}
+	for _, function := range functions {
+		um.Functions[function.Name] = unifiedmodel.Function{
+			Name:       function.Name,
+			Language:   "javascript", // MongoDB uses JavaScript for stored functions
+			Returns:    function.ReturnType,
+			Definition: function.Body,
+		}
+	}
 
 	// MongoDB doesn't have traditional schemas, but we can include database info
-	schema.Schemas, err = getSchemas(db)
+	schemas, err := getSchemas(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting schemas: %v", err)
 	}
+	for _, schema := range schemas {
+		um.Databases[schema.Name] = unifiedmodel.Database{
+			Name:    schema.Name,
+			Comment: schema.Description,
+		}
+	}
 
-	return schema, nil
+	return um, nil
 }
 
 // discoverCollections fetches all collections in the database with their details

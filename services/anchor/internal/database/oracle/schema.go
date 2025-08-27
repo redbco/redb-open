@@ -9,12 +9,27 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema fetches the current schema of an Oracle database
-func DiscoverSchema(db *sql.DB) (*OracleSchema, error) {
-	schema := &OracleSchema{}
+// DiscoverSchema fetches the current schema of an Oracle database and returns a UnifiedModel
+func DiscoverSchema(db *sql.DB) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.Oracle,
+		Tables:       make(map[string]unifiedmodel.Table),
+		Schemas:      make(map[string]unifiedmodel.Schema),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Procedures:   make(map[string]unifiedmodel.Procedure),
+		Triggers:     make(map[string]unifiedmodel.Trigger),
+		Sequences:    make(map[string]unifiedmodel.Sequence),
+		Types:        make(map[string]unifiedmodel.Type),
+		Packages:     make(map[string]unifiedmodel.Package),
+		Indexes:      make(map[string]unifiedmodel.Index),
+	}
+
 	var err error
 
 	// Get tables and their columns
@@ -23,56 +38,115 @@ func DiscoverSchema(db *sql.DB) (*OracleSchema, error) {
 		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
 
-	// Convert map to slice
-	tables := make([]common.TableInfo, 0, len(tablesMap))
+	// Convert tables to unified model
 	for _, table := range tablesMap {
-		tables = append(tables, *table)
+		convertedTable := ConvertOracleTable(*table)
+		um.Tables[table.Name] = convertedTable
 	}
-	schema.Tables = tables
 
 	// Get user-defined types
-	schema.Types, err = discoverTypes(db)
+	types, err := discoverTypes(db)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering types: %v", err)
 	}
 
+	// Convert types to unified model
+	for _, typeInfo := range types {
+		um.Types[typeInfo.Name] = unifiedmodel.Type{
+			Name:     typeInfo.Name,
+			Category: "user-defined",
+		}
+	}
+
 	// Get schemas (users in Oracle)
-	schema.Schemas, err = getSchemas(db)
+	schemas, err := getSchemas(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting schemas: %v", err)
 	}
 
+	// Convert schemas to unified model
+	for _, schema := range schemas {
+		um.Schemas[schema.Name] = unifiedmodel.Schema{
+			Name:    schema.Name,
+			Comment: schema.Description,
+		}
+	}
+
 	// Get functions
-	schema.Functions, err = getFunctions(db)
+	functions, err := getFunctions(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting functions: %v", err)
 	}
 
+	// Convert functions to unified model
+	for _, function := range functions {
+		um.Functions[function.Name] = unifiedmodel.Function{
+			Name:       function.Name,
+			Language:   "plsql", // Oracle functions are PL/SQL-based
+			Definition: function.Body,
+			Returns:    function.ReturnType,
+		}
+	}
+
 	// Get procedures
-	schema.Procedures, err = getProcedures(db)
+	procedures, err := getProcedures(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting procedures: %v", err)
 	}
 
+	// Convert procedures to unified model
+	for _, procedure := range procedures {
+		um.Procedures[procedure.Name] = unifiedmodel.Procedure{
+			Name:       procedure.Name,
+			Language:   "plsql", // Oracle procedures are PL/SQL-based
+			Definition: procedure.Body,
+		}
+	}
+
 	// Get triggers
-	schema.Triggers, err = getTriggers(db)
+	triggers, err := getTriggers(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting triggers: %v", err)
 	}
 
+	// Convert triggers to unified model
+	for _, trigger := range triggers {
+		um.Triggers[trigger.Name] = unifiedmodel.Trigger{
+			Name:      trigger.Name,
+			Table:     trigger.Table,
+			Procedure: trigger.Statement, // Store trigger statement as procedure
+		}
+	}
+
 	// Get sequences
-	schema.Sequences, err = getSequences(db)
+	sequences, err := getSequences(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting sequences: %v", err)
 	}
 
+	// Convert sequences to unified model
+	for _, sequence := range sequences {
+		um.Sequences[sequence.Name] = unifiedmodel.Sequence{
+			Name:      sequence.Name,
+			Start:     sequence.Start,
+			Increment: sequence.Increment,
+		}
+	}
+
 	// Get packages
-	schema.Packages, err = getPackages(db)
+	packages, err := getPackages(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting packages: %v", err)
 	}
 
-	return schema, nil
+	// Convert packages to unified model
+	for _, pkg := range packages {
+		um.Packages[pkg.Name] = unifiedmodel.Package{
+			Name: pkg.Name,
+		}
+	}
+
+	return um, nil
 }
 
 // CreateStructure creates database objects based on the provided parameters

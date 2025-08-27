@@ -166,7 +166,7 @@ func buildAWSConfig(cfg common.DatabaseConfig, secretKey string) (aws.Config, er
 }
 
 // DiscoverDetails fetches database details
-func DiscoverDetails(db interface{}) (*DynamoDBDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	client, ok := db.(*dynamodb.Client)
 	if !ok {
 		return nil, fmt.Errorf("invalid DynamoDB client type")
@@ -196,15 +196,14 @@ func DiscoverDetails(db interface{}) (*DynamoDBDetails, error) {
 		}
 	}
 
-	details := &DynamoDBDetails{
-		UniqueIdentifier: "dynamodb-instance", // DynamoDB doesn't have unique instance IDs
-		DatabaseType:     "dynamodb",
-		DatabaseEdition:  "AWS DynamoDB",
-		Version:          "latest", // DynamoDB is always latest version
-		DatabaseSize:     totalSize,
-		Region:           "unknown", // Would need to be extracted from config
-		BillingMode:      "unknown", // Would need to check each table
-	}
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = "dynamodb-instance" // DynamoDB doesn't have unique instance IDs
+	details["databaseType"] = "dynamodb"
+	details["databaseEdition"] = "AWS DynamoDB"
+	details["version"] = "latest" // DynamoDB is always latest version
+	details["databaseSize"] = totalSize
+	details["region"] = "unknown"      // Would need to be extracted from config
+	details["billingMode"] = "unknown" // Would need to check each table
 
 	return details, nil
 }

@@ -1,21 +1,49 @@
 package milvus
 
-// MilvusDetails contains information about a Milvus vector database
-type MilvusDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	Host             string `json:"host"`
-	Port             int    `json:"port"`
-	CollectionCount  int64  `json:"collectionCount"`
-	TotalVectors     int64  `json:"totalVectors"`
+import (
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
+)
+
+// CreateMilvusUnifiedModel creates a UnifiedModel for Milvus with database details
+func CreateMilvusUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:  dbcapabilities.Milvus,
+		VectorIndexes: make(map[string]unifiedmodel.VectorIndex),
+		Collections:   make(map[string]unifiedmodel.Collection),
+		Vectors:       make(map[string]unifiedmodel.Vector),
+		Embeddings:    make(map[string]unifiedmodel.Embedding),
+	}
+	return um
 }
 
-// MilvusSchema represents the schema of a Milvus vector database
-type MilvusSchema struct {
-	Collections []MilvusCollectionInfo `json:"collections"`
+// ConvertMilvusCollection converts MilvusCollectionInfo to unifiedmodel.VectorIndex for Milvus
+func ConvertMilvusCollection(collectionInfo MilvusCollectionInfo) unifiedmodel.VectorIndex {
+	// Find vector field to get dimensions
+	var dimensions int
+	for _, field := range collectionInfo.Schema.Fields {
+		if field.Type == "FloatVector" || field.Type == "BinaryVector" {
+			if dim, ok := field.Params["dim"].(float64); ok {
+				dimensions = int(dim)
+			}
+			break
+		}
+	}
+
+	return unifiedmodel.VectorIndex{
+		Name:      collectionInfo.Name,
+		Dimension: dimensions,
+		Metric:    "L2", // Default metric for Milvus
+	}
+}
+
+// ConvertMilvusVector converts MilvusVector to unifiedmodel.Vector for Milvus
+func ConvertMilvusVector(vectorInfo MilvusVector) unifiedmodel.Vector {
+	return unifiedmodel.Vector{
+		Name:      vectorInfo.ID,
+		Dimension: len(vectorInfo.Vector),
+		Metric:    "L2", // Default metric for Milvus
+	}
 }
 
 // MilvusCollectionInfo represents information about a Milvus collection

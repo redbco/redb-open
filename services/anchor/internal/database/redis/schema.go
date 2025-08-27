@@ -7,49 +7,80 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 	"github.com/redis/go-redis/v9"
 )
 
-// DiscoverSchema fetches the current schema of a Redis database
-func DiscoverSchema(client *redis.Client) (*RedisSchema, error) {
+// DiscoverSchema fetches the current schema of a Redis database and returns a UnifiedModel
+func DiscoverSchema(client *redis.Client) (*unifiedmodel.UnifiedModel, error) {
 	ctx := context.Background()
-	schema := &RedisSchema{}
-	var err error
 
-	// Get all keys
-	schema.Keys, err = discoverKeys(ctx, client)
-	if err != nil {
-		return nil, fmt.Errorf("error discovering keys: %v", err)
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.Redis,
+		Modules:      make(map[string]unifiedmodel.Module),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Streams:      make(map[string]unifiedmodel.Stream),
+		Namespaces:   make(map[string]unifiedmodel.Namespace),
+		Extensions:   make(map[string]unifiedmodel.Extension),
 	}
 
+	var err error
+
 	// Get loaded modules
-	schema.Modules, err = discoverModules(ctx, client)
+	modules, err := discoverModules(ctx, client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering modules: %v", err)
 	}
 
+	// Convert modules to unified model
+	for _, module := range modules {
+		um.Modules[module.Name] = ConvertRedisModule(module)
+	}
+
 	// Get Redis functions (Redis 7.0+)
-	schema.Functions, err = discoverFunctions(ctx, client)
+	functions, err := discoverFunctions(ctx, client)
 	if err != nil {
 		// Functions might not be available in older Redis versions
 		// Just log the error and continue
 		fmt.Printf("Warning: Could not discover Redis functions: %v\n", err)
+	} else {
+		// Convert functions to unified model
+		for _, function := range functions {
+			um.Functions[function.Name] = unifiedmodel.Function{
+				Name:       function.Name,
+				Language:   "lua", // Redis functions are typically Lua-based
+				Definition: function.Body,
+			}
+		}
 	}
 
 	// Get Redis streams
-	schema.Streams, err = discoverStreams(ctx, client)
+	streams, err := discoverStreams(ctx, client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering streams: %v", err)
 	}
 
+	// Convert streams to unified model
+	for _, stream := range streams {
+		um.Streams[stream.Name] = ConvertRedisStream(stream)
+	}
+
 	// Get keyspace info
-	schema.KeySpaces, err = discoverKeySpaces(ctx, client)
+	keySpaces, err := discoverKeySpaces(ctx, client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering keyspaces: %v", err)
 	}
 
-	return schema, nil
+	// Convert keyspaces to unified model as namespaces
+	for _, keySpace := range keySpaces {
+		namespace := ConvertRedisKeySpace(keySpace)
+		um.Namespaces[namespace.Name] = namespace
+	}
+
+	return um, nil
 }
 
 // discoverKeys fetches information about Redis keys

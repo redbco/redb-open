@@ -191,14 +191,14 @@ func testConnection(ctx context.Context, conn chdriver.Conn) error {
 }
 
 // DiscoverDetails fetches the details of a Clickhouse database
-func DiscoverDetails(db interface{}) (*ClickhouseDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	conn, ok := db.(chdriver.Conn)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details ClickhouseDetails
-	details.DatabaseType = "clickhouse"
+	details := make(map[string]interface{})
+	details["databaseType"] = "clickhouse"
 
 	// Get server version
 	var version string
@@ -206,7 +206,7 @@ func DiscoverDetails(db interface{}) (*ClickhouseDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching version: %v", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Get database size (approximate)
 	var size int64
@@ -218,7 +218,7 @@ func DiscoverDetails(db interface{}) (*ClickhouseDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database size: %v", err)
 	}
-	details.DatabaseSize = size
+	details["databaseSize"] = size
 
 	// Get unique identifier (using database name and host as there's no direct equivalent to PostgreSQL's OID)
 	var dbName, hostName string
@@ -226,16 +226,16 @@ func DiscoverDetails(db interface{}) (*ClickhouseDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database identifier: %v", err)
 	}
-	details.UniqueIdentifier = fmt.Sprintf("%s_%s", hostName, dbName)
+	details["uniqueIdentifier"] = fmt.Sprintf("%s_%s", hostName, dbName)
 
 	// Determine edition
 	if strings.Contains(strings.ToLower(version), "enterprise") {
-		details.DatabaseEdition = "enterprise"
+		details["databaseEdition"] = "enterprise"
 	} else {
-		details.DatabaseEdition = "community"
+		details["databaseEdition"] = "community"
 	}
 
-	return &details, nil
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Clickhouse database

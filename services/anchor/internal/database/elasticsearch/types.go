@@ -2,6 +2,8 @@ package elasticsearch
 
 import (
 	"github.com/elastic/go-elasticsearch/v8"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
@@ -18,25 +20,46 @@ func (c *ElasticsearchClient) Close() {
 	c.IsConnected = 0
 }
 
-// ElasticsearchDetails contains information about an Elasticsearch cluster
-type ElasticsearchDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	ClusterName      string `json:"clusterName"`
-	ClusterHealth    string `json:"clusterHealth"`
-	NumberOfNodes    int    `json:"numberOfNodes"`
+// CreateElasticsearchUnifiedModel creates a UnifiedModel for Elasticsearch with database details
+func CreateElasticsearchUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:  dbcapabilities.Elasticsearch,
+		SearchIndexes: make(map[string]unifiedmodel.SearchIndex),
+		Pipelines:     make(map[string]unifiedmodel.Pipeline),
+	}
+	return um
 }
 
-// ElasticsearchSchema represents the schema of an Elasticsearch cluster
-type ElasticsearchSchema struct {
-	Indices    []common.TableInfo `json:"indices"` // Using TableInfo to represent indices
-	Templates  []TemplateInfo     `json:"templates"`
-	Pipelines  []PipelineInfo     `json:"pipelines"`
-	Aliases    []AliasInfo        `json:"aliases"`
-	Components []ComponentInfo    `json:"components"`
+// ConvertElasticsearchIndex converts common.TableInfo to unifiedmodel.SearchIndex for Elasticsearch
+func ConvertElasticsearchIndex(indexInfo common.TableInfo) unifiedmodel.SearchIndex {
+	searchIndex := unifiedmodel.SearchIndex{
+		Name:   indexInfo.Name,
+		Fields: make([]string, 0, len(indexInfo.Columns)),
+	}
+
+	// Convert columns to field names (Elasticsearch uses flexible schema)
+	for _, col := range indexInfo.Columns {
+		searchIndex.Fields = append(searchIndex.Fields, col.Name)
+	}
+
+	return searchIndex
+}
+
+// ConvertElasticsearchPipeline converts PipelineInfo to unifiedmodel.Pipeline for Elasticsearch
+func ConvertElasticsearchPipeline(pipelineInfo PipelineInfo) unifiedmodel.Pipeline {
+	// Convert processor names to steps
+	steps := make([]string, 0, len(pipelineInfo.Processors))
+	for _, processor := range pipelineInfo.Processors {
+		// Extract processor type names from the processor map
+		for processorType := range processor {
+			steps = append(steps, processorType)
+		}
+	}
+
+	return unifiedmodel.Pipeline{
+		Name:  pipelineInfo.Name,
+		Steps: steps,
+	}
 }
 
 // TemplateInfo represents an Elasticsearch index template

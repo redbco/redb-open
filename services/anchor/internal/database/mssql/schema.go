@@ -6,12 +6,26 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema fetches the current schema of a Microsoft SQL Server database
-func DiscoverSchema(db *sql.DB) (*MSSQLSchema, error) {
-	schema := &MSSQLSchema{}
+// DiscoverSchema fetches the current schema of a Microsoft SQL Server database and returns a UnifiedModel
+func DiscoverSchema(db *sql.DB) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.SQLServer,
+		Tables:       make(map[string]unifiedmodel.Table),
+		Schemas:      make(map[string]unifiedmodel.Schema),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Triggers:     make(map[string]unifiedmodel.Trigger),
+		Procedures:   make(map[string]unifiedmodel.Procedure),
+		Views:        make(map[string]unifiedmodel.View),
+		Sequences:    make(map[string]unifiedmodel.Sequence),
+		Indexes:      make(map[string]unifiedmodel.Index),
+	}
+
 	var err error
 
 	// Get tables and their columns
@@ -20,50 +34,102 @@ func DiscoverSchema(db *sql.DB) (*MSSQLSchema, error) {
 		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
 
-	// Convert map to slice
-	tables := make([]common.TableInfo, 0, len(tablesMap))
+	// Convert tables to unified model
 	for _, table := range tablesMap {
-		tables = append(tables, *table)
+		unifiedTable := ConvertMSSQLTable(*table)
+		um.Tables[table.Name] = unifiedTable
 	}
-	schema.Tables = tables
 
 	// Get schemas
-	schema.Schemas, err = getSchemas(db)
+	schemas, err := getSchemas(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting schemas: %v", err)
 	}
 
+	// Convert schemas to unified model
+	for _, schema := range schemas {
+		um.Schemas[schema.Name] = unifiedmodel.Schema{
+			Name:    schema.Name,
+			Comment: schema.Description,
+		}
+	}
+
 	// Get functions
-	schema.Functions, err = getFunctions(db)
+	functions, err := getFunctions(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting functions: %v", err)
 	}
 
+	// Convert functions to unified model
+	for _, function := range functions {
+		um.Functions[function.Name] = unifiedmodel.Function{
+			Name:       function.Name,
+			Language:   "sql", // MSSQL functions are SQL-based
+			Definition: function.Body,
+			Returns:    function.ReturnType,
+		}
+	}
+
 	// Get triggers
-	schema.Triggers, err = getTriggers(db)
+	triggers, err := getTriggers(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting triggers: %v", err)
 	}
 
+	// Convert triggers to unified model
+	for _, trigger := range triggers {
+		um.Triggers[trigger.Name] = unifiedmodel.Trigger{
+			Name:      trigger.Name,
+			Table:     trigger.Table,
+			Procedure: trigger.Statement, // Store trigger statement as procedure
+		}
+	}
+
 	// Get procedures
-	schema.Procedures, err = getProcedures(db)
+	procedures, err := getProcedures(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting procedures: %v", err)
 	}
 
+	// Convert procedures to unified model
+	for _, procedure := range procedures {
+		um.Procedures[procedure.Name] = unifiedmodel.Procedure{
+			Name:       procedure.Name,
+			Language:   "sql", // MSSQL procedures are SQL-based
+			Definition: procedure.Body,
+		}
+	}
+
 	// Get views
-	schema.Views, err = getViews(db)
+	views, err := getViews(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting views: %v", err)
 	}
 
+	// Convert views to unified model
+	for _, view := range views {
+		um.Views[view.Name] = unifiedmodel.View{
+			Name:       view.Name,
+			Definition: view.Definition,
+		}
+	}
+
 	// Get sequences
-	schema.Sequences, err = getSequences(db)
+	sequences, err := getSequences(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting sequences: %v", err)
 	}
 
-	return schema, nil
+	// Convert sequences to unified model
+	for _, sequence := range sequences {
+		um.Sequences[sequence.Name] = unifiedmodel.Sequence{
+			Name:      sequence.Name,
+			Start:     sequence.Start,
+			Increment: sequence.Increment,
+		}
+	}
+
+	return um, nil
 }
 
 // CreateStructure creates database objects based on the provided parameters

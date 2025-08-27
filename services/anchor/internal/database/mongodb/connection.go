@@ -161,15 +161,15 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 	}, nil
 }
 
-// DiscoverDetails fetches the details of a MongoDB database
-func DiscoverDetails(db interface{}) (*MongoDBDetails, error) {
+// DiscoverDetails fetches basic details of a MongoDB database for metadata purposes
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	database, ok := db.(*mongo.Database)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details MongoDBDetails
-	details.DatabaseType = "mongodb"
+	details := make(map[string]interface{})
+	details["databaseType"] = "mongodb"
 
 	// Get server version and build info
 	ctx := context.Background()
@@ -183,23 +183,22 @@ func DiscoverDetails(db interface{}) (*MongoDBDetails, error) {
 
 	// Extract version
 	if version, ok := buildInfoDoc["version"].(string); ok {
-		details.Version = version
+		details["version"] = version
 	} else {
 		return nil, fmt.Errorf("error extracting version: version field not found or not a string")
 	}
 
 	// Determine edition
+	databaseEdition := "community"
 	if modules, ok := buildInfoDoc["modules"].(bson.A); ok {
 		for _, module := range modules {
 			if moduleStr, ok := module.(string); ok && moduleStr == "enterprise" {
-				details.DatabaseEdition = "enterprise"
+				databaseEdition = "enterprise"
 				break
 			}
 		}
 	}
-	if details.DatabaseEdition == "" {
-		details.DatabaseEdition = "community"
-	}
+	details["databaseEdition"] = databaseEdition
 
 	// Get database stats
 	statsCmd := bson.D{{Key: "dbStats", Value: 1}}
@@ -210,19 +209,21 @@ func DiscoverDetails(db interface{}) (*MongoDBDetails, error) {
 	}
 
 	// Extract database size
+	var databaseSize int64
 	if dataSize, ok := statsDoc["dataSize"]; ok {
 		switch size := dataSize.(type) {
 		case int64:
-			details.DatabaseSize = size
+			databaseSize = size
 		case int32:
-			details.DatabaseSize = int64(size)
+			databaseSize = int64(size)
 		case float64:
-			details.DatabaseSize = int64(size)
+			databaseSize = int64(size)
 		default:
 			// Handle as zero if type is unexpected
-			details.DatabaseSize = 0
+			databaseSize = 0
 		}
 	}
+	details["databaseSize"] = databaseSize
 
 	// Generate a unique identifier
 	serverStatusCmd := bson.D{{Key: "serverStatus", Value: 1}}
@@ -233,12 +234,12 @@ func DiscoverDetails(db interface{}) (*MongoDBDetails, error) {
 	}
 
 	if host, ok := serverStatusDoc["host"].(string); ok {
-		details.UniqueIdentifier = host
+		details["uniqueIdentifier"] = host
 	} else {
 		return nil, fmt.Errorf("error extracting host: host field not found or not a string")
 	}
 
-	return &details, nil
+	return details, nil
 }
 
 func getSslMode(config common.DatabaseConfig) string {

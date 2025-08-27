@@ -1,24 +1,79 @@
 package neo4j
 
-import "github.com/redbco/redb-open/services/anchor/internal/database/common"
+import (
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
+)
 
-// Neo4jDetails contains information about a Neo4j database
-type Neo4jDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
+// CreateNeo4jUnifiedModel creates a UnifiedModel for Neo4j with database details
+func CreateNeo4jUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:  dbcapabilities.Neo4j,
+		Graphs:        make(map[string]unifiedmodel.Graph),
+		Nodes:         make(map[string]unifiedmodel.Node),
+		Relationships: make(map[string]unifiedmodel.Relationship),
+		Indexes:       make(map[string]unifiedmodel.Index),
+		Constraints:   make(map[string]unifiedmodel.Constraint),
+		Procedures:    make(map[string]unifiedmodel.Procedure),
+		Functions:     make(map[string]unifiedmodel.Function),
+	}
+	return um
 }
 
-// Neo4jSchema represents the schema of a Neo4j database
-type Neo4jSchema struct {
-	Labels            []LabelInfo            `json:"labels"`
-	RelationshipTypes []RelationshipTypeInfo `json:"relationshipTypes"`
-	Constraints       []ConstraintInfo       `json:"constraints"`
-	Indexes           []common.IndexInfo     `json:"indexes"`
-	Procedures        []common.ProcedureInfo `json:"procedures"`
-	Functions         []common.FunctionInfo  `json:"functions"`
+// ConvertNeo4jLabelToNode converts LabelInfo to unifiedmodel.Node
+func ConvertNeo4jLabelToNode(labelInfo LabelInfo) unifiedmodel.Node {
+	node := unifiedmodel.Node{
+		Label:      labelInfo.Name,
+		Properties: make(map[string]unifiedmodel.Property),
+		Indexes:    make(map[string]unifiedmodel.Index),
+	}
+
+	// Convert properties
+	for _, prop := range labelInfo.Properties {
+		node.Properties[prop.Name] = unifiedmodel.Property{
+			Name: prop.Name,
+			Type: prop.DataType,
+		}
+	}
+
+	return node
+}
+
+// ConvertNeo4jRelationshipType converts RelationshipTypeInfo to unifiedmodel.Relationship
+func ConvertNeo4jRelationshipType(relTypeInfo RelationshipTypeInfo) unifiedmodel.Relationship {
+	relationship := unifiedmodel.Relationship{
+		Type:       relTypeInfo.Name,
+		FromLabel:  relTypeInfo.StartLabel,
+		ToLabel:    relTypeInfo.EndLabel,
+		Properties: make(map[string]unifiedmodel.Property),
+	}
+
+	// Convert properties
+	for _, prop := range relTypeInfo.Properties {
+		relationship.Properties[prop.Name] = unifiedmodel.Property{
+			Name: prop.Name,
+			Type: prop.DataType,
+		}
+	}
+
+	return relationship
+}
+
+// ConvertNeo4jConstraint converts ConstraintInfo to unifiedmodel.Constraint
+func ConvertNeo4jConstraint(constraintInfo ConstraintInfo) unifiedmodel.Constraint {
+	constraintType := unifiedmodel.ConstraintTypeUnique
+	switch constraintInfo.Type {
+	case "UNIQUENESS":
+		constraintType = unifiedmodel.ConstraintTypeUnique
+	case "NODE_PROPERTY_EXISTENCE", "RELATIONSHIP_PROPERTY_EXISTENCE":
+		constraintType = unifiedmodel.ConstraintTypeNotNull
+	}
+
+	return unifiedmodel.Constraint{
+		Name:    constraintInfo.Name,
+		Type:    constraintType,
+		Columns: constraintInfo.PropertyKeys,
+	}
 }
 
 // LabelInfo represents a node label in Neo4j

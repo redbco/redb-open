@@ -7,15 +7,28 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// DiscoverSchema fetches the current schema of a CockroachDB database
-func DiscoverSchema(pool *pgxpool.Pool) (*CockroachSchema, error) {
-	schema := &CockroachSchema{}
+// DiscoverSchema fetches the current schema of a CockroachDB database and returns a UnifiedModel
+func DiscoverSchema(pool *pgxpool.Pool) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.CockroachDB,
+		Tables:       make(map[string]unifiedmodel.Table),
+		Schemas:      make(map[string]unifiedmodel.Schema),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Triggers:     make(map[string]unifiedmodel.Trigger),
+		Sequences:    make(map[string]unifiedmodel.Sequence),
+		Extensions:   make(map[string]unifiedmodel.Extension),
+		Indexes:      make(map[string]unifiedmodel.Index),
+	}
+
 	var err error
 
 	// Get tables and their columns
@@ -24,50 +37,101 @@ func DiscoverSchema(pool *pgxpool.Pool) (*CockroachSchema, error) {
 		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
 
-	// Convert map to slice
-	tables := make([]common.TableInfo, 0, len(tablesMap))
+	// Convert tables to unified model
 	for _, table := range tablesMap {
-		tables = append(tables, *table)
+		unifiedTable := ConvertCockroachTable(*table)
+		um.Tables[table.Name] = unifiedTable
 	}
-	schema.Tables = tables
 
-	// Get enum types
-	schema.EnumTypes, err = discoverEnumTypes(pool)
+	// Get enum types (CockroachDB enums are stored as custom types)
+	enumTypes, err := discoverEnumTypes(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering enum types: %v", err)
 	}
 
+	// Convert enums to unified model as custom types
+	for _, enumType := range enumTypes {
+		um.Types[enumType.Name] = unifiedmodel.Type{
+			Name:     enumType.Name,
+			Category: "enum",
+		}
+	}
+
 	// Get schemas
-	schema.Schemas, err = getSchemas(pool)
+	schemas, err := getSchemas(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error getting schemas: %v", err)
 	}
 
+	// Convert schemas to unified model
+	for _, schema := range schemas {
+		um.Schemas[schema.Name] = unifiedmodel.Schema{
+			Name:    schema.Name,
+			Comment: schema.Description,
+		}
+	}
+
 	// Get functions
-	schema.Functions, err = getFunctions(pool)
+	functions, err := getFunctions(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error getting functions: %v", err)
 	}
 
+	// Convert functions to unified model
+	for _, function := range functions {
+		um.Functions[function.Name] = unifiedmodel.Function{
+			Name:       function.Name,
+			Language:   "sql", // CockroachDB functions are SQL-based
+			Definition: function.Body,
+			Returns:    function.ReturnType,
+		}
+	}
+
 	// Get triggers
-	schema.Triggers, err = getTriggers(pool)
+	triggers, err := getTriggers(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error getting triggers: %v", err)
 	}
 
+	// Convert triggers to unified model
+	for _, trigger := range triggers {
+		um.Triggers[trigger.Name] = unifiedmodel.Trigger{
+			Name:      trigger.Name,
+			Table:     trigger.Table,
+			Procedure: trigger.Statement, // Store trigger statement as procedure
+		}
+	}
+
 	// Get sequences
-	schema.Sequences, err = getSequences(pool)
+	sequences, err := getSequences(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error getting sequences: %v", err)
 	}
 
+	// Convert sequences to unified model
+	for _, sequence := range sequences {
+		um.Sequences[sequence.Name] = unifiedmodel.Sequence{
+			Name:      sequence.Name,
+			Start:     sequence.Start,
+			Increment: sequence.Increment,
+		}
+	}
+
 	// Get extensions
-	schema.Extensions, err = getExtensions(pool)
+	extensions, err := getExtensions(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error getting extensions: %v", err)
 	}
 
-	return schema, nil
+	// Convert extensions to unified model
+	for _, extension := range extensions {
+		um.Extensions[extension.Name] = unifiedmodel.Extension{
+			Name:    extension.Name,
+			Version: extension.Version,
+		}
+	}
+
+	return um, nil
 }
 
 // CreateStructure creates database objects based on the provided parameters

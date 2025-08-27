@@ -124,19 +124,18 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of a Pinecone database
-func DiscoverDetails(db interface{}) (*PineconeDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	client, ok := db.(*PineconeClient)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	details := &PineconeDetails{
-		DatabaseType: "pinecone",
-		Environment:  client.Environment,
-	}
+	details := make(map[string]interface{})
+	details["databaseType"] = "pinecone"
+	details["environment"] = client.Environment
 
 	// Get version information
-	details.Version = "1.0" // Pinecone doesn't expose version info directly
+	details["version"] = "1.0" // Pinecone doesn't expose version info directly
 
 	// Get database size (sum of all indexes)
 	indexes, err := listIndexes(client)
@@ -152,16 +151,16 @@ func DiscoverDetails(db interface{}) (*PineconeDetails, error) {
 		}
 		totalSize += indexStats.IndexSize
 	}
-	details.DatabaseSize = totalSize
+	details["databaseSize"] = totalSize
 
 	// Generate a unique identifier
-	details.UniqueIdentifier = client.ProjectID
+	details["uniqueIdentifier"] = client.ProjectID
 
 	// Determine edition (free or standard)
 	if strings.Contains(client.Environment, "free") {
-		details.DatabaseEdition = "free"
+		details["databaseEdition"] = "free"
 	} else {
-		details.DatabaseEdition = "standard"
+		details["databaseEdition"] = "standard"
 	}
 
 	return details, nil

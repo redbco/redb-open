@@ -8,30 +8,57 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema discovers the Weaviate database schema
-func DiscoverSchema(client *WeaviateClient) (*WeaviateSchema, error) {
+// DiscoverSchema discovers the Weaviate database schema and returns a UnifiedModel
+func DiscoverSchema(client *WeaviateClient) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:  dbcapabilities.Weaviate,
+		VectorIndexes: make(map[string]unifiedmodel.VectorIndex),
+		Collections:   make(map[string]unifiedmodel.Collection),
+		Vectors:       make(map[string]unifiedmodel.Vector),
+		Embeddings:    make(map[string]unifiedmodel.Embedding),
+		Types:         make(map[string]unifiedmodel.Type),
+	}
+
 	// Get all classes
 	classes, err := listClasses(client)
 	if err != nil {
 		return nil, fmt.Errorf("error listing classes: %v", err)
 	}
 
-	// Get details for each class
-	classDetails := make([]WeaviateClassInfo, 0, len(classes))
+	// Get details for each class and convert to unified model
 	for _, className := range classes {
 		details, err := describeClass(client, className)
 		if err != nil {
 			continue // Skip classes we can't describe
 		}
-		classDetails = append(classDetails, *details)
+
+		// Convert to vector index
+		vectorIndex := ConvertWeaviateClass(*details)
+		um.VectorIndexes[className] = vectorIndex
+
+		// Also create a collection entry for compatibility
+		um.Collections[className] = unifiedmodel.Collection{
+			Name: className,
+		}
+
+		// Create types for properties
+		for _, prop := range details.Properties {
+			for _, dataType := range prop.DataType {
+				um.Types[dataType] = unifiedmodel.Type{
+					Name:     dataType,
+					Category: "property",
+				}
+			}
+		}
 	}
 
-	return &WeaviateSchema{
-		Classes: classDetails,
-	}, nil
+	return um, nil
 }
 
 // CreateStructure creates database structures based on parameters

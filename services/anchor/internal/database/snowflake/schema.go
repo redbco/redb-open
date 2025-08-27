@@ -7,76 +7,129 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema fetches the current schema of a Snowflake database
-func DiscoverSchema(db *sql.DB) (*SnowflakeSchema, error) {
-	schema := &SnowflakeSchema{}
+// DiscoverSchema fetches the current schema of a Snowflake database and returns a UnifiedModel
+func DiscoverSchema(db *sql.DB) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:   dbcapabilities.Snowflake,
+		Tables:         make(map[string]unifiedmodel.Table),
+		Schemas:        make(map[string]unifiedmodel.Schema),
+		Functions:      make(map[string]unifiedmodel.Function),
+		Procedures:     make(map[string]unifiedmodel.Procedure),
+		Sequences:      make(map[string]unifiedmodel.Sequence),
+		Views:          make(map[string]unifiedmodel.View),
+		ExternalTables: make(map[string]unifiedmodel.ExternalTable),
+	}
+
 	var err error
 
-	// Get tables and their columns
+	// Get tables and their columns, convert to unified model format
 	tablesMap, _, err := discoverTablesAndColumns(db)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
-
-	// Convert map to slice
-	tables := make([]common.TableInfo, 0, len(tablesMap))
 	for _, table := range tablesMap {
-		tables = append(tables, *table)
+		unifiedTable := ConvertSnowflakeTable(*table)
+		um.Tables[table.Name] = unifiedTable
 	}
-	schema.Tables = tables
 
-	// Get schemas
-	schema.Schemas, err = getSchemas(db)
+	// Get schemas and convert to unified model format
+	schemas, err := getSchemas(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting schemas: %v", err)
 	}
+	for _, schema := range schemas {
+		um.Schemas[schema.Name] = unifiedmodel.Schema{
+			Name:    schema.Name,
+			Comment: schema.Description,
+		}
+	}
 
-	// Get functions
-	schema.Functions, err = getFunctions(db)
+	// Get functions and convert to unified model format
+	functions, err := getFunctions(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting functions: %v", err)
 	}
+	for _, function := range functions {
+		um.Functions[function.Name] = unifiedmodel.Function{
+			Name:       function.Name,
+			Language:   "sql", // Snowflake uses SQL
+			Returns:    function.ReturnType,
+			Definition: function.Body,
+		}
+	}
 
-	// Get procedures
-	schema.Procedures, err = getProcedures(db)
+	// Get procedures and convert to unified model format
+	procedures, err := getProcedures(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting procedures: %v", err)
 	}
+	for _, procedure := range procedures {
+		um.Procedures[procedure.Name] = unifiedmodel.Procedure{
+			Name:       procedure.Name,
+			Language:   "sql", // Snowflake uses SQL
+			Definition: procedure.Body,
+		}
+	}
 
-	// Get sequences
-	schema.Sequences, err = getSequences(db)
+	// Get sequences and convert to unified model format
+	sequences, err := getSequences(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting sequences: %v", err)
 	}
+	for _, sequence := range sequences {
+		um.Sequences[sequence.Name] = unifiedmodel.Sequence{
+			Name:      sequence.Name,
+			Start:     sequence.Start,
+			Increment: sequence.Increment,
+			Min:       &sequence.MinValue,
+			Max:       &sequence.MaxValue,
+			Cache:     &sequence.CacheSize,
+			Cycle:     sequence.Cycle,
+		}
+	}
 
-	// Get views
-	schema.Views, err = getViews(db)
+	// Get views and convert to unified model format
+	views, err := getViews(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting views: %v", err)
 	}
+	for _, view := range views {
+		um.Views[view.Name] = unifiedmodel.View{
+			Name:       view.Name,
+			Definition: view.Definition,
+		}
+	}
 
-	// Get stages
-	schema.Stages, err = getStages(db)
+	// Get stages and convert to external tables (stages are similar to external tables)
+	stages, err := getStages(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting stages: %v", err)
 	}
-
-	// Get warehouses
-	schema.Warehouses, err = getWarehouses(db)
-	if err != nil {
-		return nil, fmt.Errorf("error getting warehouses: %v", err)
+	for _, stage := range stages {
+		unifiedStage := ConvertSnowflakeStage(stage)
+		um.ExternalTables[stage.Name] = unifiedStage
 	}
 
-	// Get pipes
-	schema.Pipes, err = getPipes(db)
+	// Get pipes and convert to functions (pipes are data loading functions)
+	pipes, err := getPipes(db)
 	if err != nil {
 		return nil, fmt.Errorf("error getting pipes: %v", err)
 	}
+	for _, pipe := range pipes {
+		unifiedPipe := ConvertSnowflakePipe(pipe)
+		um.Functions[pipe.Name] = unifiedPipe
+	}
 
-	return schema, nil
+	// Note: Warehouses are compute resources and don't have a direct equivalent in UnifiedModel
+	// They could be stored in metadata if needed
+
+	return um, nil
 }
 
 // CreateStructure creates database objects based on the provided parameters

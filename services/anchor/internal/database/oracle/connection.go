@@ -125,14 +125,14 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of an Oracle database
-func DiscoverDetails(db interface{}) (*OracleDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	sqlDB, ok := db.(*sql.DB)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details OracleDetails
-	details.DatabaseType = "oracle"
+	details := make(map[string]interface{})
+	details["databaseType"] = "oracle"
 
 	// Get server version
 	var version string
@@ -140,7 +140,7 @@ func DiscoverDetails(db interface{}) (*OracleDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching version: %v", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Get database size (total allocated space)
 	var size int64
@@ -158,7 +158,7 @@ func DiscoverDetails(db interface{}) (*OracleDetails, error) {
 			return nil, fmt.Errorf("error fetching database size: %v", err)
 		}
 	}
-	details.DatabaseSize = size
+	details["databaseSize"] = size
 
 	// Get unique identifier (DBID)
 	var dbid string
@@ -166,7 +166,7 @@ func DiscoverDetails(db interface{}) (*OracleDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database ID: %v", err)
 	}
-	details.UniqueIdentifier = dbid
+	details["uniqueIdentifier"] = dbid
 
 	// Get database edition
 	var edition string
@@ -179,9 +179,9 @@ func DiscoverDetails(db interface{}) (*OracleDetails, error) {
 			edition = "standard"
 		}
 	}
-	details.DatabaseEdition = strings.ToLower(edition)
+	details["databaseEdition"] = strings.ToLower(edition)
 
-	return &details, nil
+	return details, nil
 }
 
 func getWalletLocation(config common.DatabaseConfig) string {

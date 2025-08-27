@@ -8,15 +8,28 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// DiscoverSchema fetches the current schema of a PostgreSQL database
-func DiscoverSchema(pool *pgxpool.Pool) (*PostgresSchema, error) {
-	schema := &PostgresSchema{}
+// DiscoverSchema fetches the current schema of a PostgreSQL database and returns a UnifiedModel
+func DiscoverSchema(pool *pgxpool.Pool) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.PostgreSQL,
+		Tables:       make(map[string]unifiedmodel.Table),
+		Schemas:      make(map[string]unifiedmodel.Schema),
+		Types:        make(map[string]unifiedmodel.Type),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Triggers:     make(map[string]unifiedmodel.Trigger),
+		Sequences:    make(map[string]unifiedmodel.Sequence),
+		Extensions:   make(map[string]unifiedmodel.Extension),
+	}
+
 	var err error
 
 	// Get tables and their columns
@@ -25,50 +38,98 @@ func DiscoverSchema(pool *pgxpool.Pool) (*PostgresSchema, error) {
 		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
 
-	// Convert map to slice
-	tables := make([]common.TableInfo, 0, len(tablesMap))
+	// Convert tables to unified model format
 	for _, table := range tablesMap {
-		tables = append(tables, *table)
+		unifiedTable := ConvertCommonTableToUnified(*table)
+		um.Tables[table.Name] = unifiedTable
 	}
-	schema.Tables = tables
 
-	// Get enum types
-	schema.EnumTypes, err = discoverEnumTypes(pool)
+	// Get enum types and convert to unified types
+	enumTypes, err := discoverEnumTypes(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering enum types: %v", err)
 	}
+	for _, enumType := range enumTypes {
+		um.Types[enumType.Name] = unifiedmodel.Type{
+			Name:     enumType.Name,
+			Category: "enum",
+			Definition: map[string]any{
+				"values": enumType.Values,
+			},
+		}
+	}
 
 	// Get schemas
-	schema.Schemas, err = getSchemas(pool)
+	schemas, err := getSchemas(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error getting schemas: %v", err)
 	}
+	for _, schema := range schemas {
+		um.Schemas[schema.Name] = unifiedmodel.Schema{
+			Name:    schema.Name,
+			Comment: schema.Description,
+		}
+	}
 
 	// Get functions
-	schema.Functions, err = getFunctions(pool)
+	functions, err := getFunctions(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error getting functions: %v", err)
 	}
+	for _, function := range functions {
+		um.Functions[function.Name] = unifiedmodel.Function{
+			Name:       function.Name,
+			Language:   "plpgsql", // Default for PostgreSQL
+			Returns:    function.ReturnType,
+			Definition: function.Body,
+		}
+	}
 
 	// Get triggers
-	schema.Triggers, err = getTriggers(pool)
+	triggers, err := getTriggers(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error getting triggers: %v", err)
 	}
+	for _, trigger := range triggers {
+		um.Triggers[trigger.Name] = unifiedmodel.Trigger{
+			Name:      trigger.Name,
+			Table:     trigger.Table,
+			Timing:    trigger.Timing,
+			Events:    []string{trigger.Event},
+			Procedure: trigger.Statement,
+		}
+	}
 
 	// Get sequences
-	schema.Sequences, err = getSequences(pool)
+	sequences, err := getSequences(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error getting sequences: %v", err)
 	}
+	for _, sequence := range sequences {
+		um.Sequences[sequence.Name] = unifiedmodel.Sequence{
+			Name:      sequence.Name,
+			Start:     sequence.Start,
+			Increment: sequence.Increment,
+			Min:       &sequence.MinValue,
+			Max:       &sequence.MaxValue,
+			Cache:     &sequence.CacheSize,
+			Cycle:     sequence.Cycle,
+		}
+	}
 
 	// Get extensions
-	schema.Extensions, err = getExtensions(pool)
+	extensions, err := getExtensions(pool)
 	if err != nil {
 		return nil, fmt.Errorf("error getting extensions: %v", err)
 	}
+	for _, extension := range extensions {
+		um.Extensions[extension.Name] = unifiedmodel.Extension{
+			Name:    extension.Name,
+			Version: extension.Version,
+		}
+	}
 
-	return schema, nil
+	return um, nil
 }
 
 // CreateStructure creates database objects based on the provided parameters

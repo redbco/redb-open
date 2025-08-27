@@ -134,14 +134,14 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of a CockroachDB database
-func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	pool, ok := db.(*pgxpool.Pool)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details CockroachDetails
-	details.DatabaseType = "cockroach"
+	details := make(map[string]interface{})
+	details["databaseType"] = "cockroach"
 
 	// Get server version
 	var version string
@@ -149,7 +149,7 @@ func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching version: %v", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Get database size
 	var size int64
@@ -158,7 +158,7 @@ func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database size: %v", err)
 	}
-	details.DatabaseSize = size
+	details["databaseSize"] = size
 
 	// Get unique identifier (database ID)
 	var dbID string
@@ -167,7 +167,7 @@ func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database ID: %v", err)
 	}
-	details.UniqueIdentifier = dbID
+	details["uniqueIdentifier"] = dbID
 
 	// Get cluster ID
 	var clusterID string
@@ -176,7 +176,7 @@ func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
 		// If we can't get the cluster ID, it's not critical
 		clusterID = "unknown"
 	}
-	details.ClusterID = clusterID
+	details["clusterId"] = clusterID
 
 	// Get node ID
 	var nodeID string
@@ -185,16 +185,16 @@ func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
 		// If we can't get the node ID, it's not critical
 		nodeID = "unknown"
 	}
-	details.NodeID = nodeID
+	details["nodeId"] = nodeID
 
 	// Determine edition
 	if strings.Contains(strings.ToLower(version), "enterprise") {
-		details.DatabaseEdition = "enterprise"
+		details["databaseEdition"] = "enterprise"
 	} else {
-		details.DatabaseEdition = "core"
+		details["databaseEdition"] = "core"
 	}
 
-	return &details, nil
+	return details, nil
 }
 
 func getSslMode(config common.DatabaseConfig) string {

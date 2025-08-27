@@ -137,17 +137,16 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 	}, nil
 }
 
-// DiscoverDetails retrieves details about a MySQL database
-func DiscoverDetails(db interface{}) (*MySQLDetails, error) {
+// DiscoverDetails retrieves basic details about a MySQL database for metadata purposes
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	sqlDB, ok := db.(*sql.DB)
 	if !ok {
 		return nil, fmt.Errorf("invalid MySQL connection type")
 	}
 
-	details := &MySQLDetails{
-		UniqueIdentifier: common.GenerateUniqueID(),
-		DatabaseType:     "mysql",
-	}
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = common.GenerateUniqueID()
+	details["databaseType"] = "mysql"
 
 	// Get database version
 	var version string
@@ -155,13 +154,13 @@ func DiscoverDetails(db interface{}) (*MySQLDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database version: %w", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Determine database edition based on version
 	if strings.Contains(strings.ToLower(version), "mariadb") {
-		details.DatabaseEdition = "MariaDB"
+		details["databaseEdition"] = "MariaDB"
 	} else {
-		details.DatabaseEdition = "MySQL"
+		details["databaseEdition"] = "MySQL"
 	}
 
 	// Get database size (approximate for MySQL)
@@ -175,7 +174,7 @@ func DiscoverDetails(db interface{}) (*MySQLDetails, error) {
 		// If we can't get the size, set it to 0 but continue
 		sizeBytes = 0
 	}
-	details.DatabaseSize = sizeBytes
+	details["databaseSize"] = sizeBytes
 
 	return details, nil
 }

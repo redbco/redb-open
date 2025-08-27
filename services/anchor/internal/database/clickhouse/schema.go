@@ -7,52 +7,83 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema fetches the current schema of a Clickhouse database
-func DiscoverSchema(conn ClickhouseConn) (*ClickhouseSchema, error) {
-	schema := &ClickhouseSchema{}
+// DiscoverSchema fetches the current schema of a Clickhouse database and returns a UnifiedModel
+func DiscoverSchema(conn ClickhouseConn) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.ClickHouse,
+		Tables:       make(map[string]unifiedmodel.Table),
+		Schemas:      make(map[string]unifiedmodel.Schema),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Views:        make(map[string]unifiedmodel.View),
+	}
+
 	var err error
 
-	// Get tables and their columns
+	// Get tables and their columns, convert to unified model format
 	tablesMap, _, err := discoverTablesAndColumns(conn)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
-
-	// Convert map to slice
-	tables := make([]common.TableInfo, 0, len(tablesMap))
 	for _, table := range tablesMap {
-		tables = append(tables, *table)
+		unifiedTable := ConvertClickHouseTable(*table)
+		um.Tables[table.Name] = unifiedTable
 	}
-	schema.Tables = tables
 
-	// Get schemas (databases in Clickhouse)
-	schema.Schemas, err = getSchemas(conn)
+	// Get schemas (databases in ClickHouse) and convert to unified model format
+	schemas, err := getSchemas(conn)
 	if err != nil {
 		return nil, fmt.Errorf("error getting schemas: %v", err)
 	}
+	for _, schema := range schemas {
+		um.Schemas[schema.Name] = unifiedmodel.Schema{
+			Name:    schema.Name,
+			Comment: schema.Description,
+		}
+	}
 
-	// Get functions
-	schema.Functions, err = getFunctions(conn)
+	// Get functions and convert to unified model format
+	functions, err := getFunctions(conn)
 	if err != nil {
 		return nil, fmt.Errorf("error getting functions: %v", err)
 	}
+	for _, function := range functions {
+		um.Functions[function.Name] = unifiedmodel.Function{
+			Name:       function.Name,
+			Language:   "sql", // ClickHouse uses SQL-like syntax
+			Returns:    function.ReturnType,
+			Definition: function.Body,
+		}
+	}
 
-	// Get views
-	schema.Views, err = getViews(conn)
+	// Get views and convert to unified model format
+	views, err := getViews(conn)
 	if err != nil {
 		return nil, fmt.Errorf("error getting views: %v", err)
 	}
+	for _, view := range views {
+		um.Views[view.Name] = unifiedmodel.View{
+			Name:       view.Name,
+			Definition: view.Definition,
+		}
+	}
 
-	// Get dictionaries
-	schema.Dictionaries, err = getDictionaries(conn)
+	// Get dictionaries and convert to unified views (as they're similar to materialized views)
+	dictionaries, err := getDictionaries(conn)
 	if err != nil {
 		return nil, fmt.Errorf("error getting dictionaries: %v", err)
 	}
+	for _, dict := range dictionaries {
+		unifiedDict := ConvertClickHouseDictionary(dict)
+		um.Views[dict.Name] = unifiedDict
+	}
 
-	return schema, nil
+	return um, nil
 }
 
 // CreateStructure creates database objects based on the provided parameters

@@ -162,15 +162,15 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of an Elasticsearch cluster
-func DiscoverDetails(db interface{}) (*ElasticsearchDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	esClient, ok := db.(*ElasticsearchClient)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
 	client := esClient.Client
-	var details ElasticsearchDetails
-	details.DatabaseType = "elasticsearch"
+	details := make(map[string]interface{})
+	details["databaseType"] = "elasticsearch"
 
 	// Get cluster info
 	infoRes, err := client.Info()
@@ -192,7 +192,7 @@ func DiscoverDetails(db interface{}) (*ElasticsearchDetails, error) {
 	// Extract version
 	if version, ok := infoResp["version"].(map[string]interface{}); ok {
 		if number, ok := version["number"].(string); ok {
-			details.Version = number
+			details["version"] = number
 		}
 	}
 
@@ -215,13 +215,13 @@ func DiscoverDetails(db interface{}) (*ElasticsearchDetails, error) {
 
 	// Extract cluster details
 	if clusterName, ok := healthResp["cluster_name"].(string); ok {
-		details.ClusterName = clusterName
+		details["clusterName"] = clusterName
 	}
 	if status, ok := healthResp["status"].(string); ok {
-		details.ClusterHealth = status
+		details["clusterHealth"] = status
 	}
 	if numberOfNodes, ok := healthResp["number_of_nodes"].(float64); ok {
-		details.NumberOfNodes = int(numberOfNodes)
+		details["numberOfNodes"] = int(numberOfNodes)
 	}
 
 	// Get cluster stats for size
@@ -245,22 +245,26 @@ func DiscoverDetails(db interface{}) (*ElasticsearchDetails, error) {
 	if indices, ok := statsResp["indices"].(map[string]interface{}); ok {
 		if store, ok := indices["store"].(map[string]interface{}); ok {
 			if sizeInBytes, ok := store["size_in_bytes"].(float64); ok {
-				details.DatabaseSize = int64(sizeInBytes)
+				details["databaseSize"] = int64(sizeInBytes)
 			}
 		}
 	}
 
 	// Generate unique identifier
-	details.UniqueIdentifier = details.ClusterName
-
-	// Determine edition
-	if strings.Contains(strings.ToLower(details.Version), "x-pack") {
-		details.DatabaseEdition = "enterprise"
-	} else {
-		details.DatabaseEdition = "community"
+	if clusterName, ok := details["clusterName"].(string); ok {
+		details["uniqueIdentifier"] = clusterName
 	}
 
-	return &details, nil
+	// Determine edition
+	if version, ok := details["version"].(string); ok {
+		if strings.Contains(strings.ToLower(version), "x-pack") {
+			details["databaseEdition"] = "enterprise"
+		} else {
+			details["databaseEdition"] = "community"
+		}
+	}
+
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from an Elasticsearch cluster

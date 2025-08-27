@@ -109,8 +109,8 @@ func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) 
 	}, nil
 }
 
-// DiscoverDetails fetches the details of a Neo4j database
-func DiscoverDetails(db interface{}) (*Neo4jDetails, error) {
+// DiscoverDetails fetches basic details of a Neo4j database for metadata purposes
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	driver, ok := db.(neo4j.DriverWithContext)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
@@ -120,8 +120,8 @@ func DiscoverDetails(db interface{}) (*Neo4jDetails, error) {
 	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
 
-	var details Neo4jDetails
-	details.DatabaseType = "neo4j"
+	details := make(map[string]interface{})
+	details["databaseType"] = "neo4j"
 
 	// Get server version
 	result, err := session.Run(ctx, "CALL dbms.components() YIELD name, versions, edition RETURN name, versions, edition", nil)
@@ -137,38 +137,38 @@ func DiscoverDetails(db interface{}) (*Neo4jDetails, error) {
 
 		versionsArr, ok := versions.([]interface{})
 		if ok && len(versionsArr) > 0 {
-			details.Version = fmt.Sprintf("%s %v", name, versionsArr[0])
+			details["version"] = fmt.Sprintf("%s %v", name, versionsArr[0])
 		} else {
-			details.Version = fmt.Sprintf("%s", name)
+			details["version"] = fmt.Sprintf("%s", name)
 		}
 
-		details.DatabaseEdition = fmt.Sprintf("%v", edition)
+		details["databaseEdition"] = fmt.Sprintf("%v", edition)
 	}
 
 	// Get database size (approximate)
 	result, err = session.Run(ctx, "CALL dbms.database.size() YIELD totalStoreSize RETURN totalStoreSize", nil)
 	if err != nil {
 		// This procedure might not be available in all editions, so we'll handle the error gracefully
-		details.DatabaseSize = -1
+		details["databaseSize"] = int64(-1)
 	} else if result.Next(ctx) {
 		record := result.Record()
 		size, _ := record.Get("totalStoreSize")
 		if sizeVal, ok := size.(int64); ok {
-			details.DatabaseSize = sizeVal
+			details["databaseSize"] = sizeVal
 		}
 	}
 
 	// Get unique identifier (database ID)
 	result, err = session.Run(ctx, "CALL dbms.info() YIELD id RETURN id", nil)
 	if err != nil {
-		details.UniqueIdentifier = "unknown"
+		details["uniqueIdentifier"] = "unknown"
 	} else if result.Next(ctx) {
 		record := result.Record()
 		id, _ := record.Get("id")
-		details.UniqueIdentifier = fmt.Sprintf("%v", id)
+		details["uniqueIdentifier"] = fmt.Sprintf("%v", id)
 	}
 
-	return &details, nil
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Neo4j database

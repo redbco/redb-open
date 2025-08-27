@@ -5,51 +5,90 @@ import (
 	"strings"
 
 	"github.com/gocql/gocql"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema fetches the current schema of a Cassandra database
-func DiscoverSchema(session *gocql.Session) (*CassandraSchema, error) {
-	schema := &CassandraSchema{}
+// DiscoverSchema fetches the current schema of a Cassandra database and returns a UnifiedModel
+func DiscoverSchema(session *gocql.Session) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:      dbcapabilities.Cassandra,
+		Keyspaces:         make(map[string]unifiedmodel.Keyspace),
+		Tables:            make(map[string]unifiedmodel.Table),
+		Types:             make(map[string]unifiedmodel.Type),
+		Functions:         make(map[string]unifiedmodel.Function),
+		MaterializedViews: make(map[string]unifiedmodel.MaterializedView),
+	}
+
 	var err error
 
-	// Get keyspaces
-	schema.Keyspaces, err = discoverKeyspaces(session)
+	// Get keyspaces and convert to unified model format
+	keyspaces, err := discoverKeyspaces(session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering keyspaces: %v", err)
 	}
+	for _, keyspace := range keyspaces {
+		unifiedKeyspace := ConvertCassandraKeyspace(keyspace)
+		um.Keyspaces[keyspace.Name] = unifiedKeyspace
+	}
 
-	// Get tables
-	schema.Tables, err = discoverTables(session)
+	// Get tables and convert to unified model format
+	tables, err := discoverTables(session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
+	for _, table := range tables {
+		unifiedTable := ConvertCassandraTable(table)
+		um.Tables[table.Name] = unifiedTable
+	}
 
-	// Get user-defined types
-	schema.Types, err = discoverTypes(session)
+	// Get user-defined types and convert to unified model format
+	types, err := discoverTypes(session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering types: %v", err)
 	}
+	for _, cassType := range types {
+		unifiedType := ConvertCassandraType(cassType)
+		um.Types[cassType.Name] = unifiedType
+	}
 
-	// Get functions
-	schema.Functions, err = discoverFunctions(session)
+	// Get functions and convert to unified model format
+	functions, err := discoverFunctions(session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering functions: %v", err)
 	}
+	for _, function := range functions {
+		um.Functions[function.Name] = unifiedmodel.Function{
+			Name:       function.Name,
+			Language:   "cql", // Cassandra uses CQL
+			Returns:    function.ReturnType,
+			Definition: function.Body,
+		}
+	}
 
-	// Get aggregates
-	schema.Aggregates, err = discoverAggregates(session)
+	// Get aggregates and convert to unified functions
+	aggregates, err := discoverAggregates(session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering aggregates: %v", err)
 	}
+	for _, aggregate := range aggregates {
+		unifiedAggregate := ConvertCassandraAggregate(aggregate)
+		um.Functions[aggregate.Name] = unifiedAggregate
+	}
 
-	// Get materialized views
-	schema.MaterializedViews, err = discoverMaterializedViews(session)
+	// Get materialized views and convert to unified model format
+	materializedViews, err := discoverMaterializedViews(session)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering materialized views: %v", err)
 	}
+	for _, mv := range materializedViews {
+		unifiedMV := ConvertCassandraMaterializedView(mv)
+		um.MaterializedViews[mv.Name] = unifiedMV
+	}
 
-	return schema, nil
+	return um, nil
 }
 
 // CreateStructure creates database objects based on the provided parameters

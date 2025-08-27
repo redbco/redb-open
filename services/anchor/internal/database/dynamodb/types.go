@@ -1,29 +1,56 @@
 package dynamodb
 
 import (
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DynamoDBDetails contains information about a DynamoDB database
-type DynamoDBDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	Region           string `json:"region"`
-	BillingMode      string `json:"billingMode"`
+// CreateDynamoDBUnifiedModel creates a UnifiedModel for DynamoDB with database details
+func CreateDynamoDBUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.DynamoDB,
+		Tables:       make(map[string]unifiedmodel.Table),
+		Indexes:      make(map[string]unifiedmodel.Index),
+	}
+	return um
 }
 
-// DatabaseSchema represents the schema of a DynamoDB database
-type DatabaseSchema struct {
-	Tables     []common.TableInfo          `json:"tables"`
-	EnumTypes  []common.EnumInfo           `json:"enumTypes"`
-	Schemas    []common.DatabaseSchemaInfo `json:"schemas"`
-	Functions  []common.FunctionInfo       `json:"functions"`
-	Triggers   []common.TriggerInfo        `json:"triggers"`
-	Sequences  []common.SequenceInfo       `json:"sequences"`
-	Extensions []common.ExtensionInfo      `json:"extensions"`
+// ConvertDynamoDBTable converts common.TableInfo to unifiedmodel.Table for DynamoDB
+func ConvertDynamoDBTable(tableInfo common.TableInfo) unifiedmodel.Table {
+	table := unifiedmodel.Table{
+		Name:        tableInfo.Name,
+		Columns:     make(map[string]unifiedmodel.Column),
+		Indexes:     make(map[string]unifiedmodel.Index),
+		Constraints: make(map[string]unifiedmodel.Constraint),
+	}
+
+	// Convert columns (DynamoDB has flexible schema, but we can represent known attributes)
+	for _, col := range tableInfo.Columns {
+		var defaultValue string
+		if col.ColumnDefault != nil {
+			defaultValue = *col.ColumnDefault
+		}
+		table.Columns[col.Name] = unifiedmodel.Column{
+			Name:           col.Name,
+			DataType:       col.DataType,
+			Nullable:       col.IsNullable,
+			Default:        defaultValue,
+			IsPrimaryKey:   col.IsPrimaryKey,
+			IsPartitionKey: true, // DynamoDB partition key
+		}
+	}
+
+	// Convert indexes (DynamoDB has GSI and LSI)
+	for _, idx := range tableInfo.Indexes {
+		table.Indexes[idx.Name] = unifiedmodel.Index{
+			Name:    idx.Name,
+			Columns: idx.Columns,
+			Unique:  idx.IsUnique,
+		}
+	}
+
+	return table
 }
 
 // DynamoDBReplicationSourceDetails contains information about DynamoDB change streams (not supported)

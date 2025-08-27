@@ -9,24 +9,23 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema discovers the database schema for DynamoDB
-func DiscoverSchema(db interface{}) (*DatabaseSchema, error) {
+// DiscoverSchema discovers the database schema for DynamoDB and returns a UnifiedModel
+func DiscoverSchema(db interface{}) (*unifiedmodel.UnifiedModel, error) {
 	client, ok := db.(*dynamodb.Client)
 	if !ok {
 		return nil, fmt.Errorf("invalid DynamoDB client type")
 	}
 
-	schema := &DatabaseSchema{
-		Tables:     []common.TableInfo{},
-		EnumTypes:  []common.EnumInfo{},
-		Schemas:    []common.DatabaseSchemaInfo{},
-		Functions:  []common.FunctionInfo{},
-		Triggers:   []common.TriggerInfo{},
-		Sequences:  []common.SequenceInfo{},
-		Extensions: []common.ExtensionInfo{},
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.DynamoDB,
+		Tables:       make(map[string]unifiedmodel.Table),
+		Indexes:      make(map[string]unifiedmodel.Index),
 	}
 
 	// List all tables
@@ -35,16 +34,28 @@ func DiscoverSchema(db interface{}) (*DatabaseSchema, error) {
 		return nil, fmt.Errorf("error listing tables: %v", err)
 	}
 
-	// Get detailed information for each table
+	// Get detailed information for each table and convert to unified model
 	for _, tableName := range listTablesResult.TableNames {
 		tableInfo, err := describeTable(client, tableName)
 		if err != nil {
 			return nil, fmt.Errorf("error describing table %s: %v", tableName, err)
 		}
-		schema.Tables = append(schema.Tables, *tableInfo)
+
+		// Convert to unified table
+		unifiedTable := ConvertDynamoDBTable(*tableInfo)
+		um.Tables[tableInfo.Name] = unifiedTable
+
+		// Add global secondary indexes as separate index entries
+		for _, idx := range tableInfo.Indexes {
+			um.Indexes[idx.Name] = unifiedmodel.Index{
+				Name:    idx.Name,
+				Columns: idx.Columns,
+				Unique:  idx.IsUnique,
+			}
+		}
 	}
 
-	return schema, nil
+	return um, nil
 }
 
 // CreateStructure creates database structures based on parameters

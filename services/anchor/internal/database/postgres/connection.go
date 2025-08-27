@@ -133,15 +133,15 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 	}, nil
 }
 
-// DiscoverDetails fetches the details of a PostgreSQL database
-func DiscoverDetails(db interface{}) (*PostgresDetails, error) {
+// DiscoverDetails fetches basic details of a PostgreSQL database for metadata purposes
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	pool, ok := db.(*pgxpool.Pool)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details PostgresDetails
-	details.DatabaseType = "postgres"
+	details := make(map[string]interface{})
+	details["databaseType"] = "postgres"
 
 	// Get server version
 	var version string
@@ -149,7 +149,7 @@ func DiscoverDetails(db interface{}) (*PostgresDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching version: %v", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Get database size
 	var size int64
@@ -158,7 +158,7 @@ func DiscoverDetails(db interface{}) (*PostgresDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database size: %v", err)
 	}
-	details.DatabaseSize = size
+	details["databaseSize"] = size
 
 	// Get unique identifier (OID)
 	var oid string
@@ -167,16 +167,16 @@ func DiscoverDetails(db interface{}) (*PostgresDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database OID: %v", err)
 	}
-	details.UniqueIdentifier = oid
+	details["uniqueIdentifier"] = oid
 
 	// Get database edition
 	if strings.Contains(strings.ToLower(version), "enterprise") {
-		details.DatabaseEdition = "enterprise"
+		details["databaseEdition"] = "enterprise"
 	} else {
-		details.DatabaseEdition = "community"
+		details["databaseEdition"] = "community"
 	}
 
-	return &details, nil
+	return details, nil
 }
 
 func getSslMode(config common.DatabaseConfig) string {

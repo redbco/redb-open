@@ -7,52 +7,97 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema discovers the schema of a MySQL database
-func DiscoverSchema(db interface{}) (*MySQLSchema, error) {
+// DiscoverSchema discovers the schema of a MySQL database and returns a UnifiedModel
+func DiscoverSchema(db interface{}) (*unifiedmodel.UnifiedModel, error) {
 	sqlDB, ok := db.(*sql.DB)
 	if !ok {
 		return nil, fmt.Errorf("invalid MySQL connection type")
 	}
 
-	schema := &MySQLSchema{}
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.MySQL,
+		Tables:       make(map[string]unifiedmodel.Table),
+		Schemas:      make(map[string]unifiedmodel.Schema),
+		Types:        make(map[string]unifiedmodel.Type),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Triggers:     make(map[string]unifiedmodel.Trigger),
+		Sequences:    make(map[string]unifiedmodel.Sequence),
+		Extensions:   make(map[string]unifiedmodel.Extension),
+	}
 
-	// Get tables
+	var err error
+
+	// Get tables and convert to unified model format
 	tables, err := getTables(sqlDB)
 	if err != nil {
 		return nil, fmt.Errorf("error getting tables: %w", err)
 	}
-	schema.Tables = tables
+	for _, table := range tables {
+		unifiedTable := ConvertMySQLTableToUnified(table)
+		um.Tables[table.Name] = unifiedTable
+	}
 
-	// Get enum types
+	// Get enum types and convert to unified types
 	enumTypes, err := getEnumTypes(sqlDB)
 	if err != nil {
 		return nil, fmt.Errorf("error getting enum types: %w", err)
 	}
-	schema.EnumTypes = enumTypes
+	for _, enumType := range enumTypes {
+		um.Types[enumType.Name] = unifiedmodel.Type{
+			Name:     enumType.Name,
+			Category: "enum",
+			Definition: map[string]any{
+				"values": enumType.Values,
+			},
+		}
+	}
 
 	// Get schemas
 	schemas, err := getSchemas(sqlDB)
 	if err != nil {
 		return nil, fmt.Errorf("error getting schemas: %w", err)
 	}
-	schema.Schemas = schemas
+	for _, schema := range schemas {
+		um.Schemas[schema.Name] = unifiedmodel.Schema{
+			Name:    schema.Name,
+			Comment: schema.Description,
+		}
+	}
 
 	// Get functions
 	functions, err := getFunctions(sqlDB)
 	if err != nil {
 		return nil, fmt.Errorf("error getting functions: %w", err)
 	}
-	schema.Functions = functions
+	for _, function := range functions {
+		um.Functions[function.Name] = unifiedmodel.Function{
+			Name:       function.Name,
+			Language:   "sql", // Default for MySQL
+			Returns:    function.ReturnType,
+			Definition: function.Body,
+		}
+	}
 
 	// Get triggers
 	triggers, err := getTriggers(sqlDB)
 	if err != nil {
 		return nil, fmt.Errorf("error getting triggers: %w", err)
 	}
-	schema.Triggers = triggers
+	for _, trigger := range triggers {
+		um.Triggers[trigger.Name] = unifiedmodel.Trigger{
+			Name:      trigger.Name,
+			Table:     trigger.Table,
+			Timing:    trigger.Timing,
+			Events:    []string{trigger.Event},
+			Procedure: trigger.Statement,
+		}
+	}
 
 	// MySQL doesn't have sequences like PostgreSQL, but we can use AUTO_INCREMENT columns
 	// as a similar concept
@@ -60,16 +105,31 @@ func DiscoverSchema(db interface{}) (*MySQLSchema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error getting sequences: %w", err)
 	}
-	schema.Sequences = sequences
+	for _, sequence := range sequences {
+		um.Sequences[sequence.Name] = unifiedmodel.Sequence{
+			Name:      sequence.Name,
+			Start:     sequence.Start,
+			Increment: sequence.Increment,
+			Min:       &sequence.MinValue,
+			Max:       &sequence.MaxValue,
+			Cache:     &sequence.CacheSize,
+			Cycle:     sequence.Cycle,
+		}
+	}
 
 	// Get extensions (plugins in MySQL)
 	extensions, err := getExtensions(sqlDB)
 	if err != nil {
 		return nil, fmt.Errorf("error getting extensions: %w", err)
 	}
-	schema.Extensions = extensions
+	for _, extension := range extensions {
+		um.Extensions[extension.Name] = unifiedmodel.Extension{
+			Name:    extension.Name,
+			Version: extension.Version,
+		}
+	}
 
-	return schema, nil
+	return um, nil
 }
 
 // CreateStructure creates database structure based on provided parameters

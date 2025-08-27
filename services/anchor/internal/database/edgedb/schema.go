@@ -6,57 +6,102 @@ import (
 	"strings"
 
 	gel "github.com/geldata/gel-go"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
-// DiscoverSchema fetches the current schema of an EdgeDB database
-func DiscoverSchema(client *gel.Client) (*EdgeDBSchema, error) {
-	schema := &EdgeDBSchema{}
+// DiscoverSchema fetches the current schema of an EdgeDB database and returns a UnifiedModel
+func DiscoverSchema(client *gel.Client) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.EdgeDB,
+		Modules:      make(map[string]unifiedmodel.Module),
+		Types:        make(map[string]unifiedmodel.Type),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Extensions:   make(map[string]unifiedmodel.Extension),
+		Constraints:  make(map[string]unifiedmodel.Constraint),
+	}
+
 	var err error
 
-	// Get modules
-	schema.Modules, err = discoverModules(client)
+	// Get modules and convert to unified model format
+	modules, err := discoverModules(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering modules: %v", err)
 	}
+	for _, module := range modules {
+		unifiedModule := ConvertEdgeDBModule(module)
+		um.Modules[module.Name] = unifiedModule
+	}
 
-	// Get types
-	schema.Types, err = discoverTypes(client)
+	// Get types and convert to unified model format
+	types, err := discoverTypes(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering types: %v", err)
 	}
+	for _, typeInfo := range types {
+		unifiedType := ConvertEdgeDBType(typeInfo)
+		um.Types[typeInfo.Name] = unifiedType
+	}
 
-	// Get functions
-	schema.Functions, err = discoverFunctions(client)
+	// Get functions and convert to unified model format
+	functions, err := discoverFunctions(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering functions: %v", err)
 	}
+	for _, function := range functions {
+		um.Functions[function.Name] = unifiedmodel.Function{
+			Name:       function.Name,
+			Language:   "edgeql", // EdgeDB uses EdgeQL for functions
+			Returns:    function.ReturnType,
+			Definition: function.Body,
+		}
+	}
 
-	// Get scalars
-	schema.Scalars, err = discoverScalars(client)
+	// Get scalars and convert to unified types
+	scalars, err := discoverScalars(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering scalars: %v", err)
 	}
+	for _, scalar := range scalars {
+		unifiedScalar := ConvertEdgeDBScalar(scalar)
+		um.Types[scalar.Name] = unifiedScalar
+	}
 
-	// Get aliases
-	schema.Aliases, err = discoverAliases(client)
+	// Get aliases and convert to unified types
+	aliases, err := discoverAliases(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering aliases: %v", err)
 	}
+	for _, alias := range aliases {
+		unifiedAlias := ConvertEdgeDBAlias(alias)
+		um.Types[alias.Name] = unifiedAlias
+	}
 
-	// Get constraints
-	schema.Constraints, err = discoverConstraints(client)
+	// Get constraints and convert to unified model format
+	constraints, err := discoverConstraints(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering constraints: %v", err)
 	}
+	for _, constraint := range constraints {
+		unifiedConstraint := ConvertEdgeDBConstraint(constraint)
+		um.Constraints[constraint.Name] = unifiedConstraint
+	}
 
-	// Get extensions
-	schema.Extensions, err = discoverExtensions(client)
+	// Get extensions and convert to unified model format
+	extensions, err := discoverExtensions(client)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering extensions: %v", err)
 	}
+	for _, extension := range extensions {
+		um.Extensions[extension.Name] = unifiedmodel.Extension{
+			Name:    extension.Name,
+			Version: extension.Version,
+		}
+	}
 
-	return schema, nil
+	return um, nil
 }
 
 // CreateStructure creates database objects based on the provided parameters
