@@ -15,6 +15,7 @@ import (
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 	"github.com/redbco/redb-open/services/anchor/internal/database/edgedb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
+	"github.com/redbco/redb-open/services/anchor/internal/database/iceberg"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mariadb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mongodb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mssql"
@@ -334,6 +335,8 @@ func (dm *DatabaseManager) ExecuteCommand(databaseID string, command string) ([]
 		return elasticsearch.ExecuteCommand(context.Background(), client.DB, command)
 	case string(dbcapabilities.Neo4j):
 		return neo4j.ExecuteCommand(context.Background(), client.DB, command)
+	case string(dbcapabilities.Iceberg):
+		return iceberg.ExecuteCommand(context.Background(), client.DB, command)
 	default:
 		return nil, fmt.Errorf("unsupported database type: %s", client.DatabaseType)
 	}

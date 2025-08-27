@@ -18,6 +18,7 @@ import (
 	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 	"github.com/redbco/redb-open/services/anchor/internal/database/edgedb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
+	"github.com/redbco/redb-open/services/anchor/internal/database/iceberg"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mariadb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/milvus"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mongodb"
@@ -140,6 +141,8 @@ func (dm *DatabaseManager) GetDatabaseStructure(id string) (interface{}, error) 
 			return nil, fmt.Errorf("invalid neo4j connection type")
 		}
 		return neo4j.DiscoverSchema(driver)
+	case string(dbcapabilities.Iceberg):
+		return iceberg.DiscoverSchema(client.DB)
 	//case string(dbcapabilities.DB2):
 	//	db, ok := client.DB.(*sql.DB)
 	//	if !ok {
@@ -274,6 +277,8 @@ func (dm *DatabaseManager) DeployDatabaseStructure(databaseID string, structure 
 			return fmt.Errorf("invalid neo4j connection type")
 		}
 		return neo4j.CreateStructure(driver, structure)
+	case string(dbcapabilities.Iceberg):
+		return iceberg.CreateStructure(client.DB, structure)
 	default:
 		return fmt.Errorf("schema deployment not supported for database type: %s", client.DatabaseType)
 	}
@@ -321,6 +326,8 @@ func (dm *DatabaseManager) CreateDatabase(databaseID string, options map[string]
 		return elasticsearch.CreateDatabase(context.Background(), client.DB, databaseID, options)
 	case string(dbcapabilities.Neo4j):
 		return neo4j.CreateDatabase(context.Background(), client.DB, databaseID, options)
+	case string(dbcapabilities.Iceberg):
+		return iceberg.CreateDatabase(context.Background(), client.DB, databaseID, options)
 	default:
 		return fmt.Errorf("unsupported database type: %s", client.DatabaseType)
 	}
@@ -368,6 +375,8 @@ func (dm *DatabaseManager) DropDatabase(databaseID string, options map[string]in
 		return elasticsearch.DropDatabase(context.Background(), client.DB, databaseID, options)
 	case string(dbcapabilities.Neo4j):
 		return neo4j.DropDatabase(context.Background(), client.DB, databaseID, options)
+	case string(dbcapabilities.Iceberg):
+		return iceberg.DropDatabase(context.Background(), client.DB, databaseID, options)
 	default:
 		return fmt.Errorf("unsupported database type: %s", client.DatabaseType)
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/redbco/redb-open/services/anchor/internal/database/dynamodb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/edgedb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
+	"github.com/redbco/redb-open/services/anchor/internal/database/iceberg"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mariadb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/milvus"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mongodb"
@@ -84,6 +85,8 @@ func (dm *DatabaseManager) ConnectDatabase(config common.DatabaseConfig) (*commo
 		client, err = dynamodb.Connect(config)
 	case string(dbcapabilities.CosmosDB):
 		client, err = cosmosdb.Connect(config)
+	case string(dbcapabilities.Iceberg):
+		client, err = iceberg.Connect(config)
 	//case string(dbcapabilities.DB2):
 	//	client, err = db2.Connect(config)
 	//case string(dbcapabilities.Oracle):
@@ -280,6 +283,9 @@ func closeDatabase(client *common.DatabaseClient) error {
 	case string(dbcapabilities.CosmosDB):
 		// CosmosDB client doesn't need explicit close
 		return nil
+	case string(dbcapabilities.Iceberg):
+		// Iceberg client cleanup (HTTP client, etc.)
+		return nil
 	//case string(dbcapabilities.DB2):
 	//	if db, ok := client.DB.(*sql.DB); ok {
 	//		return db.Close()
@@ -350,6 +356,8 @@ func (dm *DatabaseManager) ConnectInstance(config common.InstanceConfig) (*commo
 		client, err = dynamodb.ConnectInstance(config)
 	case string(dbcapabilities.CosmosDB):
 		client, err = cosmosdb.ConnectInstance(config)
+	case string(dbcapabilities.Iceberg):
+		client, err = iceberg.ConnectInstance(config)
 	//case string(dbcapabilities.DB2):
 	//	client, err = db2.ConnectInstance(config)
 	//case string(dbcapabilities.Oracle):
@@ -532,6 +540,9 @@ func closeInstance(client *common.InstanceClient) error {
 	case string(dbcapabilities.CosmosDB):
 		// No explicit close method for azure cosmos db client
 		return fmt.Errorf("invalid cosmosdb connection type")
+	case string(dbcapabilities.Iceberg):
+		// Iceberg client cleanup (HTTP client, etc.)
+		return fmt.Errorf("invalid iceberg connection type")
 	//case string(dbcapabilities.DB2):
 	//	if db, ok := client.DB.(*sql.DB); ok {
 	//		return db.Close()
@@ -749,6 +760,9 @@ func closeReplication(client *common.ReplicationClient) error {
 		return nil
 	case string(dbcapabilities.CosmosDB):
 		// No explicit close method for azure cosmos db client
+		return nil
+	case string(dbcapabilities.Iceberg):
+		// Iceberg doesn't support traditional replication
 		return nil
 	//case string(dbcapabilities.DB2):
 	//	if db, ok := client.Connection.(*sql.DB); ok {

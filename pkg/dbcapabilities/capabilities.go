@@ -30,6 +30,7 @@ const (
 
 	// Analytics / Columnar / Cloud warehouses
 	Snowflake DatabaseType = "snowflake"
+	Iceberg   DatabaseType = "iceberg"
 
 	// Vectors / AI
 	Milvus   DatabaseType = "milvus"
@@ -369,6 +370,21 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           443,
 		ConnectionStringTemplate: "snowflake://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmColumnar},
+	},
+	Iceberg: {
+		Name:                     "Apache Iceberg",
+		ID:                       Iceberg,
+		HasSystemDatabase:        false, // Iceberg is a table format, not a database system
+		SupportsCDC:              false, // Iceberg doesn't support traditional CDC
+		HasUniqueIdentifier:      true,  // Unique ID: table UUID
+		SupportsClustering:       true,  // Iceberg supports partitioning and clustering
+		ClusteringMechanisms:     []string{"partitioning", "bucketing"},
+		SupportedVendors:         []string{"custom", "aws-s3", "azure-blob", "gcp-storage", "spark", "trino", "presto"},
+		DefaultPort:              8080, // REST catalog default port
+		DefaultSSLPort:           8443,
+		ConnectionStringTemplate: "iceberg://{username}:{password}@{host}:{port}/{database}?catalog={catalog}&warehouse={warehouse}",
+		Paradigms:                []DataParadigm{ParadigmColumnar, ParadigmObjectStore},
+		Aliases:                  []string{"apache-iceberg"},
 	},
 	Milvus: {
 		Name:                     "Milvus",

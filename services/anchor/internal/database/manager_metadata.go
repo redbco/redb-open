@@ -18,6 +18,7 @@ import (
 	"github.com/redbco/redb-open/services/anchor/internal/database/cockroach"
 	"github.com/redbco/redb-open/services/anchor/internal/database/edgedb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
+	"github.com/redbco/redb-open/services/anchor/internal/database/iceberg"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mariadb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mongodb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mssql"
@@ -70,6 +71,8 @@ func (c *DatabaseMetadataCollector) CollectMetadata(ctx context.Context, databas
 		metadata, err = elasticsearch.CollectDatabaseMetadata(ctx, c.client.DB)
 	case string(dbcapabilities.Neo4j):
 		metadata, err = neo4j.CollectDatabaseMetadata(ctx, c.client.DB)
+	case string(dbcapabilities.Iceberg):
+		metadata, err = iceberg.CollectDatabaseMetadata(ctx, c.client.DB)
 	//case string(dbcapabilities.DB2):
 	//	return db2.CollectDatabaseMetadata(ctx, c.client.DB)
 	//case string(dbcapabilities.Oracle):
@@ -130,6 +133,8 @@ func (c *InstanceMetadataCollector) CollectMetadata(ctx context.Context, instanc
 		metadata, err = elasticsearch.CollectInstanceMetadata(ctx, c.client.DB)
 	case string(dbcapabilities.Neo4j):
 		metadata, err = neo4j.CollectInstanceMetadata(ctx, c.client.DB)
+	case string(dbcapabilities.Iceberg):
+		metadata, err = iceberg.CollectInstanceMetadata(ctx, c.client.DB)
 	case string(dbcapabilities.Chroma):
 		if cc, ok := c.client.DB.(*chroma.ChromaClient); ok {
 			metadata, err = chroma.CollectInstanceMetadata(ctx, cc)
@@ -332,9 +337,20 @@ func (dm *DatabaseManager) GetDatabaseMetadata(id string) (config.DatabaseMetada
 		}
 		return config.DatabaseMetadata{
 			DatabaseID:  id,
-			Version:     metadata["version"].(string),
+			Version:     fmt.Sprintf("%v", metadata["version"]),
 			SizeBytes:   convertToInt64(metadata["size_bytes"]),
 			TablesCount: convertToInt(metadata["tables_count"]),
+		}, nil
+	case string(dbcapabilities.Iceberg):
+		metadata, err := iceberg.CollectDatabaseMetadata(context.Background(), client.DB)
+		if err != nil {
+			return config.DatabaseMetadata{}, fmt.Errorf("failed to collect metadata: %w", err)
+		}
+		return config.DatabaseMetadata{
+			DatabaseID:  id,
+			Version:     fmt.Sprintf("%v", metadata["version"]),
+			SizeBytes:   convertToInt64(metadata["total_data_size"]),
+			TablesCount: convertToInt(metadata["table_count"]),
 		}, nil
 	case string(dbcapabilities.Chroma):
 		cc, ok := client.DB.(*chroma.ChromaClient)
@@ -593,9 +609,22 @@ func (dm *DatabaseManager) GetInstanceMetadata(id string) (config.InstanceMetada
 		}
 		return config.InstanceMetadata{
 			InstanceID:       id,
-			Version:          metadata["version"].(string),
+			Version:          fmt.Sprintf("%v", metadata["version"]),
 			UptimeSeconds:    convertToInt64(metadata["uptime_seconds"]),
 			TotalDatabases:   convertToInt(metadata["total_databases"]),
+			TotalConnections: convertToInt(metadata["total_connections"]),
+			MaxConnections:   convertToInt(metadata["max_connections"]),
+		}, nil
+	case string(dbcapabilities.Iceberg):
+		metadata, err := iceberg.CollectInstanceMetadata(context.Background(), client.DB)
+		if err != nil {
+			return config.InstanceMetadata{}, fmt.Errorf("failed to collect metadata: %w", err)
+		}
+		return config.InstanceMetadata{
+			InstanceID:       id,
+			Version:          fmt.Sprintf("%v", metadata["version"]),
+			UptimeSeconds:    convertToInt64(metadata["uptime_seconds"]),
+			TotalDatabases:   convertToInt(metadata["namespace_count"]),
 			TotalConnections: convertToInt(metadata["total_connections"]),
 			MaxConnections:   convertToInt(metadata["max_connections"]),
 		}, nil
