@@ -10,9 +10,7 @@ use (
 	./services/integration
 	./services/mcpserver
 	./services/mesh
-	./services/queryapi
 	./services/security
-	./services/serviceapi
 	./services/transformation
 	./services/unifiedmodel
 	./services/webhook

@@ -4,6 +4,12 @@ supervisor:
   heartbeat_timeout: 30s
   shutdown_timeout: 60s
 
+license:
+  distribution: "open-source"
+
+database:
+  name: redb
+
 logging:
   level: info
   retention_days: 7
@@ -21,25 +27,25 @@ services:
     environment:
       SERVICE_NAME: security
 
-  webhook:
-    enabled: true
-    required: true
-    executable: ./redb-webhook
-    args:
-      - --port=50060
-      - --supervisor=localhost:50000
-    environment:
-      SERVICE_NAME: webhook
-
   unifiedmodel:
     enabled: true
     required: true
     executable: ./redb-unifiedmodel
     args:
-      - --port=50053
+      - --port=50052
       - --supervisor=localhost:50000
     environment:
       SERVICE_NAME: unifiedmodel
+
+  webhook:
+    enabled: true
+    required: true
+    executable: ./redb-webhook
+    args:
+      - --port=50053
+      - --supervisor=localhost:50000
+    environment:
+      SERVICE_NAME: webhook
 
   # Data Services
   transformation:
@@ -60,7 +66,7 @@ services:
     required: true
     executable: ./redb-core
     args:
-      - --port=50062
+      - --port=50055
       - --supervisor=localhost:50000
     dependencies:
       - security
@@ -87,7 +93,7 @@ services:
     required: true
     executable: ./redb-anchor
     args:
-      - --port=50055
+      - --port=50057
       - --supervisor=localhost:50000
     dependencies:
       - core
@@ -101,7 +107,7 @@ services:
     required: true
     executable: ./redb-integration
     args:
-      - --port=50063
+      - --port=50058
       - --supervisor=localhost:50000
     environment:
       SERVICE_NAME: integration
@@ -110,18 +116,6 @@ services:
     resources:
       max_memory_mb: 2048
       max_cpu_percent: 100
-
-  serviceapi:
-    enabled: true
-    required: true
-    executable: ./redb-serviceapi
-    args:
-      - --port=50057
-      - --supervisor=localhost:50000
-    dependencies:
-      - core
-    environment:
-      SERVICE_NAME: serviceapi
 
   clientapi:
     enabled: true
@@ -135,24 +129,12 @@ services:
     environment:
       SERVICE_NAME: clientapi
   
-  queryapi:
-    enabled: true
-    required: true
-    executable: ./redb-queryapi
-    args:
-      - --port=50058
-      - --supervisor=localhost:50000
-    dependencies:
-      - core
-    environment:
-      SERVICE_NAME: queryapi
-
   mcpserver:
     enabled: true
     required: true
     executable: ./redb-mcpserver
     args:
-      - --port=50061
+      - --port=50060
       - --supervisor=localhost:50000
     dependencies:
       - core

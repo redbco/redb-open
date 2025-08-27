@@ -41,7 +41,7 @@ func (th *TenantHandlers) ListTenants(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Check if tenant client is available
-	if th.engine.GetTenantClient() == nil {
+	if th.engine.tenantClient == nil {
 		if th.engine.logger != nil {
 			th.engine.logger.Errorf("Tenant client is nil - gRPC connection may have failed during startup")
 		}
@@ -57,7 +57,7 @@ func (th *TenantHandlers) ListTenants(w http.ResponseWriter, r *http.Request) {
 		th.engine.logger.Debugf("Making gRPC ListTenants call to core service")
 	}
 
-	grpcResp, err := th.engine.GetTenantClient().ListTenants(ctx, grpcReq)
+	grpcResp, err := th.engine.tenantClient.ListTenants(ctx, grpcReq)
 	if err != nil {
 		th.handleGRPCError(w, err, "List tenants failed")
 		return
@@ -115,7 +115,7 @@ func (th *TenantHandlers) ShowTenant(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Check if tenant client is available
-	if th.engine.GetTenantClient() == nil {
+	if th.engine.tenantClient == nil {
 		if th.engine.logger != nil {
 			th.engine.logger.Errorf("Tenant client is nil - gRPC connection may have failed during startup")
 		}
@@ -134,7 +134,7 @@ func (th *TenantHandlers) ShowTenant(w http.ResponseWriter, r *http.Request) {
 		th.engine.logger.Debugf("gRPC request: tenant_id=%s", grpcReq.TenantId)
 	}
 
-	grpcResp, err := th.engine.GetTenantClient().ShowTenant(ctx, grpcReq)
+	grpcResp, err := th.engine.tenantClient.ShowTenant(ctx, grpcReq)
 	if err != nil {
 		th.handleGRPCError(w, err, "Show tenant failed")
 		return
@@ -203,7 +203,7 @@ func (th *TenantHandlers) AddTenant(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Check if tenant client is available
-	if th.engine.GetTenantClient() == nil {
+	if th.engine.tenantClient == nil {
 		if th.engine.logger != nil {
 			th.engine.logger.Errorf("Tenant client is nil - gRPC connection may have failed during startup")
 		}
@@ -226,7 +226,7 @@ func (th *TenantHandlers) AddTenant(w http.ResponseWriter, r *http.Request) {
 		th.engine.logger.Debugf("gRPC request: tenant_name=%s", grpcReq.TenantName)
 	}
 
-	grpcResp, err := th.engine.GetTenantClient().AddTenant(ctx, grpcReq)
+	grpcResp, err := th.engine.tenantClient.AddTenant(ctx, grpcReq)
 	if err != nil {
 		th.handleGRPCError(w, err, "Add tenant failed")
 		return
@@ -291,7 +291,7 @@ func (th *TenantHandlers) ModifyTenant(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Check if tenant client is available
-	if th.engine.GetTenantClient() == nil {
+	if th.engine.tenantClient == nil {
 		if th.engine.logger != nil {
 			th.engine.logger.Errorf("Tenant client is nil - gRPC connection may have failed during startup")
 		}
@@ -318,7 +318,7 @@ func (th *TenantHandlers) ModifyTenant(w http.ResponseWriter, r *http.Request) {
 		th.engine.logger.Debugf("gRPC request: tenant_id=%s", grpcReq.TenantId)
 	}
 
-	grpcResp, err := th.engine.GetTenantClient().ModifyTenant(ctx, grpcReq)
+	grpcResp, err := th.engine.tenantClient.ModifyTenant(ctx, grpcReq)
 	if err != nil {
 		th.handleGRPCError(w, err, "Modify tenant failed")
 		return
@@ -373,7 +373,7 @@ func (th *TenantHandlers) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Check if tenant client is available
-	if th.engine.GetTenantClient() == nil {
+	if th.engine.tenantClient == nil {
 		if th.engine.logger != nil {
 			th.engine.logger.Errorf("Tenant client is nil - gRPC connection may have failed during startup")
 		}
@@ -392,7 +392,7 @@ func (th *TenantHandlers) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 		th.engine.logger.Debugf("gRPC request: tenant_id=%s", grpcReq.TenantId)
 	}
 
-	grpcResp, err := th.engine.GetTenantClient().DeleteTenant(ctx, grpcReq)
+	grpcResp, err := th.engine.tenantClient.DeleteTenant(ctx, grpcReq)
 	if err != nil {
 		th.handleGRPCError(w, err, "Delete tenant failed")
 		return

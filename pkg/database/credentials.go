@@ -2,6 +2,7 @@ package database
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/redbco/redb-open/pkg/keyring"
@@ -12,7 +13,7 @@ const (
 	DatabaseKeyringService = "redb-database"
 	DatabasePasswordKey    = "postgres-password"
 	ProductionUser         = "redb"
-	ProductionDatabase     = "redb"
+	DefaultDatabase        = "redb"
 )
 
 // GetProductionPassword retrieves the production database password from keyring
@@ -31,10 +32,19 @@ func GetProductionPassword() (string, error) {
 }
 
 // FromProductionConfig creates a PostgreSQL config using keyring credentials
-func FromProductionConfig() (PostgreSQLConfig, error) {
+func FromProductionConfig(databaseName string) (PostgreSQLConfig, error) {
 	password, err := GetProductionPassword()
 	if err != nil {
 		return PostgreSQLConfig{}, err
+	}
+
+	// Use provided database name, or try environment variable, or use default
+	dbName := databaseName
+	if dbName == "" {
+		dbName = os.Getenv("REDB_DATABASE_NAME")
+	}
+	if dbName == "" {
+		dbName = DefaultDatabase
 	}
 
 	return PostgreSQLConfig{
@@ -42,7 +52,7 @@ func FromProductionConfig() (PostgreSQLConfig, error) {
 		Password:          password,
 		Host:              "localhost",
 		Port:              5432,
-		Database:          ProductionDatabase,
+		Database:          dbName,
 		SSLMode:           "disable",
 		MaxConnections:    10,
 		ConnectionTimeout: 5 * time.Second,
@@ -80,8 +90,8 @@ func (dcm *DatabaseCredentialsManager) SetDatabasePassword(password string) erro
 }
 
 // TestConnection tests if the database connection works with stored credentials
-func (dcm *DatabaseCredentialsManager) TestConnection() error {
-	config, err := FromProductionConfig()
+func (dcm *DatabaseCredentialsManager) TestConnection(databaseName string) error {
+	config, err := FromProductionConfig(databaseName)
 	if err != nil {
 		return fmt.Errorf("failed to get production config: %w", err)
 	}

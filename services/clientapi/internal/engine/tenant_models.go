@@ -52,16 +52,3 @@ type DeleteTenantResponse struct {
 	Message string `json:"message"`
 	Success bool   `json:"success"`
 }
-
-// ErrorResponse represents an error response
-type ErrorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-	Status  string `json:"status"`
-}
-
-// Status constants
-const (
-	StatusSuccess = "success"
-	StatusFailure = "error"
-)

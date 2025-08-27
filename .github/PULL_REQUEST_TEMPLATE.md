@@ -25,8 +25,6 @@
 - [ ] **Transformation Service** (`services/transformation/`)
 - [ ] **Mesh Service** (`services/mesh/`)
 - [ ] **Client API** (`services/clientapi/`)
-- [ ] **Service API** (`services/serviceapi/`)
-- [ ] **Query API** (`services/queryapi/`)
 - [ ] **Webhook Service** (`services/webhook/`)
 - [ ] **Integration Service** (`services/integration/`)
 - [ ] **MCP Server Service** (`services/mcpserver/`)

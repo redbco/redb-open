@@ -78,22 +78,22 @@ func readPassword(prompt string) (string, error) {
 	return strings.TrimSpace(string(bytePassword)), nil
 }
 
-// getServiceAPIURLWithPrompt gets the service API URL, prompting for it if not stored
-func getServiceAPIURLWithPrompt() string {
-	// Try to get the service API URL from stored configuration
-	serviceAPIURL, err := config.GetServiceAPIURL()
-	if err == nil {
-		return serviceAPIURL
+// getClientAPIURLWithPrompt gets the client API URL, prompting for it if not stored
+func getClientAPIURLWithPrompt() string {
+	// Try to get the client API URL from stored configuration
+	clientAPIURL := config.GetGlobalAPIURLNoAuth()
+	if clientAPIURL != "" {
+		return clientAPIURL
 	}
 
 	// If not stored, prompt the user
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("Service API URL (default: http://localhost:8081): ")
+	fmt.Print("Client API URL (default: http://localhost:8080): ")
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 
 	if input == "" {
-		input = "http://localhost:8081"
+		input = "http://localhost:8080"
 	}
 
 	// Ensure protocol is included
@@ -141,8 +141,8 @@ func performInitialSetup() error {
 	fmt.Println("This command is only available when no tenants exist in the system.")
 	fmt.Println()
 
-	// Get Service API URL - prompt if not stored
-	serviceAPIURL := getServiceAPIURLWithPrompt()
+	// Get Client API URL - prompt if not stored
+	clientAPIURL := getClientAPIURLWithPrompt()
 
 	// Check if setup is already done by trying to list tenants
 	client := httpclient.GetClient()
@@ -150,7 +150,7 @@ func performInitialSetup() error {
 		Tenants []interface{} `json:"tenants"`
 	}
 
-	err := client.Get(fmt.Sprintf("%s/api/v1/tenants", serviceAPIURL), &tenantsResponse, false)
+	err := client.Get(fmt.Sprintf("%s/api/v1/tenants", clientAPIURL), &tenantsResponse, false)
 	if err == nil && len(tenantsResponse.Tenants) > 0 {
 		return SetupError{message: "initial setup is not available: tenants already exist in the system"}
 	}
@@ -229,7 +229,7 @@ func performInitialSetup() error {
 
 	// Make the API call
 	var setupResp InitialSetupResponse
-	url := fmt.Sprintf("%s/api/v1/setup", serviceAPIURL)
+	url := fmt.Sprintf("%s/api/v1/setup", clientAPIURL)
 
 	fmt.Println()
 	fmt.Println("Creating initial setup...")

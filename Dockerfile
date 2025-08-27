@@ -281,9 +281,9 @@ USER postgres
 
 # Expose ports
 # HTTP API ports (for external access)
-EXPOSE 8080 8081 8082
+EXPOSE 3000 8080
 # Internal gRPC ports (for service communication)
-EXPOSE 50000 50051 50053 50054 50055 50056 50057 50058 50059 50060 50061 50062
+EXPOSE 50000 50051 50052 50053 50054 50055 50056 50057 50058 50059 50060
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

@@ -66,6 +66,14 @@ const (
 	ProductionUser     = "redb"
 )
 
+// getProductionDatabaseName returns the production database name from environment or defaults
+func getProductionDatabaseName() string {
+	if dbName := os.Getenv("REDB_DATABASE_NAME"); dbName != "" {
+		return dbName
+	}
+	return ProductionDatabase
+}
+
 type Initializer struct {
 	logger         logger.LoggerInterface
 	reader         io.Reader
@@ -159,7 +167,7 @@ func (i *Initializer) Initialize(ctx context.Context) error {
 		Password: prodPassword,
 		Host:     workingCreds.Host,
 		Port:     workingCreds.Port,
-		Database: ProductionDatabase,
+		Database: getProductionDatabaseName(),
 	}
 
 	if err := i.createDatabaseSchema(ctx, prodCreds); err != nil {
@@ -238,7 +246,7 @@ func (i *Initializer) AutoInitialize(ctx context.Context) error {
 		Password: prodPassword,
 		Host:     workingCreds.Host,
 		Port:     workingCreds.Port,
-		Database: ProductionDatabase,
+		Database: getProductionDatabaseName(),
 	}
 
 	// Check if initialization is already complete
@@ -251,7 +259,7 @@ func (i *Initializer) AutoInitialize(ctx context.Context) error {
 		i.logger.Info("System is already fully initialized, skipping initialization steps")
 		i.logger.Info("Node auto-initialization completed successfully!")
 		i.logger.Info("Database schema and node setup completed.")
-		i.logger.Info("Use the Service API to create the initial tenant and user.")
+		i.logger.Info("Use the API to create the initial tenant and user.")
 		i.logger.Info("You can now start the supervisor service normally.")
 		return nil
 	}
@@ -274,7 +282,7 @@ func (i *Initializer) AutoInitialize(ctx context.Context) error {
 
 	i.logger.Info("Node auto-initialization completed successfully!")
 	i.logger.Info("Database schema and node setup completed.")
-	i.logger.Info("Use the Service API to create the initial tenant and user.")
+	i.logger.Info("Use the API to create the initial tenant and user.")
 	i.logger.Info("You can now start the supervisor service normally.")
 
 	return nil
@@ -672,6 +680,9 @@ func (i *Initializer) generateSecurePassword(length int) (string, error) {
 func (i *Initializer) createProductionDatabase(ctx context.Context, adminCreds *DatabaseCredentials, prodPassword string) error {
 	i.logger.Info("Creating production database and user...")
 
+	// Get the production database name
+	prodDatabaseName := getProductionDatabaseName()
+
 	// Use pgx.ParseConfig to handle special characters in passwords
 	connConfig, err := pgx.ParseConfig("")
 	if err != nil {
@@ -693,20 +704,20 @@ func (i *Initializer) createProductionDatabase(ctx context.Context, adminCreds *
 
 	// Check if database already exists
 	var exists bool
-	err = conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", ProductionDatabase).Scan(&exists)
+	err = conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", prodDatabaseName).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("failed to check if database exists: %w", err)
 	}
 
 	if exists {
-		i.logger.Warnf("Database '%s' already exists, skipping database creation", ProductionDatabase)
+		i.logger.Warnf("Database '%s' already exists, skipping database creation", prodDatabaseName)
 	} else {
 		// Create database
-		_, err = conn.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", ProductionDatabase))
+		_, err = conn.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", prodDatabaseName))
 		if err != nil {
 			return fmt.Errorf("failed to create database: %w", err)
 		}
-		i.logger.Infof("Created database '%s'", ProductionDatabase)
+		i.logger.Infof("Created database '%s'", prodDatabaseName)
 	}
 
 	// Check if user already exists
@@ -738,12 +749,12 @@ func (i *Initializer) createProductionDatabase(ctx context.Context, adminCreds *
 	}
 
 	// Grant privileges and set ownership
-	_, err = conn.Exec(ctx, fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", ProductionDatabase, ProductionUser))
+	_, err = conn.Exec(ctx, fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", prodDatabaseName, ProductionUser))
 	if err != nil {
 		return fmt.Errorf("failed to grant privileges: %w", err)
 	}
 
-	_, err = conn.Exec(ctx, fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", ProductionDatabase, ProductionUser))
+	_, err = conn.Exec(ctx, fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", prodDatabaseName, ProductionUser))
 	if err != nil {
 		return fmt.Errorf("failed to set database owner: %w", err)
 	}

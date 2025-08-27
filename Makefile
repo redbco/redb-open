@@ -3,7 +3,7 @@
 # Project variables
 BINARY_DIR := bin
 BUILD_DIR := build
-SERVICES := supervisor security unifiedmodel transformation integration mesh anchor core webhook clientapi serviceapi queryapi mcpserver cli
+SERVICES := supervisor security unifiedmodel transformation integration mesh anchor core webhook clientapi mcpserver cli
 
 # Default to darwin arm64 build
 GOOS ?= darwin

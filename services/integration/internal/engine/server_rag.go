@@ -26,7 +26,8 @@ func (s *RAGServer) initOrchestrator(ctx context.Context) error {
 	// connect to anchor
 	addr := s.engine.config.Get("services.anchor.grpc_address")
 	if addr == "" {
-		addr = "localhost:50055"
+		// TODO: make this dynamic
+		addr = "localhost:50057"
 	}
 	conn, err := pkggrpc.NewClient(ctx, addr, pkggrpc.DefaultClientOptions())
 	if err != nil {

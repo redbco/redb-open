@@ -462,7 +462,8 @@ func (e *Engine) loadServerBindings(ctx context.Context, mcpServerID string) ([]
 func (e *Engine) initAnchorClient() error {
 	addr := e.config.Get("services.anchor.grpc_address")
 	if addr == "" {
-		addr = "localhost:50055"
+		// TODO: make this dynamic
+		addr = "localhost:50057"
 	}
 	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {

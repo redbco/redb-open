@@ -62,13 +62,11 @@ type UpdateTenantRequest struct {
 
 // ListTenants lists all tenants
 func ListTenants() error {
-	serviceURL, err := config.GetServiceAPIURL()
-	if err != nil {
-		return err
-	}
+	// Use global API URL since tenant endpoints are now global in Client API
+	globalURL := config.GetGlobalAPIURLNoAuth()
 
 	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/tenants", serviceURL)
+	url := fmt.Sprintf("%s/api/v1/tenants", globalURL)
 
 	var response Response
 	if err := client.Get(url, &response, false); err != nil {
@@ -112,13 +110,11 @@ func ListTenants() error {
 
 // ShowTenant displays details of a specific tenant
 func ShowTenant(tenantID string) error {
-	serviceURL, err := config.GetServiceAPIURL()
-	if err != nil {
-		return err
-	}
+	// Use global API URL since tenant endpoints are now global in Client API
+	globalURL := config.GetGlobalAPIURLNoAuth()
 
 	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/tenants/%s", serviceURL, tenantID)
+	url := fmt.Sprintf("%s/api/v1/tenants/%s", globalURL, tenantID)
 
 	var response TenantResponse
 	if err := client.Get(url, &response, false); err != nil {
@@ -200,13 +196,11 @@ func AddTenant(args []string) error {
 		URL:          tenantURL,
 	}
 
-	serviceURL, err := config.GetServiceAPIURL()
-	if err != nil {
-		return err
-	}
+	// Use global API URL since tenant endpoints are now global in Client API
+	globalURL := config.GetGlobalAPIURLNoAuth()
 
 	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/tenants", serviceURL)
+	url := fmt.Sprintf("%s/api/v1/tenants", globalURL)
 
 	var createResponse CreateTenantResponse
 	if err := client.Post(url, createReq, &createResponse, false); err != nil {
@@ -220,13 +214,11 @@ func AddTenant(args []string) error {
 // ModifyTenant updates an existing tenant
 func ModifyTenant(tenantID string, args []string) error {
 	// First find the tenant to get its details
-	serviceURL, err := config.GetServiceAPIURL()
-	if err != nil {
-		return err
-	}
+	// Use global API URL since tenant endpoints are now global in Client API
+	globalURL := config.GetGlobalAPIURLNoAuth()
 
 	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/tenants/%s", serviceURL, tenantID)
+	url := fmt.Sprintf("%s/api/v1/tenants/%s", globalURL, tenantID)
 
 	fmt.Println()
 
@@ -279,7 +271,7 @@ func ModifyTenant(tenantID string, args []string) error {
 	}
 
 	// Update the tenant
-	updateURL := fmt.Sprintf("%s/api/v1/tenants/%s", serviceURL, tenantID)
+	updateURL := fmt.Sprintf("%s/api/v1/tenants/%s", globalURL, tenantID)
 
 	var updateResponse UpdateTenantResponse
 	if err := client.Put(updateURL, updateReq, &updateResponse, false); err != nil {
@@ -302,11 +294,8 @@ func DeleteTenant(tenantID string, args []string) error {
 		}
 	}
 
-	// First find the tenant to get its details
-	serviceURL, err := config.GetServiceAPIURL()
-	if err != nil {
-		return err
-	}
+	// Use global API URL since tenant endpoints are now global in Client API
+	globalURL := config.GetGlobalAPIURLNoAuth()
 
 	client := httpclient.GetClient()
 
@@ -326,7 +315,7 @@ func DeleteTenant(tenantID string, args []string) error {
 	}
 
 	// Delete the tenant
-	deleteURL := fmt.Sprintf("%s/api/v1/tenants/%s", serviceURL, tenantID)
+	deleteURL := fmt.Sprintf("%s/api/v1/tenants/%s", globalURL, tenantID)
 
 	if err := client.Delete(deleteURL, false); err != nil {
 		return fmt.Errorf("failed to delete tenant: %v", err)

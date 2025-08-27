@@ -95,7 +95,8 @@ func (s *Server) ConnectInstance(ctx context.Context, req *corev1.ConnectInstanc
 	}
 
 	// Call anchor service to connect to the instance
-	anchorAddr := "localhost:50055" // Default anchor service address
+	// TODO: make this dynamic
+	anchorAddr := "localhost:50057" // Default anchor service address
 	if s.engine.config != nil {
 		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
 			anchorAddr = addr
@@ -147,7 +148,8 @@ func (s *Server) ReconnectInstance(ctx context.Context, req *corev1.ReconnectIns
 	instanceService := instance.NewService(s.engine.db, s.engine.logger)
 
 	// Get anchor service
-	anchorAddr := "localhost:50055" // Default anchor service address
+	// TODO: make this dynamic
+	anchorAddr := "localhost:50057" // Default anchor service address
 	if s.engine.config != nil {
 		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
 			anchorAddr = addr
@@ -267,7 +269,8 @@ func (s *Server) DisconnectInstance(ctx context.Context, req *corev1.DisconnectI
 	}
 
 	// Call anchor service to disconnect the instance
-	anchorAddr := "localhost:50055" // Default anchor service address
+	// TODO: make this dynamic
+	anchorAddr := "localhost:50057" // Default anchor service address
 	if s.engine.config != nil {
 		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
 			anchorAddr = addr

@@ -10,6 +10,7 @@ import (
 
 type Config struct {
 	Supervisor SupervisorConfig         `yaml:"supervisor"`
+	Database   DatabaseConfig           `yaml:"database"`
 	Services   map[string]ServiceConfig `yaml:"services"`
 	Logging    LoggingConfig            `yaml:"logging"`
 }
@@ -30,6 +31,10 @@ type ServiceConfig struct {
 	Dependencies []string          `yaml:"dependencies"`
 	Config       map[string]string `yaml:"config"`
 	ExternalPort int               `yaml:"external_port"`
+}
+
+type DatabaseConfig struct {
+	Name string `yaml:"name"`
 }
 
 type LoggingConfig struct {
@@ -61,6 +66,11 @@ func Load(path string) (*Config, error) {
 	}
 	if config.Supervisor.ShutdownTimeout == 0 {
 		config.Supervisor.ShutdownTimeout = 60 * time.Second
+	}
+
+	// Validate required configuration
+	if config.Database.Name == "" {
+		return nil, fmt.Errorf("database.name is required in configuration file")
 	}
 
 	return &config, nil
