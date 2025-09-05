@@ -11,82 +11,69 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	neo4jgo "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/redbco/redb-open/pkg/dbcapabilities"
-	"github.com/redbco/redb-open/services/anchor/internal/database/cassandra"
 	"github.com/redbco/redb-open/services/anchor/internal/database/chroma"
 	"github.com/redbco/redb-open/services/anchor/internal/database/clickhouse"
-	"github.com/redbco/redb-open/services/anchor/internal/database/cockroach"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
-	"github.com/redbco/redb-open/services/anchor/internal/database/cosmosdb"
-	"github.com/redbco/redb-open/services/anchor/internal/database/dynamodb"
-	"github.com/redbco/redb-open/services/anchor/internal/database/edgedb"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
-	"github.com/redbco/redb-open/services/anchor/internal/database/iceberg"
-	"github.com/redbco/redb-open/services/anchor/internal/database/mariadb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/milvus"
-	"github.com/redbco/redb-open/services/anchor/internal/database/mongodb"
-	"github.com/redbco/redb-open/services/anchor/internal/database/mssql"
-	"github.com/redbco/redb-open/services/anchor/internal/database/mysql"
-	"github.com/redbco/redb-open/services/anchor/internal/database/neo4j"
 	"github.com/redbco/redb-open/services/anchor/internal/database/pinecone"
 	"github.com/redbco/redb-open/services/anchor/internal/database/postgres"
-	"github.com/redbco/redb-open/services/anchor/internal/database/redis"
-	"github.com/redbco/redb-open/services/anchor/internal/database/snowflake"
 	"github.com/redbco/redb-open/services/anchor/internal/database/weaviate"
 	goredis "github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 // ConnectDatabase establishes a connection to a database
-func (dm *DatabaseManager) ConnectDatabase(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func (dm *DatabaseManager) ConnectDatabase(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	// Log connection attempt with unified logging
 	if dm.dbLogger != nil {
 		dm.dbLogger.LogClientConnectionAttempt(config.ConnectionType, config.DatabaseID, config.Host, config.Port)
 	}
 
-	var client *common.DatabaseClient
+	var client *dbclient.DatabaseClient
 	var err error
 
 	switch config.ConnectionType {
 	case string(dbcapabilities.PostgreSQL):
 		client, err = postgres.Connect(config)
-	case string(dbcapabilities.MySQL):
-		client, err = mysql.Connect(config)
-	case string(dbcapabilities.MariaDB):
-		client, err = mariadb.Connect(config)
-	case string(dbcapabilities.CockroachDB):
-		client, err = cockroach.Connect(config)
-	case string(dbcapabilities.Redis):
-		client, err = redis.Connect(config)
-	case string(dbcapabilities.MongoDB):
-		client, err = mongodb.Connect(config)
-	case string(dbcapabilities.SQLServer):
-		client, err = mssql.Connect(config)
-	case string(dbcapabilities.Cassandra):
-		client, err = cassandra.Connect(config)
-	case string(dbcapabilities.EdgeDB):
-		client, err = edgedb.Connect(config)
-	case string(dbcapabilities.Snowflake):
-		client, err = snowflake.Connect(config)
-	case string(dbcapabilities.ClickHouse):
-		client, err = clickhouse.Connect(config)
-	case string(dbcapabilities.Pinecone):
-		client, err = pinecone.Connect(config)
-	case string(dbcapabilities.Chroma):
-		client, err = chroma.Connect(config)
-	case string(dbcapabilities.Milvus):
-		client, err = milvus.Connect(config)
-	case string(dbcapabilities.Weaviate):
-		client, err = weaviate.Connect(config)
-	case string(dbcapabilities.Elasticsearch):
-		client, err = elasticsearch.Connect(config)
-	case string(dbcapabilities.Neo4j):
-		client, err = neo4j.Connect(config)
-	case string(dbcapabilities.DynamoDB):
-		client, err = dynamodb.Connect(config)
-	case string(dbcapabilities.CosmosDB):
-		client, err = cosmosdb.Connect(config)
-	case string(dbcapabilities.Iceberg):
-		client, err = iceberg.Connect(config)
+	//case string(dbcapabilities.MySQL):
+	//	client, err = mysql.Connect(config)
+	//case string(dbcapabilities.MariaDB):
+	//	client, err = mariadb.Connect(config)
+	//case string(dbcapabilities.CockroachDB):
+	//	client, err = cockroach.Connect(config)
+	//case string(dbcapabilities.Redis):
+	//	client, err = redis.Connect(config)
+	//case string(dbcapabilities.MongoDB):
+	//	client, err = mongodb.Connect(config)
+	//case string(dbcapabilities.SQLServer):
+	//	client, err = mssql.Connect(config)
+	//case string(dbcapabilities.Cassandra):
+	//	client, err = cassandra.Connect(config)
+	//case string(dbcapabilities.EdgeDB):
+	//	client, err = edgedb.Connect(config)
+	//case string(dbcapabilities.Snowflake):
+	//	client, err = snowflake.Connect(config)
+	//case string(dbcapabilities.ClickHouse):
+	//	client, err = clickhouse.Connect(config)
+	//case string(dbcapabilities.Pinecone):
+	//	client, err = pinecone.Connect(config)
+	//case string(dbcapabilities.Chroma):
+	//	client, err = chroma.Connect(config)
+	//case string(dbcapabilities.Milvus):
+	//	client, err = milvus.Connect(config)
+	//case string(dbcapabilities.Weaviate):
+	//	client, err = weaviate.Connect(config)
+	//case string(dbcapabilities.Elasticsearch):
+	//	client, err = elasticsearch.Connect(config)
+	//case string(dbcapabilities.Neo4j):
+	//	client, err = neo4j.Connect(config)
+	//case string(dbcapabilities.DynamoDB):
+	//	client, err = dynamodb.Connect(config)
+	//case string(dbcapabilities.CosmosDB):
+	//	client, err = cosmosdb.Connect(config)
+	//case string(dbcapabilities.Iceberg):
+	//	client, err = iceberg.Connect(config)
 	//case string(dbcapabilities.DB2):
 	//	client, err = db2.Connect(config)
 	//case string(dbcapabilities.Oracle):
@@ -176,7 +163,7 @@ func (dm *DatabaseManager) DisconnectDatabase(id string) error {
 }
 
 // closeDatabase closes the database connection properly based on the type
-func closeDatabase(client *common.DatabaseClient) error {
+func closeDatabase(client *dbclient.DatabaseClient) error {
 	atomic.StoreInt32(&client.IsConnected, 0)
 
 	switch client.DatabaseType {
@@ -302,7 +289,7 @@ func closeDatabase(client *common.DatabaseClient) error {
 }
 
 // ConnectInstance establishes a connection to a database instance
-func (dm *DatabaseManager) ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func (dm *DatabaseManager) ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	// Log instance connection attempt with unified logging
 	if dm.dbLogger != nil {
 		dm.dbLogger.LogConnectionAttempt(DatabaseLogContext{
@@ -314,50 +301,50 @@ func (dm *DatabaseManager) ConnectInstance(config common.InstanceConfig) (*commo
 		})
 	}
 
-	var client *common.InstanceClient
+	var client *dbclient.InstanceClient
 	var err error
 
 	switch config.ConnectionType {
 	case string(dbcapabilities.PostgreSQL):
 		client, err = postgres.ConnectInstance(config)
-	case string(dbcapabilities.MySQL):
-		client, err = mysql.ConnectInstance(config)
-	case string(dbcapabilities.MariaDB):
-		client, err = mariadb.ConnectInstance(config)
-	case string(dbcapabilities.CockroachDB):
-		client, err = cockroach.ConnectInstance(config)
-	case string(dbcapabilities.Redis):
-		client, err = redis.ConnectInstance(config)
-	case string(dbcapabilities.MongoDB):
-		client, err = mongodb.ConnectInstance(config)
-	case string(dbcapabilities.SQLServer):
-		client, err = mssql.ConnectInstance(config)
-	case string(dbcapabilities.Cassandra):
-		client, err = cassandra.ConnectInstance(config)
-	case string(dbcapabilities.EdgeDB):
-		client, err = edgedb.ConnectInstance(config)
-	case string(dbcapabilities.Snowflake):
-		client, err = snowflake.ConnectInstance(config)
-	case string(dbcapabilities.ClickHouse):
-		client, err = clickhouse.ConnectInstance(config)
-	case string(dbcapabilities.Pinecone):
-		client, err = pinecone.ConnectInstance(config)
-	case string(dbcapabilities.Chroma):
-		client, err = chroma.ConnectInstance(config)
-	case string(dbcapabilities.Milvus):
-		client, err = milvus.ConnectInstance(config)
-	case string(dbcapabilities.Weaviate):
-		client, err = weaviate.ConnectInstance(config)
-	case string(dbcapabilities.Elasticsearch):
-		client, err = elasticsearch.ConnectInstance(config)
-	case string(dbcapabilities.Neo4j):
-		client, err = neo4j.ConnectInstance(config)
-	case string(dbcapabilities.DynamoDB):
-		client, err = dynamodb.ConnectInstance(config)
-	case string(dbcapabilities.CosmosDB):
-		client, err = cosmosdb.ConnectInstance(config)
-	case string(dbcapabilities.Iceberg):
-		client, err = iceberg.ConnectInstance(config)
+	//case string(dbcapabilities.MySQL):
+	//	client, err = mysql.ConnectInstance(config)
+	//case string(dbcapabilities.MariaDB):
+	//	client, err = mariadb.ConnectInstance(config)
+	//case string(dbcapabilities.CockroachDB):
+	//	client, err = cockroach.ConnectInstance(config)
+	//case string(dbcapabilities.Redis):
+	//	client, err = redis.ConnectInstance(config)
+	//case string(dbcapabilities.MongoDB):
+	//	client, err = mongodb.ConnectInstance(config)
+	//case string(dbcapabilities.SQLServer):
+	//	client, err = mssql.ConnectInstance(config)
+	//case string(dbcapabilities.Cassandra):
+	//	client, err = cassandra.ConnectInstance(config)
+	//case string(dbcapabilities.EdgeDB):
+	//	client, err = edgedb.ConnectInstance(config)
+	//case string(dbcapabilities.Snowflake):
+	//	client, err = snowflake.ConnectInstance(config)
+	//case string(dbcapabilities.ClickHouse):
+	//	client, err = clickhouse.ConnectInstance(config)
+	//case string(dbcapabilities.Pinecone):
+	//	client, err = pinecone.ConnectInstance(config)
+	//case string(dbcapabilities.Chroma):
+	//	client, err = chroma.ConnectInstance(config)
+	//case string(dbcapabilities.Milvus):
+	//	client, err = milvus.ConnectInstance(config)
+	//case string(dbcapabilities.Weaviate):
+	//	client, err = weaviate.ConnectInstance(config)
+	//case string(dbcapabilities.Elasticsearch):
+	//	client, err = elasticsearch.ConnectInstance(config)
+	//case string(dbcapabilities.Neo4j):
+	//	client, err = neo4j.ConnectInstance(config)
+	//case string(dbcapabilities.DynamoDB):
+	//	client, err = dynamodb.ConnectInstance(config)
+	//case string(dbcapabilities.CosmosDB):
+	//	client, err = cosmosdb.ConnectInstance(config)
+	//case string(dbcapabilities.Iceberg):
+	//	client, err = iceberg.ConnectInstance(config)
 	//case string(dbcapabilities.DB2):
 	//	client, err = db2.ConnectInstance(config)
 	//case string(dbcapabilities.Oracle):
@@ -433,7 +420,7 @@ func (dm *DatabaseManager) DisconnectInstance(id string) error {
 }
 
 // closeInstance closes the database connection properly based on the type
-func closeInstance(client *common.InstanceClient) error {
+func closeInstance(client *dbclient.InstanceClient) error {
 	atomic.StoreInt32(&client.IsConnected, 0)
 
 	switch client.InstanceType {
@@ -559,7 +546,7 @@ func closeInstance(client *common.InstanceClient) error {
 }
 
 // Refactor ConnectReplication for multi-table support
-func (dm *DatabaseManager) ConnectReplication(config common.ReplicationConfig) (*common.ReplicationClient, error) {
+func (dm *DatabaseManager) ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.ReplicationClient, error) {
 	// Log replication connection attempt
 	if dm.dbLogger != nil {
 		dm.dbLogger.LogReplicationEvent(DatabaseLogContext{
@@ -687,11 +674,11 @@ func (dm *DatabaseManager) DisconnectReplication(id string) error {
 }
 
 // closeReplication closes the replication connection properly based on the type
-func closeReplication(client *common.ReplicationClient) error {
+func closeReplication(client *dbclient.ReplicationClient) error {
 	atomic.StoreInt32(&client.IsConnected, 0)
 
 	// Close the replication source if it implements the interface
-	if source, ok := client.ReplicationSource.(common.ReplicationSourceInterface); ok {
+	if source, ok := client.ReplicationSource.(dbclient.ReplicationSourceInterface); ok {
 		if err := source.Close(); err != nil {
 			return fmt.Errorf("failed to close replication source: %w", err)
 		}

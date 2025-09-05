@@ -9,6 +9,7 @@ import (
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	unifiedmodelv1 "github.com/redbco/redb-open/api/proto/unifiedmodel/v1"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/core/internal/services/database"
 	"github.com/redbco/redb-open/services/core/internal/services/mapping"
 	"github.com/redbco/redb-open/services/core/internal/services/workspace"
@@ -161,57 +162,69 @@ func (s *Server) AddTableMapping(ctx context.Context, req *corev1.AddTableMappin
 		return nil, status.Errorf(codes.Internal, "unified model service not available")
 	}
 
-	// Prepare source and target table metadata for matching
-	var sourceTables []*unifiedmodelv1.EnrichedTableMetadata
-	var targetTables []*unifiedmodelv1.EnrichedTableMetadata
+	// Convert source database schema to UnifiedModel
+	var sourceUM *unifiedmodelv1.UnifiedModel
+	var sourceEnrichment *unifiedmodelv1.UnifiedModelEnrichment
 
-	// Parse source database enriched tables and find the specific source table
-	if sourceDB.Tables != "" {
-		var sourceEnrichedData map[string]interface{}
-		if err := json.Unmarshal([]byte(sourceDB.Tables), &sourceEnrichedData); err != nil {
-			s.engine.logger.Warnf("Failed to parse source database enriched tables: %v", err)
+	if sourceDB.Schema != "" {
+		var err error
+		sourceUM, err = s.convertDatabaseSchemaToUnifiedModel(sourceDB.Schema)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert source database schema: %v", err)
 		} else {
-			allSourceTables := s.convertEnrichedDataToTableMetadata(sourceEnrichedData)
 			// Filter to only include the requested source table
-			for _, table := range allSourceTables {
-				if table.Name == req.MappingSourceTableName {
-					sourceTables = append(sourceTables, table)
-					s.engine.logger.Infof("Found source table: %s with %d columns", table.Name, len(table.Columns))
-					break
-				}
-			}
-			if len(sourceTables) == 0 {
-				s.engine.logger.Warnf("Source table %s not found in database %s", req.MappingSourceTableName, req.MappingSourceDatabaseName)
-			}
+			sourceUM = s.filterUnifiedModelForTable(sourceUM, req.MappingSourceTableName)
+			s.engine.logger.Infof("Filtered source schema to include only table: %s", req.MappingSourceTableName)
 		}
 	}
 
-	// Parse target database enriched tables and find the specific target table
-	if targetDB.Tables != "" {
-		var targetEnrichedData map[string]interface{}
-		if err := json.Unmarshal([]byte(targetDB.Tables), &targetEnrichedData); err != nil {
-			s.engine.logger.Warnf("Failed to parse target database enriched tables: %v", err)
+	// Convert source enrichment data
+	if sourceDB.Tables != "" {
+		var err error
+		sourceEnrichment, err = s.convertEnrichedDataToUnifiedModelEnrichment(sourceDB.Tables, sourceDB.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert source enrichment data: %v", err)
 		} else {
-			allTargetTables := s.convertEnrichedDataToTableMetadata(targetEnrichedData)
-			// Filter to only include the requested target table
-			for _, table := range allTargetTables {
-				if table.Name == req.MappingTargetTableName {
-					targetTables = append(targetTables, table)
-					s.engine.logger.Infof("Found target table: %s with %d columns", table.Name, len(table.Columns))
-					break
-				}
-			}
-			if len(targetTables) == 0 {
-				s.engine.logger.Warnf("Target table %s not found in database %s", req.MappingTargetTableName, req.MappingTargetDatabaseName)
-			}
+			// Filter to only include the requested source table
+			sourceEnrichment = s.filterUnifiedModelEnrichmentForTable(sourceEnrichment, req.MappingSourceTableName)
 		}
 	}
 
-	// Use unified model service to match tables
-	if len(sourceTables) > 0 && len(targetTables) > 0 {
-		matchReq := &unifiedmodelv1.MatchTablesEnrichedRequest{
-			SourceTables: sourceTables,
-			TargetTables: targetTables,
+	// Convert target database schema to UnifiedModel
+	var targetUM *unifiedmodelv1.UnifiedModel
+	var targetEnrichment *unifiedmodelv1.UnifiedModelEnrichment
+
+	if targetDB.Schema != "" {
+		var err error
+		targetUM, err = s.convertDatabaseSchemaToUnifiedModel(targetDB.Schema)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert target database schema: %v", err)
+		} else {
+			// Filter to only include the requested target table
+			targetUM = s.filterUnifiedModelForTable(targetUM, req.MappingTargetTableName)
+			s.engine.logger.Infof("Filtered target schema to include only table: %s", req.MappingTargetTableName)
+		}
+	}
+
+	// Convert target enrichment data
+	if targetDB.Tables != "" {
+		var err error
+		targetEnrichment, err = s.convertEnrichedDataToUnifiedModelEnrichment(targetDB.Tables, targetDB.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert target enrichment data: %v", err)
+		} else {
+			// Filter to only include the requested target table
+			targetEnrichment = s.filterUnifiedModelEnrichmentForTable(targetEnrichment, req.MappingTargetTableName)
+		}
+	}
+
+	// Use unified model service to match schemas
+	if sourceUM != nil && targetUM != nil {
+		matchReq := &unifiedmodelv1.MatchUnifiedModelsEnrichedRequest{
+			SourceUnifiedModel: sourceUM,
+			SourceEnrichment:   sourceEnrichment,
+			TargetUnifiedModel: targetUM,
+			TargetEnrichment:   targetEnrichment,
 			Options: &unifiedmodelv1.MatchOptions{
 				NameSimilarityThreshold:  0.3, // Lower threshold to allow more matches
 				PoorMatchThreshold:       0.2,
@@ -224,16 +237,16 @@ func (s *Server) AddTableMapping(ctx context.Context, req *corev1.AddTableMappin
 			},
 		}
 
-		s.engine.logger.Infof("Calling MatchTablesEnriched with source table %s and target table %s", req.MappingSourceTableName, req.MappingTargetTableName)
+		s.engine.logger.Infof("Calling MatchUnifiedModelsEnriched with source table %s and target table %s", req.MappingSourceTableName, req.MappingTargetTableName)
 
-		matchResp, err := umClient.MatchTablesEnriched(ctx, matchReq)
+		matchResp, err := umClient.MatchUnifiedModelsEnriched(ctx, matchReq)
 		s.engine.logger.Infof("Match response: %v", matchResp)
 		if err != nil {
-			s.engine.logger.Warnf("Failed to match tables using unified model service: %v", err)
+			s.engine.logger.Warnf("Failed to match schemas using unified model service: %v", err)
 		} else {
 			// Create mapping rules for matched columns
-			s.engine.logger.Infof("Creating mapping rules for matched columns: %v", matchResp.Matches)
-			for _, tableMatch := range matchResp.Matches {
+			s.engine.logger.Infof("Creating mapping rules for matched columns: %v", matchResp.TableMatches)
+			for _, tableMatch := range matchResp.TableMatches {
 				for _, columnMatch := range tableMatch.ColumnMatches {
 					if columnMatch.Score >= 0.5 && !columnMatch.IsPoorMatch && !columnMatch.IsUnmatched {
 						// Create mapping rule for this column match
@@ -370,43 +383,63 @@ func (s *Server) AddDatabaseMapping(ctx context.Context, req *corev1.AddDatabase
 		return nil, status.Errorf(codes.Internal, "unified model service not available")
 	}
 
-	// Prepare source and target table metadata for matching
-	var sourceTables []*unifiedmodelv1.EnrichedTableMetadata
-	var targetTables []*unifiedmodelv1.EnrichedTableMetadata
+	// Convert source database schema to UnifiedModel
+	var sourceUM *unifiedmodelv1.UnifiedModel
+	var sourceEnrichment *unifiedmodelv1.UnifiedModelEnrichment
 
-	// Parse source database enriched tables
+	if sourceDB.Schema != "" {
+		var err error
+		sourceUM, err = s.convertDatabaseSchemaToUnifiedModel(sourceDB.Schema)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert source database schema: %v", err)
+		} else {
+			s.engine.logger.Infof("Converted source database schema with %d tables", len(sourceUM.Tables))
+		}
+	}
+
+	// Convert source enrichment data
 	if sourceDB.Tables != "" {
-		var sourceEnrichedData map[string]interface{}
-		if err := json.Unmarshal([]byte(sourceDB.Tables), &sourceEnrichedData); err != nil {
-			s.engine.logger.Warnf("Failed to parse source database enriched tables: %v", err)
+		var err error
+		sourceEnrichment, err = s.convertEnrichedDataToUnifiedModelEnrichment(sourceDB.Tables, sourceDB.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert source enrichment data: %v", err)
 		} else {
-			sourceTables = s.convertEnrichedDataToTableMetadata(sourceEnrichedData)
-			s.engine.logger.Infof("Converted %d source tables for matching", len(sourceTables))
-			for i, table := range sourceTables {
-				s.engine.logger.Infof("Source table %d: %s with %d columns", i, table.Name, len(table.Columns))
-			}
+			s.engine.logger.Infof("Converted source enrichment data with %d table enrichments", len(sourceEnrichment.TableEnrichments))
 		}
 	}
 
-	// Parse target database enriched tables
+	// Convert target database schema to UnifiedModel
+	var targetUM *unifiedmodelv1.UnifiedModel
+	var targetEnrichment *unifiedmodelv1.UnifiedModelEnrichment
+
+	if targetDB.Schema != "" {
+		var err error
+		targetUM, err = s.convertDatabaseSchemaToUnifiedModel(targetDB.Schema)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert target database schema: %v", err)
+		} else {
+			s.engine.logger.Infof("Converted target database schema with %d tables", len(targetUM.Tables))
+		}
+	}
+
+	// Convert target enrichment data
 	if targetDB.Tables != "" {
-		var targetEnrichedData map[string]interface{}
-		if err := json.Unmarshal([]byte(targetDB.Tables), &targetEnrichedData); err != nil {
-			s.engine.logger.Warnf("Failed to parse target database enriched tables: %v", err)
+		var err error
+		targetEnrichment, err = s.convertEnrichedDataToUnifiedModelEnrichment(targetDB.Tables, targetDB.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert target enrichment data: %v", err)
 		} else {
-			targetTables = s.convertEnrichedDataToTableMetadata(targetEnrichedData)
-			s.engine.logger.Infof("Converted %d target tables for matching", len(targetTables))
-			for i, table := range targetTables {
-				s.engine.logger.Infof("Target table %d: %s with %d columns", i, table.Name, len(table.Columns))
-			}
+			s.engine.logger.Infof("Converted target enrichment data with %d table enrichments", len(targetEnrichment.TableEnrichments))
 		}
 	}
 
-	// Use unified model service to match tables
-	if len(sourceTables) > 0 && len(targetTables) > 0 {
-		matchReq := &unifiedmodelv1.MatchTablesEnrichedRequest{
-			SourceTables: sourceTables,
-			TargetTables: targetTables,
+	// Use unified model service to match schemas
+	if sourceUM != nil && targetUM != nil {
+		matchReq := &unifiedmodelv1.MatchUnifiedModelsEnrichedRequest{
+			SourceUnifiedModel: sourceUM,
+			SourceEnrichment:   sourceEnrichment,
+			TargetUnifiedModel: targetUM,
+			TargetEnrichment:   targetEnrichment,
 			Options: &unifiedmodelv1.MatchOptions{
 				NameSimilarityThreshold:  0.3, // Lower threshold to allow more matches
 				PoorMatchThreshold:       0.2,
@@ -419,16 +452,16 @@ func (s *Server) AddDatabaseMapping(ctx context.Context, req *corev1.AddDatabase
 			},
 		}
 
-		s.engine.logger.Infof("Calling MatchTablesEnriched with %d source tables and %d target tables", len(sourceTables), len(targetTables))
+		s.engine.logger.Infof("Calling MatchUnifiedModelsEnriched with %d source tables and %d target tables", len(sourceUM.Tables), len(targetUM.Tables))
 
-		matchResp, err := umClient.MatchTablesEnriched(ctx, matchReq)
+		matchResp, err := umClient.MatchUnifiedModelsEnriched(ctx, matchReq)
 		s.engine.logger.Infof("Match response: %v", matchResp)
 		if err != nil {
-			s.engine.logger.Warnf("Failed to match tables using unified model service: %v", err)
+			s.engine.logger.Warnf("Failed to match schemas using unified model service: %v", err)
 		} else {
 			// Create mapping rules for matched columns
-			s.engine.logger.Infof("Creating mapping rules for matched columns: %v", matchResp.Matches)
-			for _, tableMatch := range matchResp.Matches {
+			s.engine.logger.Infof("Creating mapping rules for matched columns: %v", matchResp.TableMatches)
+			for _, tableMatch := range matchResp.TableMatches {
 				for _, columnMatch := range tableMatch.ColumnMatches {
 					if columnMatch.Score >= 0.5 && !columnMatch.IsPoorMatch && !columnMatch.IsUnmatched {
 						// Create mapping rule for this column match
@@ -945,103 +978,6 @@ func (s *Server) DeleteMappingRule(ctx context.Context, req *corev1.DeleteMappin
 	}, nil
 }
 
-// convertEnrichedDataToTableMetadata converts enriched table data to protobuf EnrichedTableMetadata
-func (s *Server) convertEnrichedDataToTableMetadata(enrichedData map[string]interface{}) []*unifiedmodelv1.EnrichedTableMetadata {
-	var tables []*unifiedmodelv1.EnrichedTableMetadata
-
-	// Extract tables from enriched data
-	tablesData, ok := enrichedData["tables"]
-	if !ok {
-		return tables
-	}
-
-	tableArray, ok := tablesData.([]interface{})
-	if !ok {
-		return tables
-	}
-
-	// Convert each table to EnrichedTableMetadata
-	for _, tableData := range tableArray {
-		tableMap, ok := tableData.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		table := &unifiedmodelv1.EnrichedTableMetadata{
-			Engine:     getString(tableMap, "engine"),
-			Schema:     getString(tableMap, "schema"),
-			Name:       getString(tableMap, "name"),
-			TableType:  getString(tableMap, "table_type"),
-			Properties: make(map[string]string),
-			Columns:    []*unifiedmodelv1.EnrichedColumnMetadata{},
-		}
-
-		// Add classification information if available
-		if primaryCategory := getString(tableMap, "primary_category"); primaryCategory != "" {
-			table.PrimaryCategory = primaryCategory
-		}
-
-		if confidence := getFloat64(tableMap, "classification_confidence"); confidence > 0 {
-			table.ClassificationConfidence = confidence
-		}
-
-		// Convert classification scores
-		if scoresData, ok := tableMap["classification_scores"].([]interface{}); ok {
-			for _, scoreData := range scoresData {
-				if scoreMap, ok := scoreData.(map[string]interface{}); ok {
-					score := &unifiedmodelv1.CategoryScore{
-						Category: getString(scoreMap, "category"),
-						Score:    getFloat64(scoreMap, "score"),
-						Reason:   getString(scoreMap, "reason"),
-					}
-					table.ClassificationScores = append(table.ClassificationScores, score)
-				}
-			}
-		}
-
-		// Convert columns
-		if columnsData, ok := tableMap["columns"].([]interface{}); ok {
-			for _, colData := range columnsData {
-				if colMap, ok := colData.(map[string]interface{}); ok {
-					column := &unifiedmodelv1.EnrichedColumnMetadata{
-						Name:            getString(colMap, "name"),
-						Type:            getString(colMap, "type"),
-						IsPrimaryKey:    getBool(colMap, "is_primary_key"),
-						IsForeignKey:    getBool(colMap, "is_foreign_key"),
-						IsNullable:      getBool(colMap, "is_nullable"),
-						IsArray:         getBool(colMap, "is_array"),
-						IsAutoIncrement: getBool(colMap, "is_auto_increment"),
-						ColumnDefault:   getString(colMap, "column_default"),
-						VarcharLength:   int32(getFloat64(colMap, "varchar_length")),
-						// Privileged data fields
-						IsPrivilegedData:      getBool(colMap, "is_privileged_data"),
-						DataCategory:          getString(colMap, "data_category"),
-						PrivilegedConfidence:  getFloat64(colMap, "privileged_confidence"),
-						PrivilegedDescription: getString(colMap, "privileged_description"),
-					}
-
-					// Add indexes if available
-					if indexesData, ok := colMap["indexes"].([]interface{}); ok {
-						for _, indexData := range indexesData {
-							if indexStr, ok := indexData.(string); ok {
-								column.Indexes = append(column.Indexes, indexStr)
-							}
-						}
-					}
-
-					table.Columns = append(table.Columns, column)
-				}
-			}
-		}
-
-		if table.Name != "" {
-			tables = append(tables, table)
-		}
-	}
-
-	return tables
-}
-
 // Helper functions for type conversion
 func getString(m map[string]interface{}, key string) string {
 	if val, ok := m[key]; ok {
@@ -1077,4 +1013,190 @@ func getFloat64(m map[string]interface{}, key string) float64 {
 		}
 	}
 	return 0
+}
+
+// convertDatabaseSchemaToUnifiedModel converts stored JSON schema to UnifiedModel protobuf
+func (s *Server) convertDatabaseSchemaToUnifiedModel(schemaJSON string) (*unifiedmodelv1.UnifiedModel, error) {
+	if schemaJSON == "" {
+		return nil, fmt.Errorf("schema is empty")
+	}
+
+	// Parse JSON into Go UnifiedModel
+	var goUM unifiedmodel.UnifiedModel
+	if err := json.Unmarshal([]byte(schemaJSON), &goUM); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal schema JSON: %w", err)
+	}
+
+	// Convert to protobuf
+	pbUM := goUM.ToProto()
+	return pbUM, nil
+}
+
+// filterUnifiedModelForTable creates a new UnifiedModel containing only the specified table
+func (s *Server) filterUnifiedModelForTable(um *unifiedmodelv1.UnifiedModel, tableName string) *unifiedmodelv1.UnifiedModel {
+	if um == nil {
+		return nil
+	}
+
+	// Create a new UnifiedModel with only the specified table
+	filteredUM := &unifiedmodelv1.UnifiedModel{
+		DatabaseType: um.DatabaseType,
+		Tables:       make(map[string]*unifiedmodelv1.Table),
+		Schemas:      make(map[string]*unifiedmodelv1.Schema),
+		Views:        make(map[string]*unifiedmodelv1.View),
+		Functions:    make(map[string]*unifiedmodelv1.Function),
+		Procedures:   make(map[string]*unifiedmodelv1.Procedure),
+		Triggers:     make(map[string]*unifiedmodelv1.Trigger),
+		Sequences:    make(map[string]*unifiedmodelv1.Sequence),
+		Types:        make(map[string]*unifiedmodelv1.Type),
+		Indexes:      make(map[string]*unifiedmodelv1.Index),
+		Constraints:  make(map[string]*unifiedmodelv1.Constraint),
+	}
+
+	// Copy the specific table if it exists
+	if table, exists := um.Tables[tableName]; exists {
+		filteredUM.Tables[tableName] = table
+
+		// Copy related schemas, types, etc. that might be referenced by this table
+		// This is a simplified approach - in a more complete implementation,
+		// we might want to trace dependencies more thoroughly
+
+		// Copy all schemas (they're usually small and might be referenced)
+		for name, schema := range um.Schemas {
+			filteredUM.Schemas[name] = schema
+		}
+
+		// Copy all types (they might be referenced by columns)
+		for name, umType := range um.Types {
+			filteredUM.Types[name] = umType
+		}
+	}
+
+	return filteredUM
+}
+
+// convertEnrichedDataToUnifiedModelEnrichment converts enriched table data to UnifiedModelEnrichment
+func (s *Server) convertEnrichedDataToUnifiedModelEnrichment(enrichedDataJSON string, schemaID string) (*unifiedmodelv1.UnifiedModelEnrichment, error) {
+	if enrichedDataJSON == "" {
+		return nil, nil // No enrichment data available
+	}
+
+	var enrichedData map[string]interface{}
+	if err := json.Unmarshal([]byte(enrichedDataJSON), &enrichedData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal enriched data: %w", err)
+	}
+
+	enrichment := &unifiedmodelv1.UnifiedModelEnrichment{
+		SchemaId:          schemaID,
+		EnrichmentVersion: "1.0.0",
+		GeneratedAt:       time.Now().Unix(),
+		GeneratedBy:       "core-service",
+		TableEnrichments:  make(map[string]*unifiedmodelv1.TableEnrichment),
+		ColumnEnrichments: make(map[string]*unifiedmodelv1.ColumnEnrichment),
+	}
+
+	// Extract tables from enriched data
+	tablesData, ok := enrichedData["tables"]
+	if !ok {
+		return enrichment, nil
+	}
+
+	tableArray, ok := tablesData.([]interface{})
+	if !ok {
+		return enrichment, nil
+	}
+
+	// Convert each table's enrichment data
+	for _, tableData := range tableArray {
+		tableMap, ok := tableData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		tableName := getString(tableMap, "name")
+		if tableName == "" {
+			continue
+		}
+
+		// Create table enrichment
+		tableEnrichment := &unifiedmodelv1.TableEnrichment{
+			PrimaryCategory:          getString(tableMap, "primary_category"),
+			ClassificationConfidence: getFloat64(tableMap, "classification_confidence"),
+			AccessPattern:            getString(tableMap, "access_pattern"),
+			EstimatedRows:            int64(getFloat64(tableMap, "estimated_rows")),
+			HasPrivilegedData:        getBool(tableMap, "has_privileged_data"),
+		}
+
+		// Convert classification scores
+		if scoresData, ok := tableMap["classification_scores"].([]interface{}); ok {
+			for _, scoreData := range scoresData {
+				if scoreMap, ok := scoreData.(map[string]interface{}); ok {
+					score := &unifiedmodelv1.CategoryScore{
+						Category: getString(scoreMap, "category"),
+						Score:    getFloat64(scoreMap, "score"),
+						Reason:   getString(scoreMap, "reason"),
+					}
+					tableEnrichment.ClassificationScores = append(tableEnrichment.ClassificationScores, score)
+				}
+			}
+		}
+
+		enrichment.TableEnrichments[tableName] = tableEnrichment
+
+		// Convert column enrichments
+		if columnsData, ok := tableMap["columns"].([]interface{}); ok {
+			for _, colData := range columnsData {
+				if colMap, ok := colData.(map[string]interface{}); ok {
+					columnName := getString(colMap, "name")
+					if columnName == "" {
+						continue
+					}
+
+					columnKey := fmt.Sprintf("%s.%s", tableName, columnName)
+					columnEnrichment := &unifiedmodelv1.ColumnEnrichment{
+						IsPrivilegedData:      getBool(colMap, "is_privileged_data"),
+						DataCategory:          getString(colMap, "data_category"),
+						PrivilegedConfidence:  getFloat64(colMap, "privileged_confidence"),
+						PrivilegedDescription: getString(colMap, "privileged_description"),
+						RiskLevel:             getString(colMap, "risk_level"),
+					}
+
+					enrichment.ColumnEnrichments[columnKey] = columnEnrichment
+				}
+			}
+		}
+	}
+
+	return enrichment, nil
+}
+
+// filterUnifiedModelEnrichmentForTable filters enrichment data to only include the specified table
+func (s *Server) filterUnifiedModelEnrichmentForTable(enrichment *unifiedmodelv1.UnifiedModelEnrichment, tableName string) *unifiedmodelv1.UnifiedModelEnrichment {
+	if enrichment == nil {
+		return nil
+	}
+
+	filteredEnrichment := &unifiedmodelv1.UnifiedModelEnrichment{
+		SchemaId:          enrichment.SchemaId,
+		EnrichmentVersion: enrichment.EnrichmentVersion,
+		GeneratedAt:       enrichment.GeneratedAt,
+		GeneratedBy:       enrichment.GeneratedBy,
+		TableEnrichments:  make(map[string]*unifiedmodelv1.TableEnrichment),
+		ColumnEnrichments: make(map[string]*unifiedmodelv1.ColumnEnrichment),
+	}
+
+	// Copy table enrichment for the specific table
+	if tableEnrichment, exists := enrichment.TableEnrichments[tableName]; exists {
+		filteredEnrichment.TableEnrichments[tableName] = tableEnrichment
+	}
+
+	// Copy column enrichments for the specific table
+	tablePrefix := tableName + "."
+	for key, columnEnrichment := range enrichment.ColumnEnrichments {
+		if len(key) > len(tablePrefix) && key[:len(tablePrefix)] == tablePrefix {
+			filteredEnrichment.ColumnEnrichments[key] = columnEnrichment
+		}
+	}
+
+	return filteredEnrichment
 }

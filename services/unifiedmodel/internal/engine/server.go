@@ -2,19 +2,19 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
+	"time"
 
 	pb "github.com/redbco/redb-open/api/proto/unifiedmodel/v1"
-	"github.com/redbco/redb-open/services/unifiedmodel/internal/adapters"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/unifiedmodel/internal/classifier"
 	"github.com/redbco/redb-open/services/unifiedmodel/internal/comparison"
 	"github.com/redbco/redb-open/services/unifiedmodel/internal/detection"
 	"github.com/redbco/redb-open/services/unifiedmodel/internal/generators"
 	"github.com/redbco/redb-open/services/unifiedmodel/internal/matching"
-	"github.com/redbco/redb-open/services/unifiedmodel/internal/models"
 	"github.com/redbco/redb-open/services/unifiedmodel/internal/translator"
+	"github.com/redbco/redb-open/services/unifiedmodel/internal/translator/core"
 )
 
 type Server struct {
@@ -32,25 +32,70 @@ func (s *Server) Translate(ctx context.Context, req *pb.TranslationRequest) (*pb
 	s.engine.TrackOperation()
 	defer s.engine.UntrackOperation()
 
-	translator := translator.NewSchemaTranslator()
+	// Create unified translator
+	translatorFactory := translator.NewTranslatorFactory()
+	unifiedTranslator := translatorFactory.CreateUnifiedTranslator()
 
-	// Register all adapters
-	s.registerAdapters(translator)
+	// Parse source database type
+	sourceDB, err := s.parseDBType(req.SourceType)
+	if err != nil {
+		return nil, fmt.Errorf("invalid source database type: %w", err)
+	}
 
-	result, err := translator.Translate(req.SourceType, req.Target, req.SourceStructure)
+	// Parse target database type
+	targetDB, err := s.parseDBType(req.TargetType)
+	if err != nil {
+		return nil, fmt.Errorf("invalid target database type: %w", err)
+	}
+
+	// Convert protobuf UnifiedModel to Go UnifiedModel
+	sourceUnifiedModel := s.convertProtoToUnifiedModel(req.SourceStructure)
+	if sourceUnifiedModel == nil {
+		return nil, fmt.Errorf("failed to convert source structure")
+	}
+
+	// Create translation request (now using UnifiedModel directly)
+	translationReq := &core.TranslationRequest{
+		SourceDatabase: sourceDB,
+		SourceSchema:   sourceUnifiedModel,
+		TargetDatabase: targetDB,
+		TargetFormat:   "unified", // Always return unified format
+		Preferences: core.TranslationPreferences{
+			AcceptDataLoss:         false,
+			OptimizeForPerformance: true,
+			PreserveRelationships:  true,
+			IncludeMetadata:        true,
+			GenerateComments:       true,
+		},
+		RequestID:   fmt.Sprintf("translate-%d", time.Now().UnixNano()),
+		RequestedAt: time.Now(),
+	}
+
+	// Perform translation
+	result, err := unifiedTranslator.Translate(ctx, translationReq)
 	if err != nil {
 		return nil, fmt.Errorf("translation failed: %w", err)
 	}
 
-	// Marshal the converted structure to JSON bytes
-	convertedBytes, err := json.Marshal(result.ConvertedStructure)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal converted structure: %w", err)
+	if !result.Success {
+		return nil, fmt.Errorf("translation failed: %s", result.ErrorMessage)
+	}
+
+	// Convert result to protobuf UnifiedModel
+	var targetUnifiedModel *pb.UnifiedModel
+	if result.UnifiedSchema != nil {
+		targetUnifiedModel = s.convertUnifiedModelToProto(result.UnifiedSchema)
+	}
+
+	// Convert warnings
+	warnings := make([]string, len(result.Warnings))
+	for i, warning := range result.Warnings {
+		warnings[i] = warning.Message
 	}
 
 	return &pb.TranslationResponse{
-		TargetStructure: convertedBytes,
-		Warnings:        result.Warnings,
+		TargetStructure: targetUnifiedModel,
+		Warnings:        warnings,
 	}, nil
 }
 
@@ -58,31 +103,37 @@ func (s *Server) Generate(ctx context.Context, req *pb.GenerationRequest) (*pb.G
 	s.engine.TrackOperation()
 	defer s.engine.UntrackOperation()
 
-	// First translate the schema
-	translator := translator.NewSchemaTranslator()
-
-	// Register all adapters
-	s.registerAdapters(translator)
-
-	translationResult, err := translator.Translate(req.SourceType, req.Target, req.Structure)
+	// Parse target database type (for validation)
+	_, err := s.parseDBType(req.TargetType)
 	if err != nil {
-		return nil, fmt.Errorf("translation failed: %w", err)
+		return nil, fmt.Errorf("invalid target database type: %w", err)
 	}
 
-	// Create generator based on target
-	generator, err := s.createGenerator(req.Target)
-	if err != nil {
-		return nil, err
+	// Convert protobuf UnifiedModel to Go UnifiedModel
+	unifiedModel := s.convertProtoToUnifiedModel(req.Structure)
+	if unifiedModel == nil {
+		return nil, fmt.Errorf("unified model is required")
 	}
 
-	statements, err := generator.GenerateCreateStatements(translationResult.ConvertedStructure)
+	// Create generator factory and get the appropriate generator
+	generatorFactory := generators.NewGeneratorFactory()
+	generator, exists := generatorFactory.GetGenerator(req.TargetType)
+	if !exists {
+		return nil, fmt.Errorf("generator not available for target database: %s. Available generators: postgres, mysql, mongodb, mariadb, neo4j, edgedb, cassandra", req.TargetType)
+	}
+
+	// Generate statements using the unified model
+	statements, err := generator.GenerateCreateStatements(unifiedModel)
 	if err != nil {
 		return nil, fmt.Errorf("statement generation failed: %w", err)
 	}
 
+	// No translation warnings since we're working directly with UnifiedModel
+	var warnings []string
+
 	return &pb.GenerationResponse{
 		Statements: statements,
-		Warnings:   translationResult.Warnings,
+		Warnings:   warnings,
 	}, nil
 }
 
@@ -90,11 +141,32 @@ func (s *Server) CompareSchemas(ctx context.Context, req *pb.CompareRequest) (*p
 	s.engine.TrackOperation()
 	defer s.engine.UntrackOperation()
 
-	comparator := comparison.NewSchemaComparator()
+	// Legacy method - now deprecated in favor of CompareUnifiedModels
+	return nil, fmt.Errorf("legacy schema comparison is deprecated, please use CompareUnifiedModels instead")
+}
 
-	result, err := comparator.CompareSchemas(req.SchemaType, req.PreviousSchema, req.CurrentSchema)
+func (s *Server) CompareUnifiedModels(ctx context.Context, req *pb.CompareUnifiedModelsRequest) (*pb.CompareResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+
+	// Import the new comparison package
+	unifiedComparator := comparison.NewUnifiedSchemaComparator()
+
+	// Convert protobuf UnifiedModel objects to Go structs
+	var previousModel, currentModel *unifiedmodel.UnifiedModel
+
+	if req.PreviousUnifiedModel != nil {
+		previousModel = s.convertProtoToUnifiedModel(req.PreviousUnifiedModel)
+	}
+
+	if req.CurrentUnifiedModel != nil {
+		currentModel = s.convertProtoToUnifiedModel(req.CurrentUnifiedModel)
+	}
+
+	// Compare the unified models
+	result, err := unifiedComparator.CompareUnifiedModels(previousModel, currentModel)
 	if err != nil {
-		return nil, fmt.Errorf("schema comparison failed: %w", err)
+		return nil, fmt.Errorf("unified model comparison failed: %w", err)
 	}
 
 	return &pb.CompareResponse{
@@ -104,176 +176,77 @@ func (s *Server) CompareSchemas(ctx context.Context, req *pb.CompareRequest) (*p
 	}, nil
 }
 
-func (s *Server) MatchSchemasEnriched(ctx context.Context, req *pb.MatchSchemasEnrichedRequest) (*pb.MatchSchemasEnrichedResponse, error) {
+// ClassifyUnifiedModel classifies tables in a UnifiedModel and returns enrichment data
+func (s *Server) ClassifyUnifiedModel(ctx context.Context, req *pb.ClassifyUnifiedModelRequest) (*pb.ClassifyUnifiedModelResponse, error) {
 	s.engine.TrackOperation()
 	defer s.engine.UntrackOperation()
 
-	matcher := matching.NewEnrichedSchemaMatcher()
-
-	// Convert protobuf options to internal options
-	var options *matching.EnrichedMatchOptions
-	if req.Options != nil {
-		options = &matching.EnrichedMatchOptions{
-			NameSimilarityThreshold:  req.Options.NameSimilarityThreshold,
-			PoorMatchThreshold:       req.Options.PoorMatchThreshold,
-			NameWeight:               req.Options.NameWeight,
-			TypeWeight:               req.Options.TypeWeight,
-			ClassificationWeight:     req.Options.ClassificationWeight,
-			PrivilegedDataWeight:     req.Options.PrivilegedDataWeight,
-			TableStructureWeight:     req.Options.TableStructureWeight,
-			EnableCrossTableMatching: req.Options.EnableCrossTableMatching,
-		}
+	// Convert protobuf UnifiedModel to Go struct
+	unifiedModel := s.convertProtoToUnifiedModel(req.UnifiedModel)
+	if unifiedModel == nil {
+		return nil, fmt.Errorf("unified model is required")
 	}
 
-	result, err := matcher.MatchSchemasEnriched(req.SourceSchemaType, req.SourceSchema, req.TargetSchemaType, req.TargetSchema, options)
+	// Create classifier and classify the model
+	classifierInstance := classifier.NewTableClassifier()
+	options := &classifier.ClassificationOptions{
+		TopN:      3,
+		Threshold: 0.1,
+	}
+
+	enrichments, err := classifierInstance.ClassifyUnifiedModel(unifiedModel, options)
 	if err != nil {
-		return nil, fmt.Errorf("enriched schema matching failed: %w", err)
+		return nil, fmt.Errorf("unified model classification failed: %w", err)
 	}
 
-	// Convert table matches to proto format
-	tableMatches := make([]*pb.EnrichedTableMatch, len(result.TableMatches))
-	for i, match := range result.TableMatches {
-		// Convert column matches
-		columnMatches := make([]*pb.EnrichedColumnMatch, len(match.ColumnMatches))
-		for j, colMatch := range match.ColumnMatches {
-			columnMatches[j] = &pb.EnrichedColumnMatch{
-				SourceTable:              colMatch.SourceTable,
-				TargetTable:              colMatch.TargetTable,
-				SourceColumn:             colMatch.SourceColumn,
-				TargetColumn:             colMatch.TargetColumn,
-				Score:                    colMatch.Score,
-				IsTypeCompatible:         colMatch.IsTypeCompatible,
-				IsPoorMatch:              colMatch.IsPoorMatch,
-				IsUnmatched:              colMatch.IsUnmatched,
-				PrivilegedDataMatch:      colMatch.PrivilegedDataMatch,
-				DataCategoryMatch:        colMatch.DataCategoryMatch,
-				PrivilegedConfidenceDiff: colMatch.PrivilegedConfidenceDiff,
-			}
-		}
+	// Create enrichment structure
+	enrichmentData := &unifiedmodel.UnifiedModelEnrichment{
+		SchemaID:          fmt.Sprintf("classify-%d", time.Now().UnixNano()),
+		EnrichmentVersion: "1.0",
+		GeneratedAt:       time.Now(),
+		GeneratedBy:       "unifiedmodel-service",
+		TableEnrichments:  make(map[string]unifiedmodel.TableEnrichment),
+		ColumnEnrichments: make(map[string]unifiedmodel.ColumnEnrichment),
+	}
 
-		tableMatches[i] = &pb.EnrichedTableMatch{
-			SourceTable:                  match.SourceTable,
-			TargetTable:                  match.TargetTable,
-			Score:                        match.Score,
-			IsPoorMatch:                  match.IsPoorMatch,
-			IsUnmatched:                  match.IsUnmatched,
-			ClassificationMatch:          match.ClassificationMatch,
-			ClassificationConfidenceDiff: match.ClassificationConfidenceDiff,
-			MatchedColumns:               int32(match.MatchedColumns),
-			TotalSourceColumns:           int32(match.TotalSourceColumns),
-			TotalTargetColumns:           int32(match.TotalTargetColumns),
-			ColumnMatches:                columnMatches,
+	// Populate table enrichments
+	for _, enrichment := range enrichments {
+		// Find the corresponding table name from the enrichment
+		for tableName := range unifiedModel.Tables {
+			// Simple matching - in a real implementation you might need more sophisticated matching
+			enrichmentData.TableEnrichments[tableName] = enrichment
+			break // For now, just take the first table
 		}
 	}
 
-	// Convert unmatched columns to proto format
-	unmatchedColumns := make([]*pb.EnrichedColumnMatch, len(result.UnmatchedColumns))
-	for i, match := range result.UnmatchedColumns {
-		unmatchedColumns[i] = &pb.EnrichedColumnMatch{
-			SourceTable:              match.SourceTable,
-			TargetTable:              match.TargetTable,
-			SourceColumn:             match.SourceColumn,
-			TargetColumn:             match.TargetColumn,
-			Score:                    match.Score,
-			IsTypeCompatible:         match.IsTypeCompatible,
-			IsPoorMatch:              match.IsPoorMatch,
-			IsUnmatched:              match.IsUnmatched,
-			PrivilegedDataMatch:      match.PrivilegedDataMatch,
-			DataCategoryMatch:        match.DataCategoryMatch,
-			PrivilegedConfidenceDiff: match.PrivilegedConfidenceDiff,
-		}
-	}
+	// Convert enrichment data to protobuf
+	protoEnrichment := s.convertEnrichmentToProto(enrichmentData)
 
-	return &pb.MatchSchemasEnrichedResponse{
-		TableMatches:           tableMatches,
-		UnmatchedColumns:       unmatchedColumns,
-		Warnings:               result.Warnings,
-		OverallSimilarityScore: result.OverallSimilarity,
+	return &pb.ClassifyUnifiedModelResponse{
+		UnifiedModelEnrichment: protoEnrichment,
 	}, nil
 }
 
-func (s *Server) MatchTablesEnriched(ctx context.Context, req *pb.MatchTablesEnrichedRequest) (*pb.MatchTablesEnrichedResponse, error) {
+// AnalyzeSchema analyzes a schema and returns basic table information
+func (s *Server) AnalyzeSchema(ctx context.Context, req *pb.AnalyzeSchemaRequest) (*pb.AnalyzeSchemaResponse, error) {
 	s.engine.TrackOperation()
 	defer s.engine.UntrackOperation()
 
-	matcher := matching.NewEnrichedSchemaMatcher()
-
-	// Convert protobuf options to internal options
-	var options *matching.EnrichedMatchOptions
-	if req.Options != nil {
-		options = &matching.EnrichedMatchOptions{
-			NameSimilarityThreshold:  req.Options.NameSimilarityThreshold,
-			PoorMatchThreshold:       req.Options.PoorMatchThreshold,
-			NameWeight:               req.Options.NameWeight,
-			TypeWeight:               req.Options.TypeWeight,
-			ClassificationWeight:     req.Options.ClassificationWeight,
-			PrivilegedDataWeight:     req.Options.PrivilegedDataWeight,
-			TableStructureWeight:     req.Options.TableStructureWeight,
-			EnableCrossTableMatching: req.Options.EnableCrossTableMatching,
-		}
+	// Convert protobuf UnifiedModel to Go UnifiedModel
+	unifiedModel := s.convertProtoToUnifiedModel(req.UnifiedModel)
+	if unifiedModel == nil {
+		return nil, fmt.Errorf("unified model is required")
 	}
 
-	// Convert protobuf tables to internal structures
-	sourceTables := s.convertProtoToEnrichedTables(req.SourceTables)
-	targetTables := s.convertProtoToEnrichedTables(req.TargetTables)
-
-	results, err := matcher.MatchTablesEnriched(sourceTables, targetTables, options)
-	if err != nil {
-		return nil, fmt.Errorf("enriched table matching failed: %w", err)
+	// Extract table information from the unified model
+	tables := make([]*pb.Table, 0, len(unifiedModel.Tables))
+	for _, table := range unifiedModel.Tables {
+		protoTable := s.convertTableToProto(table)
+		tables = append(tables, protoTable)
 	}
 
-	// Convert matches to proto format
-	matches := make([]*pb.EnrichedTableMatch, len(results))
-	for i, result := range results {
-		// Convert column matches
-		columnMatches := make([]*pb.EnrichedColumnMatch, len(result.ColumnMatches))
-		for j, colMatch := range result.ColumnMatches {
-			columnMatches[j] = &pb.EnrichedColumnMatch{
-				SourceTable:              colMatch.SourceTable,
-				TargetTable:              colMatch.TargetTable,
-				SourceColumn:             colMatch.SourceColumn,
-				TargetColumn:             colMatch.TargetColumn,
-				Score:                    colMatch.Score,
-				IsTypeCompatible:         colMatch.IsTypeCompatible,
-				IsPoorMatch:              colMatch.IsPoorMatch,
-				IsUnmatched:              colMatch.IsUnmatched,
-				PrivilegedDataMatch:      colMatch.PrivilegedDataMatch,
-				DataCategoryMatch:        colMatch.DataCategoryMatch,
-				PrivilegedConfidenceDiff: colMatch.PrivilegedConfidenceDiff,
-			}
-		}
-
-		matches[i] = &pb.EnrichedTableMatch{
-			SourceTable:                  result.SourceTable,
-			TargetTable:                  result.TargetTable,
-			Score:                        result.Score,
-			IsPoorMatch:                  result.IsPoorMatch,
-			IsUnmatched:                  result.IsUnmatched,
-			ClassificationMatch:          result.ClassificationMatch,
-			ClassificationConfidenceDiff: result.ClassificationConfidenceDiff,
-			MatchedColumns:               int32(result.MatchedColumns),
-			TotalSourceColumns:           int32(result.TotalSourceColumns),
-			TotalTargetColumns:           int32(result.TotalTargetColumns),
-			ColumnMatches:                columnMatches,
-		}
-	}
-
-	// Calculate overall similarity score
-	var overallScore float64
-	if len(results) > 0 {
-		var totalScore float64
-		for _, result := range results {
-			if !result.IsUnmatched {
-				totalScore += result.Score
-			}
-		}
-		overallScore = totalScore / float64(len(results))
-	}
-
-	return &pb.MatchTablesEnrichedResponse{
-		Matches:                matches,
-		Warnings:               []string{},
-		OverallSimilarityScore: overallScore,
+	return &pb.AnalyzeSchemaResponse{
+		Tables: tables,
 	}, nil
 }
 
@@ -326,9 +299,15 @@ func (s *Server) DetectPrivilegedData(ctx context.Context, req *pb.DetectRequest
 	s.engine.TrackOperation()
 	defer s.engine.UntrackOperation()
 
-	detector := detection.NewPrivilegedDataDetector()
+	// Convert protobuf UnifiedModel to Go UnifiedModel
+	unifiedModel := s.convertProtoToUnifiedModel(req.UnifiedModel)
+	if unifiedModel == nil {
+		return nil, fmt.Errorf("unified model is required")
+	}
 
-	result, err := detector.DetectPrivilegedData(req.SchemaType, req.Schema)
+	// Run privileged data detection on the unified model
+	detector := detection.NewPrivilegedDataDetector()
+	result, err := detector.DetectPrivilegedData(unifiedModel)
 	if err != nil {
 		return nil, fmt.Errorf("privileged data detection failed: %w", err)
 	}
@@ -357,28 +336,15 @@ func (s *Server) AnalyzeSchemaEnriched(ctx context.Context, req *pb.AnalyzeSchem
 	s.engine.TrackOperation()
 	defer s.engine.UntrackOperation()
 
-	// Parse schema into unified model using the translator
-	translator := translator.NewSchemaTranslator()
-	s.registerAdapters(translator)
-
-	// Convert schema to unified model
-	translationResult, err := translator.Translate(req.SchemaType, "unified", req.Schema)
-	if err != nil {
-		return nil, fmt.Errorf("schema parsing failed: %w", err)
+	// Convert protobuf UnifiedModel to Go UnifiedModel
+	unifiedModel := s.convertProtoToUnifiedModel(req.UnifiedModel)
+	if unifiedModel == nil {
+		return nil, fmt.Errorf("unified model is required")
 	}
 
-	// Extract the unified model from the translation result
-	unifiedModel, ok := translationResult.ConvertedStructure.(struct {
-		SchemaType string `json:"schemaType"`
-		*models.UnifiedModel
-	})
-	if !ok {
-		return nil, fmt.Errorf("failed to extract unified model from translation result")
-	}
-
-	// Run privileged data detection on the schema
+	// Run privileged data detection on the unified model
 	detector := detection.NewPrivilegedDataDetector()
-	detectionResult, err := detector.DetectPrivilegedData(req.SchemaType, req.Schema)
+	detectionResult, err := detector.DetectPrivilegedData(unifiedModel)
 	if err != nil {
 		return nil, fmt.Errorf("privileged data detection failed: %w", err)
 	}
@@ -394,12 +360,11 @@ func (s *Server) AnalyzeSchemaEnriched(ctx context.Context, req *pb.AnalyzeSchem
 
 	// Process each table
 	enrichedTables := make([]*pb.EnrichedTableMetadata, 0, len(unifiedModel.Tables))
-	allWarnings := append([]string{}, translationResult.Warnings...)
-	allWarnings = append(allWarnings, detectionResult.Warnings...)
+	allWarnings := append([]string{}, detectionResult.Warnings...)
 
 	for _, table := range unifiedModel.Tables {
 		// Convert table to TableMetadata for classification
-		tableMetadata := s.convertToTableMetadata(table, req.SchemaType)
+		tableMetadata := s.convertUnifiedTableToMetadata(table, req.SchemaType)
 
 		// Run classification on the table
 		classifierInstance := classifier.NewTableClassifier()
@@ -424,34 +389,16 @@ func (s *Server) AnalyzeSchemaEnriched(ctx context.Context, req *pb.AnalyzeSchem
 		for _, column := range table.Columns {
 			enrichedColumn := &pb.EnrichedColumnMetadata{
 				Name:            column.Name,
-				Type:            column.DataType.Name,
+				Type:            column.DataType,
 				IsPrimaryKey:    column.IsPrimaryKey,
-				IsNullable:      column.IsNullable,
-				IsArray:         column.DataType.IsArray,
-				IsAutoIncrement: column.IsAutoIncrement,
+				IsNullable:      column.Nullable,
+				IsAutoIncrement: column.AutoIncrement,
 			}
 
 			// Add column default if available
-			if column.DefaultValue != nil {
-				enrichedColumn.ColumnDefault = *column.DefaultValue
+			if column.Default != "" {
+				enrichedColumn.ColumnDefault = column.Default
 			}
-
-			// Add varchar length if available
-			if column.DataType.Length > 0 {
-				enrichedColumn.VarcharLength = int32(column.DataType.Length)
-			}
-
-			// Add vector properties (simplified - checking if the data type suggests vector data)
-			if s.isVectorDataType(column.DataType.Name) {
-				enrichedColumn.VectorDimension = int32(column.DataType.Precision) // Use precision as dimension approximation
-				enrichedColumn.VectorDistanceMetric = "cosine"                    // Default metric
-			}
-
-			// Add index information (simplified - extract from constraints and indexes)
-			enrichedColumn.Indexes = s.extractColumnIndexes(column, table)
-
-			// Add foreign key information (simplified - check constraints)
-			enrichedColumn.IsForeignKey = s.isColumnForeignKey(column, table)
 
 			// Add privileged data detection results
 			if tablePrivileged, exists := privilegedDataMap[table.Name]; exists {
@@ -479,20 +426,12 @@ func (s *Server) AnalyzeSchemaEnriched(ctx context.Context, req *pb.AnalyzeSchem
 		// Build enriched table metadata
 		enrichedTable := &pb.EnrichedTableMetadata{
 			Engine:                   req.SchemaType,
-			Schema:                   table.Schema,
 			Name:                     table.Name,
 			Columns:                  enrichedColumns,
 			Properties:               make(map[string]string),
-			TableType:                table.TableType,
 			PrimaryCategory:          classificationResult.PrimaryCategory,
 			ClassificationConfidence: classificationResult.Confidence,
 			ClassificationScores:     classificationScores,
-		}
-
-		// Add any additional table properties from the unified model
-		// This is simplified - in a real implementation you might extract more metadata
-		if table.Comment != "" {
-			enrichedTable.Properties["comment"] = table.Comment
 		}
 
 		enrichedTables = append(enrichedTables, enrichedTable)
@@ -504,103 +443,95 @@ func (s *Server) AnalyzeSchemaEnriched(ctx context.Context, req *pb.AnalyzeSchem
 	}, nil
 }
 
-// convertToTableMetadata converts a unified model table to TableMetadata for classification
-func (s *Server) convertToTableMetadata(table models.Table, engine string) classifier.TableMetadata {
-	columns := make([]classifier.ColumnMetadata, len(table.Columns))
-	for i, col := range table.Columns {
-		columns[i] = classifier.ColumnMetadata{
+// parseDBType parses a database type string into a DatabaseType enum
+func (s *Server) parseDBType(dbTypeStr string) (dbcapabilities.DatabaseType, error) {
+	switch dbTypeStr {
+	case "postgres", "postgresql":
+		return dbcapabilities.PostgreSQL, nil
+	case "mysql":
+		return dbcapabilities.MySQL, nil
+	case "mongodb":
+		return dbcapabilities.MongoDB, nil
+	case "cassandra":
+		return dbcapabilities.Cassandra, nil
+	case "redis":
+		return dbcapabilities.Redis, nil
+	case "elasticsearch":
+		return dbcapabilities.Elasticsearch, nil
+	case "clickhouse":
+		return dbcapabilities.ClickHouse, nil
+	case "snowflake":
+		return dbcapabilities.Snowflake, nil
+	case "mssql", "sqlserver":
+		return dbcapabilities.SQLServer, nil
+	case "oracle":
+		return dbcapabilities.Oracle, nil
+	case "mariadb":
+		return dbcapabilities.MariaDB, nil
+	case "cockroachdb":
+		return dbcapabilities.CockroachDB, nil
+	case "db2":
+		return dbcapabilities.DB2, nil
+	case "neo4j":
+		return dbcapabilities.Neo4j, nil
+	case "pinecone":
+		return dbcapabilities.Pinecone, nil
+	case "edgedb":
+		return dbcapabilities.EdgeDB, nil
+	case "unified":
+		// For unified model, we'll use a special constant or return a specific type
+		return "unified", nil
+	default:
+		return "", fmt.Errorf("unsupported database type: %s", dbTypeStr)
+	}
+}
+
+// convertUnifiedTableToMetadata converts a shared UnifiedModel table to TableMetadata for classification
+func (s *Server) convertUnifiedTableToMetadata(table unifiedmodel.Table, engine string) classifier.TableMetadata {
+	columns := make([]classifier.ColumnMetadata, 0, len(table.Columns))
+	for _, col := range table.Columns {
+		colMetadata := classifier.ColumnMetadata{
 			Name:            col.Name,
-			DataType:        col.DataType.Name,
-			IsNullable:      col.IsNullable,
+			DataType:        col.DataType,
+			IsNullable:      col.Nullable,
 			IsPrimaryKey:    col.IsPrimaryKey,
-			IsUnique:        col.IsUnique,
-			IsAutoIncrement: col.IsAutoIncrement,
-			IsArray:         col.DataType.IsArray,
+			IsUnique:        false, // Not available in shared model
+			IsAutoIncrement: col.AutoIncrement,
+			IsArray:         false, // Not directly available in shared model
 		}
 
 		// Add column default if available
-		if col.DefaultValue != nil {
-			columns[i].ColumnDefault = col.DefaultValue
+		if col.Default != "" {
+			colMetadata.ColumnDefault = &col.Default
 		}
 
-		// Add varchar length if available
-		if col.DataType.Length > 0 {
-			length := int(col.DataType.Length)
-			columns[i].VarcharLength = &length
-		}
+		columns = append(columns, colMetadata)
+	}
+
+	// Convert indexes
+	indexes := make([]classifier.IndexMetadata, 0, len(table.Indexes))
+	for _, idx := range table.Indexes {
+		indexes = append(indexes, classifier.IndexMetadata{
+			Name:      idx.Name,
+			Columns:   idx.Columns,
+			IsUnique:  idx.Unique,
+			IsPrimary: false, // Determine from constraints if needed
+		})
+	}
+
+	// Convert constraints
+	constraints := make([]string, 0, len(table.Constraints))
+	for _, constraint := range table.Constraints {
+		constraints = append(constraints, string(constraint.Type)+" "+constraint.Name)
 	}
 
 	return classifier.TableMetadata{
 		Name:        table.Name,
 		Columns:     columns,
-		Indexes:     []classifier.IndexMetadata{}, // Simplified - could be extracted from table.Indexes
-		Constraints: []string{},                   // Simplified - could be extracted from table.Constraints
-		Tags:        make(map[string]string),      // Could add properties if needed
+		Indexes:     indexes,
+		Constraints: constraints,
+		Tags:        make(map[string]string), // Could be populated from table options if needed
 	}
-}
-
-// extractColumnIndexes extracts index information for a column from table metadata
-func (s *Server) extractColumnIndexes(column models.Column, table models.Table) []string {
-	indexes := []string{}
-
-	// Check table-level indexes that include this column
-	for _, index := range table.Indexes {
-		for _, indexCol := range index.Columns {
-			if indexCol.ColumnName == column.Name {
-				if index.IndexMethod != "" {
-					indexes = append(indexes, index.IndexMethod)
-				} else {
-					indexes = append(indexes, "btree") // default
-				}
-				break
-			}
-		}
-	}
-
-	// Check constraints that imply indexes
-	for _, constraint := range table.Constraints {
-		for _, constraintCol := range constraint.Columns {
-			if constraintCol == column.Name {
-				switch constraint.Type {
-				case "PRIMARY KEY":
-					indexes = append(indexes, "primary")
-				case "UNIQUE":
-					indexes = append(indexes, "unique")
-				case "FOREIGN KEY":
-					indexes = append(indexes, "foreign")
-				}
-				break
-			}
-		}
-	}
-
-	return indexes
-}
-
-// isColumnForeignKey checks if a column is a foreign key
-func (s *Server) isColumnForeignKey(column models.Column, table models.Table) bool {
-	for _, constraint := range table.Constraints {
-		if constraint.Type == "FOREIGN KEY" {
-			for _, constraintCol := range constraint.Columns {
-				if constraintCol == column.Name {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// isVectorDataType checks if a data type suggests vector data
-func (s *Server) isVectorDataType(dataType string) bool {
-	vectorTypes := []string{"vector", "embedding", "float[]", "real[]", "numeric[]"}
-	dataTypeLower := strings.ToLower(dataType)
-	for _, vType := range vectorTypes {
-		if strings.Contains(dataTypeLower, vType) {
-			return true
-		}
-	}
-	return false
 }
 
 // convertProtoToClassifierMetadata converts proto TableMetadata to classifier TableMetadata
@@ -638,190 +569,125 @@ func convertProtoToClassifierMetadata(protoMetadata *pb.TableMetadata) classifie
 	}
 }
 
-// registerAdapters registers all database adapters with the translator
-func (s *Server) registerAdapters(translator *translator.SchemaTranslator) {
-	// Cassandra
-	cassandraAdapter := &adapters.CassandraIngester{}
-	translator.RegisterIngester("cassandra", cassandraAdapter)
-	translator.RegisterExporter("cassandra", &adapters.CassandraExporter{})
+// MatchUnifiedModelsEnriched implements the gRPC MatchUnifiedModelsEnriched method
+func (s *Server) MatchUnifiedModelsEnriched(ctx context.Context, req *pb.MatchUnifiedModelsEnrichedRequest) (*pb.MatchUnifiedModelsEnrichedResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
 
-	// ClickHouse
-	clickhouseAdapter := &adapters.ClickhouseIngester{}
-	translator.RegisterIngester("clickhouse", clickhouseAdapter)
-	translator.RegisterExporter("clickhouse", &adapters.ClickhouseExporter{})
+	// Validate request
+	if req.SourceUnifiedModel == nil {
+		return nil, fmt.Errorf("source_unified_model is required")
+	}
+	if req.TargetUnifiedModel == nil {
+		return nil, fmt.Errorf("target_unified_model is required")
+	}
 
-	// CockroachDB
-	cockroachdbAdapter := &adapters.CockroachIngester{}
-	translator.RegisterIngester("cockroachdb", cockroachdbAdapter)
-	translator.RegisterExporter("cockroachdb", &adapters.CockroachExporter{})
+	// Convert protobuf unified models to Go structs
+	sourceModel := s.convertProtoToUnifiedModel(req.SourceUnifiedModel)
+	if sourceModel == nil {
+		return nil, fmt.Errorf("failed to convert source unified model")
+	}
 
-	// DB2
-	db2Adapter := &adapters.Db2Ingester{}
-	translator.RegisterIngester("db2", db2Adapter)
-	translator.RegisterExporter("db2", &adapters.Db2Exporter{})
+	targetModel := s.convertProtoToUnifiedModel(req.TargetUnifiedModel)
+	if targetModel == nil {
+		return nil, fmt.Errorf("failed to convert target unified model")
+	}
 
-	// EdgeDB
-	edgedbAdapter := &adapters.EdgeDBIngester{}
-	translator.RegisterIngester("edgedb", edgedbAdapter)
-	translator.RegisterExporter("edgedb", &adapters.EdgeDBExporter{})
+	// Convert enrichments (optional)
+	var sourceEnrichment *unifiedmodel.UnifiedModelEnrichment
+	if req.SourceEnrichment != nil {
+		sourceEnrichment = s.convertProtoToEnrichment(req.SourceEnrichment)
+	}
 
-	// Elasticsearch
-	elasticsearchAdapter := &adapters.ElasticsearchIngester{}
-	translator.RegisterIngester("elasticsearch", elasticsearchAdapter)
-	translator.RegisterExporter("elasticsearch", &adapters.ElasticsearchExporter{})
+	var targetEnrichment *unifiedmodel.UnifiedModelEnrichment
+	if req.TargetEnrichment != nil {
+		targetEnrichment = s.convertProtoToEnrichment(req.TargetEnrichment)
+	}
 
-	// MariaDB
-	mariaAdapter := &adapters.MariaDBIngester{}
-	translator.RegisterIngester("mariadb", mariaAdapter)
-	translator.RegisterExporter("mariadb", &adapters.MariaDBExporter{})
+	// Convert protobuf options to internal options
+	options := s.convertMatchOptions(req.Options)
 
-	// MongoDB
-	mongodbAdapter := &adapters.MongoDBIngester{}
-	translator.RegisterIngester("mongodb", mongodbAdapter)
-	translator.RegisterExporter("mongodb", &adapters.MongoDBExporter{})
+	// Create unified matcher and perform matching
+	matcher := matching.NewUnifiedModelMatcher()
+	result, err := matcher.MatchUnifiedModels(sourceModel, sourceEnrichment, targetModel, targetEnrichment, options)
+	if err != nil {
+		return nil, fmt.Errorf("matching failed: %w", err)
+	}
 
-	// MSSQL
-	mssqlAdapter := &adapters.MSSQLIngester{}
-	translator.RegisterIngester("mssql", mssqlAdapter)
-	translator.RegisterExporter("mssql", &adapters.MSSQLExporter{})
+	// Convert result to protobuf format
+	response := &pb.MatchUnifiedModelsEnrichedResponse{
+		TableMatches:           s.convertTableMatchesToProto(result.TableMatches),
+		UnmatchedColumns:       s.convertColumnMatchesToProto(result.UnmatchedColumns),
+		Warnings:               result.Warnings,
+		OverallSimilarityScore: result.OverallSimilarityScore,
+	}
 
-	// MySQL
-	mysqlAdapter := &adapters.MySQLIngester{}
-	translator.RegisterIngester("mysql", mysqlAdapter)
-	translator.RegisterExporter("mysql", &adapters.MySQLExporter{})
-
-	// Neo4j
-	neo4jAdapter := &adapters.Neo4jIngester{}
-	translator.RegisterIngester("neo4j", neo4jAdapter)
-	translator.RegisterExporter("neo4j", &adapters.Neo4jExporter{})
-
-	// Oracle
-	oracleAdapter := &adapters.OracleIngester{}
-	translator.RegisterIngester("oracle", oracleAdapter)
-	translator.RegisterExporter("oracle", &adapters.OracleExporter{})
-
-	// Pinecone
-	pineconeAdapter := &adapters.PineconeIngester{}
-	translator.RegisterIngester("pinecone", pineconeAdapter)
-	translator.RegisterExporter("pinecone", &adapters.PineconeExporter{})
-
-	// PostgreSQL
-	postgresAdapter := &adapters.PostgresIngester{}
-	translator.RegisterIngester("postgres", postgresAdapter)
-	translator.RegisterExporter("postgres", &adapters.PostgresExporter{})
-
-	// Redis
-	redisAdapter := &adapters.RedisIngester{}
-	translator.RegisterIngester("redis", redisAdapter)
-	translator.RegisterExporter("redis", &adapters.RedisExporter{})
-
-	// Snowflake
-	snowflakeAdapter := &adapters.SnowflakeIngester{}
-	translator.RegisterIngester("snowflake", snowflakeAdapter)
-	translator.RegisterExporter("snowflake", &adapters.SnowflakeExporter{})
+	return response, nil
 }
 
-// createGenerator creates the appropriate statement generator based on the target database
-func (s *Server) createGenerator(target string) (generators.StatementGenerator, error) {
-	switch target {
-	case "cassandra":
-		return &generators.CassandraGenerator{}, nil
-	case "clickhouse":
-		return &generators.ClickhouseGenerator{}, nil
-	case "cockroachdb":
-		return &generators.CockroachGenerator{}, nil
-	case "db2":
-		return &generators.Db2Generator{}, nil
-	case "edgedb":
-		return &generators.EdgeDBGenerator{}, nil
-	case "elasticsearch":
-		return &generators.ElasticsearchGenerator{}, nil
-	case "mariadb":
-		return &generators.MariaDBGenerator{}, nil
-	case "mongodb":
-		return &generators.MongoDBGenerator{}, nil
-	case "mssql":
-		return &generators.MSSQLGenerator{}, nil
-	case "mysql":
-		return &generators.MySQLGenerator{}, nil
-	case "neo4j":
-		return &generators.Neo4jGenerator{}, nil
-	case "oracle":
-		return &generators.OracleGenerator{}, nil
-	case "pinecone":
-		return &generators.PineconeGenerator{}, nil
-	case "postgres":
-		return &generators.PostgresGenerator{}, nil
-	case "redis":
-		return &generators.RedisGenerator{}, nil
-	case "snowflake":
-		return &generators.SnowflakeGenerator{}, nil
-	default:
-		return nil, fmt.Errorf("unsupported target database: %s", target)
+// convertMatchOptions converts protobuf MatchOptions to internal UnifiedMatchOptions
+func (s *Server) convertMatchOptions(protoOptions *pb.MatchOptions) *matching.UnifiedMatchOptions {
+	if protoOptions == nil {
+		defaultOptions := matching.DefaultUnifiedMatchOptions()
+		return &defaultOptions
+	}
+
+	return &matching.UnifiedMatchOptions{
+		NameSimilarityThreshold:  protoOptions.NameSimilarityThreshold,
+		PoorMatchThreshold:       protoOptions.PoorMatchThreshold,
+		NameWeight:               protoOptions.NameWeight,
+		TypeWeight:               protoOptions.TypeWeight,
+		ClassificationWeight:     protoOptions.ClassificationWeight,
+		PrivilegedDataWeight:     protoOptions.PrivilegedDataWeight,
+		TableStructureWeight:     protoOptions.TableStructureWeight,
+		EnableCrossTableMatching: protoOptions.EnableCrossTableMatching,
 	}
 }
 
-// convertProtoToEnrichedTables converts protobuf enriched table metadata to internal structures
-func (s *Server) convertProtoToEnrichedTables(protoTables []*pb.EnrichedTableMetadata) []matching.EnrichedTableStructure {
-	var tables []matching.EnrichedTableStructure
+// convertTableMatchesToProto converts internal table matches to protobuf format
+func (s *Server) convertTableMatchesToProto(matches []matching.UnifiedTableMatch) []*pb.EnrichedTableMatch {
+	var protoMatches []*pb.EnrichedTableMatch
 
-	for _, protoTable := range protoTables {
-		// Convert columns
-		var columns []matching.EnrichedColumnStructure
-		for _, protoColumn := range protoTable.Columns {
-			column := matching.EnrichedColumnStructure{
-				TableName:             protoTable.Name,
-				Name:                  protoColumn.Name,
-				DataType:              protoColumn.Type,
-				IsNullable:            protoColumn.IsNullable,
-				IsPrimaryKey:          protoColumn.IsPrimaryKey,
-				IsForeignKey:          protoColumn.IsForeignKey,
-				IsArray:               protoColumn.IsArray,
-				IsAutoIncrement:       protoColumn.IsAutoIncrement,
-				Indexes:               protoColumn.Indexes,
-				IsPrivilegedData:      protoColumn.IsPrivilegedData,
-				DataCategory:          protoColumn.DataCategory,
-				PrivilegedConfidence:  protoColumn.PrivilegedConfidence,
-				PrivilegedDescription: protoColumn.PrivilegedDescription,
-			}
-
-			// Handle optional fields
-			if protoColumn.ColumnDefault != "" {
-				column.ColumnDefault = &protoColumn.ColumnDefault
-			}
-
-			if protoColumn.VarcharLength > 0 {
-				length := int(protoColumn.VarcharLength)
-				column.VarcharLength = &length
-			}
-
-			columns = append(columns, column)
+	for _, match := range matches {
+		protoMatch := &pb.EnrichedTableMatch{
+			SourceTable:                  match.SourceTable,
+			TargetTable:                  match.TargetTable,
+			Score:                        match.Score,
+			IsPoorMatch:                  match.IsPoorMatch,
+			IsUnmatched:                  match.IsUnmatched,
+			ClassificationMatch:          match.ClassificationMatch,
+			ClassificationConfidenceDiff: match.ClassificationConfidenceDiff,
+			MatchedColumns:               int32(match.MatchedColumns),
+			TotalSourceColumns:           int32(match.TotalSourceColumns),
+			TotalTargetColumns:           int32(match.TotalTargetColumns),
+			ColumnMatches:                s.convertColumnMatchesToProto(match.ColumnMatches),
 		}
-
-		// Convert classification scores
-		var classificationScores []matching.CategoryScore
-		for _, protoScore := range protoTable.ClassificationScores {
-			classificationScores = append(classificationScores, matching.CategoryScore{
-				Category: protoScore.Category,
-				Score:    protoScore.Score,
-				Reason:   protoScore.Reason,
-			})
-		}
-
-		table := matching.EnrichedTableStructure{
-			Engine:                   protoTable.Engine,
-			Schema:                   protoTable.Schema,
-			Name:                     protoTable.Name,
-			TableType:                protoTable.TableType,
-			Columns:                  columns,
-			Properties:               protoTable.Properties,
-			PrimaryCategory:          protoTable.PrimaryCategory,
-			ClassificationConfidence: protoTable.ClassificationConfidence,
-			ClassificationScores:     classificationScores,
-		}
-
-		tables = append(tables, table)
+		protoMatches = append(protoMatches, protoMatch)
 	}
 
-	return tables
+	return protoMatches
+}
+
+// convertColumnMatchesToProto converts internal column matches to protobuf format
+func (s *Server) convertColumnMatchesToProto(matches []matching.UnifiedColumnMatch) []*pb.EnrichedColumnMatch {
+	var protoMatches []*pb.EnrichedColumnMatch
+
+	for _, match := range matches {
+		protoMatch := &pb.EnrichedColumnMatch{
+			SourceTable:              match.SourceTable,
+			TargetTable:              match.TargetTable,
+			SourceColumn:             match.SourceColumn,
+			TargetColumn:             match.TargetColumn,
+			Score:                    match.Score,
+			IsTypeCompatible:         match.IsTypeCompatible,
+			IsPoorMatch:              match.IsPoorMatch,
+			IsUnmatched:              match.IsUnmatched,
+			PrivilegedDataMatch:      match.PrivilegedDataMatch,
+			DataCategoryMatch:        match.DataCategoryMatch,
+			PrivilegedConfidenceDiff: match.PrivilegedConfidenceDiff,
+		}
+		protoMatches = append(protoMatches, protoMatch)
+	}
+
+	return protoMatches
 }

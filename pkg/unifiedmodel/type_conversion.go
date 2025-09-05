@@ -133,26 +133,33 @@ func NewTypeConverter() *TypeConverter {
 	}
 	// Initialize scalable converter (metadata-driven approach)
 	converter.scalableConverter = NewScalableTypeConverter()
-	// Keep legacy rules for backward compatibility
-	converter.initializeConversionRules()
+
 	return converter
 }
 
 // ConvertDataType converts a data type from source to target database
 func (tc *TypeConverter) ConvertDataType(sourceDB, targetDB dbcapabilities.DatabaseType, sourceType string) (*DataTypeConversionResult, error) {
-	// Use scalable converter first (metadata-driven approach)
+	// Use scalable converter as primary method (metadata-driven approach)
 	if tc.scalableConverter != nil {
 		result, err := tc.scalableConverter.ConvertPrimitiveType(sourceDB, targetDB, sourceType)
 		if err == nil {
 			return result, nil
 		}
-		// If scalable converter fails, continue with legacy approach
+		// If scalable converter fails, try with base type (strip parameters)
+		baseType := tc.extractBaseType(strings.ToLower(strings.TrimSpace(sourceType)))
+		if baseType != strings.ToLower(strings.TrimSpace(sourceType)) {
+			result, err := tc.scalableConverter.ConvertPrimitiveType(sourceDB, targetDB, baseType)
+			if err == nil {
+				// Preserve original parameters in the target type if applicable
+				result.ConvertedType = tc.preserveTypeParameters(sourceType, result.ConvertedType)
+				result.OriginalType = sourceType
+				return result, nil
+			}
+		}
 	}
 
-	// Fallback to legacy approach for backward compatibility
+	// Fallback to legacy registry for backward compatibility (only for specific edge cases)
 	normalizedSourceType := strings.ToLower(strings.TrimSpace(sourceType))
-
-	// Try direct conversion rule first
 	key := DataTypeConversionKey{
 		SourceDB:   sourceDB,
 		TargetDB:   targetDB,
@@ -167,26 +174,9 @@ func (tc *TypeConverter) ConvertDataType(sourceDB, targetDB dbcapabilities.Datab
 			ConversionType:     rule.ConversionType,
 			IsLossyConversion:  rule.IsLossyConversion,
 			RequiresValidation: rule.RequiresUserInput,
-			ConversionNotes:    rule.ConversionNotes,
+			ConversionNotes:    rule.ConversionNotes + " (legacy rule)",
 			Warnings:           rule.Warnings,
 		}, nil
-	}
-
-	// Try conversion through unified type (legacy)
-	unifiedType := tc.mapNativeTypeToUnified(sourceDB, normalizedSourceType)
-	if unifiedType != UnifiedTypeUnknown {
-		targetType := tc.mapUnifiedTypeToNative(targetDB, unifiedType)
-		if targetType != "" {
-			return &DataTypeConversionResult{
-				OriginalType:       sourceType,
-				ConvertedType:      targetType,
-				UnifiedType:        unifiedType,
-				ConversionType:     ConversionTypeDirect,
-				IsLossyConversion:  false,
-				RequiresValidation: false,
-				ConversionNotes:    fmt.Sprintf("Converted via unified type %s (legacy)", unifiedType),
-			}, nil
-		}
 	}
 
 	// No conversion found
@@ -353,9 +343,10 @@ func (tc *TypeConverter) ConvertDataTypeWithCustomTypes(sourceDB, targetDB dbcap
 			}
 		case CustomTypeStrategyJSON:
 			result.ConvertedType = "jsonb"
-			if targetDB == dbcapabilities.MySQL {
+			switch targetDB {
+			case dbcapabilities.MySQL:
 				result.ConvertedType = "json"
-			} else if targetDB == dbcapabilities.MongoDB {
+			case dbcapabilities.MongoDB:
 				result.ConvertedType = "object"
 			}
 		case CustomTypeStrategyTable:
@@ -373,201 +364,79 @@ func (tc *TypeConverter) ConvertDataTypeWithCustomTypes(sourceDB, targetDB dbcap
 	return tc.ConvertDataType(sourceDB, targetDB, sourceType)
 }
 
-// initializeConversionRules populates the conversion registry with common type mappings
-func (tc *TypeConverter) initializeConversionRules() {
-	// MongoDB -> PostgreSQL conversions
-	tc.addConversionRule(dbcapabilities.MongoDB, dbcapabilities.PostgreSQL, "int32", "integer", UnifiedTypeInt32, ConversionTypeDirect, false, false, "MongoDB Int32 maps directly to PostgreSQL integer")
-	tc.addConversionRule(dbcapabilities.MongoDB, dbcapabilities.PostgreSQL, "int64", "bigint", UnifiedTypeInt64, ConversionTypeDirect, false, false, "MongoDB Int64 maps directly to PostgreSQL bigint")
-	tc.addConversionRule(dbcapabilities.MongoDB, dbcapabilities.PostgreSQL, "string", "text", UnifiedTypeString, ConversionTypeDirect, false, false, "MongoDB String maps to PostgreSQL text")
-	tc.addConversionRule(dbcapabilities.MongoDB, dbcapabilities.PostgreSQL, "boolean", "boolean", UnifiedTypeBoolean, ConversionTypeDirect, false, false, "MongoDB Boolean maps directly to PostgreSQL boolean")
-	tc.addConversionRule(dbcapabilities.MongoDB, dbcapabilities.PostgreSQL, "date", "timestamp", UnifiedTypeTimestamp, ConversionTypeDirect, false, false, "MongoDB Date maps to PostgreSQL timestamp")
-	tc.addConversionRule(dbcapabilities.MongoDB, dbcapabilities.PostgreSQL, "objectid", "varchar(24)", UnifiedTypeString, ConversionTypeTransform, false, false, "MongoDB ObjectId converted to 24-character string")
-	tc.addConversionRule(dbcapabilities.MongoDB, dbcapabilities.PostgreSQL, "double", "double precision", UnifiedTypeFloat64, ConversionTypeDirect, false, false, "MongoDB Double maps to PostgreSQL double precision")
-	tc.addConversionRule(dbcapabilities.MongoDB, dbcapabilities.PostgreSQL, "object", "jsonb", UnifiedTypeJSON, ConversionTypeDirect, false, false, "MongoDB Object/Document maps to PostgreSQL JSONB")
-	tc.addConversionRule(dbcapabilities.MongoDB, dbcapabilities.PostgreSQL, "array", "jsonb", UnifiedTypeArray, ConversionTypeDirect, false, false, "MongoDB Array maps to PostgreSQL JSONB array")
-
-	// PostgreSQL -> MongoDB conversions
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "integer", "int32", UnifiedTypeInt32, ConversionTypeDirect, false, false, "PostgreSQL integer maps directly to MongoDB Int32")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "int4", "int32", UnifiedTypeInt32, ConversionTypeDirect, false, false, "PostgreSQL int4 maps directly to MongoDB Int32")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "bigint", "int64", UnifiedTypeInt64, ConversionTypeDirect, false, false, "PostgreSQL bigint maps directly to MongoDB Int64")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "int8", "int64", UnifiedTypeInt64, ConversionTypeDirect, false, false, "PostgreSQL int8 maps directly to MongoDB Int64")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "text", "string", UnifiedTypeString, ConversionTypeDirect, false, false, "PostgreSQL text maps to MongoDB String")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "varchar", "string", UnifiedTypeString, ConversionTypeDirect, false, false, "PostgreSQL varchar maps to MongoDB String")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "boolean", "boolean", UnifiedTypeBoolean, ConversionTypeDirect, false, false, "PostgreSQL boolean maps directly to MongoDB Boolean")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "timestamp", "date", UnifiedTypeTimestamp, ConversionTypeDirect, false, false, "PostgreSQL timestamp maps to MongoDB Date")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "timestamptz", "date", UnifiedTypeTimestamp, ConversionTypeDirect, false, false, "PostgreSQL timestamptz maps to MongoDB Date")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "uuid", "string", UnifiedTypeUUID, ConversionTypeTransform, false, false, "PostgreSQL UUID converted to string representation")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "double precision", "double", UnifiedTypeFloat64, ConversionTypeDirect, false, false, "PostgreSQL double precision maps to MongoDB Double")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "float8", "double", UnifiedTypeFloat64, ConversionTypeDirect, false, false, "PostgreSQL float8 maps to MongoDB Double")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "jsonb", "object", UnifiedTypeJSON, ConversionTypeDirect, false, false, "PostgreSQL JSONB maps to MongoDB Object/Document")
-	tc.addConversionRule(dbcapabilities.PostgreSQL, dbcapabilities.MongoDB, "json", "object", UnifiedTypeJSON, ConversionTypeDirect, false, false, "PostgreSQL JSON maps to MongoDB Object/Document")
-
-	// Add more database pairs as needed...
-	// MySQL -> PostgreSQL, Oracle -> MySQL, etc.
+// extractBaseType extracts the base type from a parameterized type
+// e.g., "varchar(255)" -> "varchar", "decimal(10,2)" -> "decimal"
+func (tc *TypeConverter) extractBaseType(dataType string) string {
+	// Find the first opening parenthesis
+	if idx := strings.Index(dataType, "("); idx != -1 {
+		return dataType[:idx]
+	}
+	return dataType
 }
 
-// addConversionRule adds a conversion rule to the registry
-func (tc *TypeConverter) addConversionRule(sourceDB, targetDB dbcapabilities.DatabaseType, sourceType, targetType string, unifiedType UnifiedDataType, conversionType ConversionType, isLossy, requiresInput bool, notes string) {
-	key := DataTypeConversionKey{
-		SourceDB:   sourceDB,
-		TargetDB:   targetDB,
-		SourceType: strings.ToLower(strings.TrimSpace(sourceType)),
+// preserveTypeParameters preserves parameters from source type in target type
+// e.g., source: "varchar(255)", target: "varchar" -> "varchar(255)"
+func (tc *TypeConverter) preserveTypeParameters(sourceType, targetType string) string {
+	// If target type already has parameters, don't add more
+	if strings.Contains(targetType, "(") {
+		return targetType
 	}
 
-	rule := DataTypeConversionRule{
-		SourceDatabase:    sourceDB,
-		TargetDatabase:    targetDB,
-		SourceType:        sourceType,
-		TargetType:        targetType,
-		UnifiedType:       unifiedType,
-		ConversionType:    conversionType,
-		IsLossyConversion: isLossy,
-		RequiresUserInput: requiresInput,
-		ConversionNotes:   notes,
+	// Extract parameters from source type
+	if idx := strings.Index(sourceType, "("); idx != -1 {
+		parameters := sourceType[idx:]
+		// Check if target type can accept parameters
+		if tc.canAcceptParameters(targetType) {
+			return targetType + parameters
+		}
 	}
-
-	tc.registry[key] = rule
+	return targetType
 }
 
-// mapNativeTypeToUnified maps a database-specific type to unified type
-func (tc *TypeConverter) mapNativeTypeToUnified(dbType dbcapabilities.DatabaseType, nativeType string) UnifiedDataType {
-	normalizedType := strings.ToLower(strings.TrimSpace(nativeType))
+// canAcceptParameters checks if a data type can accept parameters
+func (tc *TypeConverter) canAcceptParameters(dataType string) bool {
+	baseType := strings.ToLower(dataType)
+	parameterizedTypes := []string{
+		"varchar", "char", "decimal", "numeric", "float", "double", "precision",
+		"bit", "varbinary", "binary", "time", "timestamp", "datetime",
+	}
 
-	switch dbType {
-	case dbcapabilities.MongoDB:
-		switch normalizedType {
-		case "int32":
-			return UnifiedTypeInt32
-		case "int64":
-			return UnifiedTypeInt64
-		case "string":
-			return UnifiedTypeString
-		case "boolean":
-			return UnifiedTypeBoolean
-		case "date":
-			return UnifiedTypeTimestamp
-		case "objectid":
-			return UnifiedTypeString
-		case "double":
-			return UnifiedTypeFloat64
-		case "object", "document":
-			return UnifiedTypeJSON
-		case "array":
-			return UnifiedTypeArray
-		}
-	case dbcapabilities.PostgreSQL:
-		switch normalizedType {
-		case "integer", "int4":
-			return UnifiedTypeInt32
-		case "bigint", "int8":
-			return UnifiedTypeInt64
-		case "varchar", "text":
-			return UnifiedTypeString
-		case "boolean":
-			return UnifiedTypeBoolean
-		case "timestamp", "timestamptz":
-			return UnifiedTypeTimestamp
-		case "uuid":
-			return UnifiedTypeUUID
-		case "double precision", "float8":
-			return UnifiedTypeFloat64
-		case "jsonb", "json":
-			return UnifiedTypeJSON
-		}
-	case dbcapabilities.MySQL:
-		switch normalizedType {
-		case "int", "integer":
-			return UnifiedTypeInt32
-		case "bigint":
-			return UnifiedTypeInt64
-		case "varchar", "text":
-			return UnifiedTypeString
-		case "boolean", "bool":
-			return UnifiedTypeBoolean
-		case "datetime", "timestamp":
-			return UnifiedTypeTimestamp
-		case "double":
-			return UnifiedTypeFloat64
-		case "json":
-			return UnifiedTypeJSON
+	for _, paramType := range parameterizedTypes {
+		if strings.Contains(baseType, paramType) {
+			return true
 		}
 	}
-	return UnifiedTypeUnknown
-}
-
-// mapUnifiedTypeToNative maps a unified type to database-specific type
-func (tc *TypeConverter) mapUnifiedTypeToNative(dbType dbcapabilities.DatabaseType, unifiedType UnifiedDataType) string {
-	switch dbType {
-	case dbcapabilities.MongoDB:
-		switch unifiedType {
-		case UnifiedTypeInt32:
-			return "int32"
-		case UnifiedTypeInt64:
-			return "int64"
-		case UnifiedTypeString:
-			return "string"
-		case UnifiedTypeBoolean:
-			return "boolean"
-		case UnifiedTypeTimestamp:
-			return "date"
-		case UnifiedTypeFloat64:
-			return "double"
-		case UnifiedTypeJSON:
-			return "object"
-		case UnifiedTypeArray:
-			return "array"
-		}
-	case dbcapabilities.PostgreSQL:
-		switch unifiedType {
-		case UnifiedTypeInt32:
-			return "integer"
-		case UnifiedTypeInt64:
-			return "bigint"
-		case UnifiedTypeString:
-			return "text"
-		case UnifiedTypeBoolean:
-			return "boolean"
-		case UnifiedTypeTimestamp:
-			return "timestamp"
-		case UnifiedTypeUUID:
-			return "uuid"
-		case UnifiedTypeFloat64:
-			return "double precision"
-		case UnifiedTypeJSON:
-			return "jsonb"
-		case UnifiedTypeArray:
-			return "jsonb"
-		}
-	case dbcapabilities.MySQL:
-		switch unifiedType {
-		case UnifiedTypeInt32:
-			return "int"
-		case UnifiedTypeInt64:
-			return "bigint"
-		case UnifiedTypeString:
-			return "text"
-		case UnifiedTypeBoolean:
-			return "boolean"
-		case UnifiedTypeTimestamp:
-			return "datetime"
-		case UnifiedTypeFloat64:
-			return "double"
-		case UnifiedTypeJSON:
-			return "json"
-		case UnifiedTypeArray:
-			return "json"
-		}
-	}
-	return ""
+	return false
 }
 
 // GetSupportedConversions returns all supported type conversions for a database pair
 func (tc *TypeConverter) GetSupportedConversions(sourceDB, targetDB dbcapabilities.DatabaseType) []DataTypeConversionRule {
 	var conversions []DataTypeConversionRule
 
-	for key, rule := range tc.registry {
-		if key.SourceDB == sourceDB && key.TargetDB == targetDB {
-			conversions = append(conversions, rule)
+	// Then, generate conversions from the ScalableTypeConverter metadata
+	if tc.scalableConverter != nil {
+		sourceMetadata, sourceExists := tc.scalableConverter.metadata[sourceDB]
+		targetMetadata, targetExists := tc.scalableConverter.metadata[targetDB]
+
+		if sourceExists && targetExists {
+			// Generate conversions for all source types that can be converted
+			for sourceTypeName, sourceTypeInfo := range sourceMetadata.PrimitiveTypes {
+				// Find target type for this unified type
+				if targetTypeName, found := tc.scalableConverter.findTargetType(sourceTypeInfo.UnifiedType, targetMetadata); found {
+					rule := DataTypeConversionRule{
+						SourceDatabase:    sourceDB,
+						TargetDatabase:    targetDB,
+						SourceType:        sourceTypeName,
+						TargetType:        targetTypeName,
+						UnifiedType:       sourceTypeInfo.UnifiedType,
+						ConversionType:    ConversionTypeDirect,
+						IsLossyConversion: false,
+						RequiresUserInput: false,
+						ConversionNotes:   fmt.Sprintf("Generated from unified type %s", sourceTypeInfo.UnifiedType),
+					}
+					conversions = append(conversions, rule)
+				}
+			}
 		}
 	}
 

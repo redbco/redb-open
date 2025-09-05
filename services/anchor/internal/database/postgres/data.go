@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
-
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,7 +23,7 @@ func FetchData(pool *pgxpool.Pool, tableName string, limit int) ([]map[string]in
 	// Build and execute query
 	query := fmt.Sprintf("SELECT %s FROM %s",
 		strings.Join(columns, ", "),
-		common.QuoteIdentifier(tableName))
+		quoteIdentifier(tableName))
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -88,7 +86,7 @@ func InsertData(pool *pgxpool.Pool, tableName string, data []map[string]interfac
 	// Prepare the query
 	query := fmt.Sprintf(
 		"INSERT INTO %s (%s) VALUES (%s)",
-		common.QuoteIdentifier(tableName),
+		quoteIdentifier(tableName),
 		strings.Join(columns, ", "),
 		strings.Join(placeholders, ", "),
 	)
@@ -156,14 +154,14 @@ func UpsertData(pool *pgxpool.Pool, tableName string, data []map[string]interfac
 			}
 		}
 		if !isUnique {
-			updateSet = append(updateSet, fmt.Sprintf("%s = EXCLUDED.%s", common.QuoteIdentifier(col), common.QuoteIdentifier(col)))
+			updateSet = append(updateSet, fmt.Sprintf("%s = EXCLUDED.%s", quoteIdentifier(col), quoteIdentifier(col)))
 		}
 	}
 
 	// Prepare the query
 	query := fmt.Sprintf(
 		"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
-		common.QuoteIdentifier(tableName),
+		quoteIdentifier(tableName),
 		strings.Join(columns, ", "),
 		strings.Join(placeholders, ", "),
 		conflictColumns,
@@ -218,7 +216,7 @@ func UpdateData(pool *pgxpool.Pool, tableName string, data []map[string]interfac
 	// Build the WHERE clause
 	whereConditions := make([]string, len(whereColumns))
 	for i, col := range whereColumns {
-		whereConditions[i] = fmt.Sprintf("%s = $%d", common.QuoteIdentifier(col), len(columns)+i+1)
+		whereConditions[i] = fmt.Sprintf("%s = $%d", quoteIdentifier(col), len(columns)+i+1)
 	}
 
 	// Build the SET clause
@@ -232,14 +230,14 @@ func UpdateData(pool *pgxpool.Pool, tableName string, data []map[string]interfac
 			}
 		}
 		if !isWhereColumn {
-			setClause = append(setClause, fmt.Sprintf("%s = $%d", common.QuoteIdentifier(col), i+1))
+			setClause = append(setClause, fmt.Sprintf("%s = $%d", quoteIdentifier(col), i+1))
 		}
 	}
 
 	// Prepare the query
 	query := fmt.Sprintf(
 		"UPDATE %s SET %s WHERE %s",
-		common.QuoteIdentifier(tableName),
+		quoteIdentifier(tableName),
 		strings.Join(setClause, ", "),
 		strings.Join(whereConditions, " AND "),
 	)
@@ -456,4 +454,11 @@ func getColumns(pool *pgxpool.Pool, tableName string) ([]string, error) {
 	}
 
 	return columns, rows.Err()
+}
+
+func quoteIdentifier(name string) string {
+	// Replace any existing quotes with double quotes to escape them
+	name = strings.Replace(name, `"`, `""`, -1)
+	// Wrap the entire name in quotes
+	return fmt.Sprintf(`"%s"`, name)
 }

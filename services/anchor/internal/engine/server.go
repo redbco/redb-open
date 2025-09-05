@@ -9,9 +9,10 @@ import (
 
 	pb "github.com/redbco/redb-open/api/proto/anchor/v1"
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/config"
 	"github.com/redbco/redb-open/services/anchor/internal/database"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 type Server struct {
@@ -402,8 +403,8 @@ func (s *Server) GetDatabaseSchema(ctx context.Context, req *pb.GetDatabaseSchem
 func (s *Server) DeployDatabaseSchema(ctx context.Context, req *pb.DeployDatabaseSchemaRequest) (*pb.DeployDatabaseSchemaResponse, error) {
 	defer s.trackOperation()()
 
-	// Parse JSON schema bytes into StructureParams
-	var structure common.StructureParams
+	// Parse JSON schema bytes into UnifiedModel
+	var structure *unifiedmodel.UnifiedModel
 	if err := json.Unmarshal(req.Schema, &structure); err != nil {
 		return &pb.DeployDatabaseSchemaResponse{
 			Success:    false,
@@ -943,7 +944,7 @@ func (s *Server) CreateReplicationSource(ctx context.Context, req *pb.CreateRepl
 	repClient, err := dbManager.GetReplicationClient(replicationID)
 	if err != nil {
 		// No client exists, create a new one
-		replicationConfig := common.ReplicationConfig{
+		replicationConfig := dbclient.ReplicationConfig{
 			ReplicationID:     replicationID,
 			DatabaseID:        req.DatabaseId,
 			WorkspaceID:       dbConfig.WorkspaceID,

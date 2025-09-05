@@ -12,7 +12,7 @@ import (
 	"github.com/redbco/redb-open/services/anchor/internal/database/cassandra"
 	"github.com/redbco/redb-open/services/anchor/internal/database/clickhouse"
 	"github.com/redbco/redb-open/services/anchor/internal/database/cockroach"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 	"github.com/redbco/redb-open/services/anchor/internal/database/edgedb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
 	"github.com/redbco/redb-open/services/anchor/internal/database/iceberg"
@@ -29,9 +29,9 @@ import (
 
 // DatabaseManager manages database connections
 type DatabaseManager struct {
-	databaseClients    map[string]*common.DatabaseClient
-	instanceClients    map[string]*common.InstanceClient
-	replicationClients map[string]*common.ReplicationClient
+	databaseClients    map[string]*dbclient.DatabaseClient
+	instanceClients    map[string]*dbclient.InstanceClient
+	replicationClients map[string]*dbclient.ReplicationClient
 	replicationManager *ReplicationManager
 	mu                 sync.RWMutex
 	logger             *logger.Logger
@@ -41,9 +41,9 @@ type DatabaseManager struct {
 // NewDatabaseManager creates a new DatabaseManager instance
 func NewDatabaseManager() *DatabaseManager {
 	dm := &DatabaseManager{
-		databaseClients:    make(map[string]*common.DatabaseClient),
-		instanceClients:    make(map[string]*common.InstanceClient),
-		replicationClients: make(map[string]*common.ReplicationClient),
+		databaseClients:    make(map[string]*dbclient.DatabaseClient),
+		instanceClients:    make(map[string]*dbclient.InstanceClient),
+		replicationClients: make(map[string]*dbclient.ReplicationClient),
 	}
 	dm.replicationManager = NewReplicationManager(dm)
 	return dm
@@ -51,11 +51,11 @@ func NewDatabaseManager() *DatabaseManager {
 
 // DatabaseMetadataCollector collects metadata about a database
 type DatabaseMetadataCollector struct {
-	client *common.DatabaseClient
+	client *dbclient.DatabaseClient
 }
 
 // NewDatabaseMetadataCollector creates a new metadata collector
-func NewDatabaseMetadataCollector(client *common.DatabaseClient) *DatabaseMetadataCollector {
+func NewDatabaseMetadataCollector(client *dbclient.DatabaseClient) *DatabaseMetadataCollector {
 	return &DatabaseMetadataCollector{
 		client: client,
 	}
@@ -63,11 +63,11 @@ func NewDatabaseMetadataCollector(client *common.DatabaseClient) *DatabaseMetada
 
 // InstanceMetadataCollector collects metadata about a database instance
 type InstanceMetadataCollector struct {
-	client *common.InstanceClient
+	client *dbclient.InstanceClient
 }
 
 // NewInstanceMetadataCollector creates a new instance metadata collector
-func NewInstanceMetadataCollector(client *common.InstanceClient) *InstanceMetadataCollector {
+func NewInstanceMetadataCollector(client *dbclient.InstanceClient) *InstanceMetadataCollector {
 	return &InstanceMetadataCollector{
 		client: client,
 	}
@@ -107,7 +107,7 @@ func (dm *DatabaseManager) safeLog(level string, format string, args ...interfac
 }
 
 // GetClient returns a database client by ID
-func (dm *DatabaseManager) GetDatabaseClient(id string) (*common.DatabaseClient, error) {
+func (dm *DatabaseManager) GetDatabaseClient(id string) (*dbclient.DatabaseClient, error) {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
 
@@ -180,7 +180,7 @@ func convertToInt(value interface{}) int {
 }
 
 // GetInstanceClient returns an instance client by ID
-func (dm *DatabaseManager) GetInstanceClient(id string) (*common.InstanceClient, error) {
+func (dm *DatabaseManager) GetInstanceClient(id string) (*dbclient.InstanceClient, error) {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
 
@@ -222,7 +222,7 @@ func (dm *DatabaseManager) UpdateInstanceID(id string, instanceID string) {
 }
 
 // GetReplicationClient returns a replication client by ID
-func (dm *DatabaseManager) GetReplicationClient(id string) (*common.ReplicationClient, error) {
+func (dm *DatabaseManager) GetReplicationClient(id string) (*dbclient.ReplicationClient, error) {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
 
@@ -264,11 +264,11 @@ func (dm *DatabaseManager) UpdateReplicationID(id string, replicationID string) 
 }
 
 // GetReplicationClientsByDatabaseID returns all replication clients for a specific database
-func (dm *DatabaseManager) GetReplicationClientsByDatabaseID(databaseID string) ([]*common.ReplicationClient, error) {
+func (dm *DatabaseManager) GetReplicationClientsByDatabaseID(databaseID string) ([]*dbclient.ReplicationClient, error) {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
 
-	var clients []*common.ReplicationClient
+	var clients []*dbclient.ReplicationClient
 	for _, client := range dm.replicationClients {
 		if client.DatabaseID == databaseID {
 			clients = append(clients, client)
@@ -279,11 +279,11 @@ func (dm *DatabaseManager) GetReplicationClientsByDatabaseID(databaseID string) 
 }
 
 // GetActiveReplicationClients returns all active replication clients
-func (dm *DatabaseManager) GetActiveReplicationClients() ([]*common.ReplicationClient, error) {
+func (dm *DatabaseManager) GetActiveReplicationClients() ([]*dbclient.ReplicationClient, error) {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
 
-	var activeClients []*common.ReplicationClient
+	var activeClients []*dbclient.ReplicationClient
 	for _, client := range dm.replicationClients {
 		if atomic.LoadInt32(&client.IsConnected) == 1 {
 			activeClients = append(activeClients, client)

@@ -2,14 +2,12 @@ package classifier
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
-	unifiedmodel "github.com/redbco/redb-open/api/proto/unifiedmodel/v1"
-	"github.com/redbco/redb-open/services/unifiedmodel/internal/adapters"
+	pb "github.com/redbco/redb-open/api/proto/unifiedmodel/v1"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/unifiedmodel/internal/classifier/classifier"
 	"github.com/redbco/redb-open/services/unifiedmodel/internal/classifier/config"
-	"github.com/redbco/redb-open/services/unifiedmodel/internal/models"
 )
 
 // TableMetadata represents metadata about a database table for classification
@@ -75,15 +73,13 @@ func DefaultClassificationOptions() ClassificationOptions {
 
 // TableClassifier handles table classification
 type TableClassifier struct {
-	service  *classifier.Service
-	adapters map[string]adapters.SchemaIngester
+	service *classifier.Service
 }
 
 // NewTableClassifier creates a new TableClassifier with default configuration
 func NewTableClassifier() *TableClassifier {
 	return &TableClassifier{
-		service:  classifier.NewService(),
-		adapters: initializeAdapters(),
+		service: classifier.NewService(),
 	}
 }
 
@@ -97,37 +93,40 @@ func NewTableClassifierWithConfig(cfg *config.Config) *TableClassifier {
 	}
 
 	return &TableClassifier{
-		service:  service,
-		adapters: initializeAdapters(),
+		service: service,
 	}
 }
 
-// initializeAdapters sets up the database adapters
-func initializeAdapters() map[string]adapters.SchemaIngester {
-	adapterMap := make(map[string]adapters.SchemaIngester)
+// ClassifyUnifiedModel classifies tables from a UnifiedModel directly
+func (c *TableClassifier) ClassifyUnifiedModel(model *unifiedmodel.UnifiedModel, options *ClassificationOptions) ([]unifiedmodel.TableEnrichment, error) {
+	if model == nil {
+		return nil, fmt.Errorf("unified model cannot be nil")
+	}
 
-	// Initialize adapters for different database types
-	adapterMap["postgres"] = &adapters.PostgresIngester{}
-	adapterMap["postgresql"] = &adapters.PostgresIngester{}
-	adapterMap["mysql"] = &adapters.MySQLIngester{}
-	adapterMap["mariadb"] = &adapters.MariaDBIngester{}
-	adapterMap["mssql"] = &adapters.MSSQLIngester{}
-	adapterMap["sqlserver"] = &adapters.MSSQLIngester{}
-	adapterMap["oracle"] = &adapters.OracleIngester{}
-	adapterMap["db2"] = &adapters.Db2Ingester{}
-	adapterMap["cockroach"] = &adapters.CockroachIngester{}
-	adapterMap["cockroachdb"] = &adapters.CockroachIngester{}
-	adapterMap["clickhouse"] = &adapters.ClickhouseIngester{}
-	adapterMap["cassandra"] = &adapters.CassandraIngester{}
-	adapterMap["mongodb"] = &adapters.MongoDBIngester{}
-	adapterMap["redis"] = &adapters.RedisIngester{}
-	adapterMap["neo4j"] = &adapters.Neo4jIngester{}
-	adapterMap["elasticsearch"] = &adapters.ElasticsearchIngester{}
-	adapterMap["snowflake"] = &adapters.SnowflakeIngester{}
-	adapterMap["pinecone"] = &adapters.PineconeIngester{}
-	adapterMap["edgedb"] = &adapters.EdgeDBIngester{}
+	if options == nil {
+		defaultOptions := DefaultClassificationOptions()
+		options = &defaultOptions
+	}
 
-	return adapterMap
+	enrichments := make([]unifiedmodel.TableEnrichment, 0)
+
+	// Classify each table in the unified model
+	for _, table := range model.Tables {
+		// Convert table to metadata format for the internal service
+		metadata := c.convertTableToMetadata(table)
+
+		// Get classification result
+		result, err := c.classifyTableInternal(metadata, options)
+		if err != nil {
+			return nil, fmt.Errorf("failed to classify table %s: %w", table.Name, err)
+		}
+
+		// Convert result to enrichment format
+		enrichment := c.convertResultToEnrichment(result)
+		enrichments = append(enrichments, enrichment)
+	}
+
+	return enrichments, nil
 }
 
 // ClassifyTable classifies a single table based on its metadata
@@ -137,11 +136,65 @@ func (c *TableClassifier) ClassifyTable(metadata TableMetadata, options *Classif
 		options = &defaultOptions
 	}
 
+	return c.classifyTableInternal(metadata, options)
+}
+
+// ClassifyTables classifies multiple tables
+func (c *TableClassifier) ClassifyTables(tables []TableMetadata, options *ClassificationOptions) ([]ClassificationResult, error) {
+	if options == nil {
+		defaultOptions := DefaultClassificationOptions()
+		options = &defaultOptions
+	}
+
+	var results []ClassificationResult
+
+	for _, table := range tables {
+		result, err := c.ClassifyTable(table, options)
+		if err != nil {
+			return nil, fmt.Errorf("failed to classify table %s: %w", table.Name, err)
+		}
+		results = append(results, *result)
+	}
+
+	return results, nil
+}
+
+// convertToProtoMetadata converts our TableMetadata to the internal proto format
+func (c *TableClassifier) convertToProtoMetadata(metadata TableMetadata) *pb.TableMetadata {
+	columns := make([]*pb.ColumnMetadata, len(metadata.Columns))
+	for i, col := range metadata.Columns {
+		columns[i] = &pb.ColumnMetadata{
+			Name:            col.Name,
+			Type:            col.DataType,
+			IsNullable:      col.IsNullable,
+			IsPrimaryKey:    col.IsPrimaryKey,
+			IsAutoIncrement: col.IsAutoIncrement,
+			IsArray:         col.IsArray,
+		}
+
+		// Handle optional fields
+		if col.ColumnDefault != nil {
+			columns[i].ColumnDefault = *col.ColumnDefault
+		}
+		if col.VarcharLength != nil {
+			columns[i].VarcharLength = int32(*col.VarcharLength)
+		}
+	}
+
+	return &pb.TableMetadata{
+		Name:       metadata.Name,
+		Columns:    columns,
+		Properties: metadata.Tags,
+	}
+}
+
+// classifyTableInternal performs the actual classification logic
+func (c *TableClassifier) classifyTableInternal(metadata TableMetadata, options *ClassificationOptions) (*ClassificationResult, error) {
 	// Convert TableMetadata to the internal format expected by the service
 	protoMetadata := c.convertToProtoMetadata(metadata)
 
 	// Create classification request
-	req := &unifiedmodel.ClassifyRequest{
+	req := &pb.ClassifyRequest{
 		Metadata:  protoMetadata,
 		TopN:      int32(options.TopN),
 		Threshold: float64(options.Threshold),
@@ -172,152 +225,76 @@ func (c *TableClassifier) ClassifyTable(metadata TableMetadata, options *Classif
 	return result, nil
 }
 
-// ClassifyTables classifies multiple tables
-func (c *TableClassifier) ClassifyTables(tables []TableMetadata, options *ClassificationOptions) ([]ClassificationResult, error) {
-	if options == nil {
-		defaultOptions := DefaultClassificationOptions()
-		options = &defaultOptions
-	}
-
-	var results []ClassificationResult
-
-	for _, table := range tables {
-		result, err := c.ClassifyTable(table, options)
-		if err != nil {
-			return nil, fmt.Errorf("failed to classify table %s: %w", table.Name, err)
-		}
-		results = append(results, *result)
-	}
-
-	return results, nil
-}
-
-// ClassifyFromJSON classifies tables from JSON schema data
-func (c *TableClassifier) ClassifyFromJSON(schemaType string, data json.RawMessage, options *ClassificationOptions) ([]ClassificationResult, error) {
-	if options == nil {
-		defaultOptions := DefaultClassificationOptions()
-		options = &defaultOptions
-	}
-
-	// Get the appropriate adapter for the schema type
-	adapter, exists := c.adapters[schemaType]
-	if !exists {
-		return nil, fmt.Errorf("unsupported schema type: %s", schemaType)
-	}
-
-	// Convert JSON schema to unified model
-	model, _, err := adapter.IngestSchema(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert schema: %w", err)
-	}
-
-	// Convert unified model to our table metadata format
-	tables := c.convertFromUnifiedModel(model)
-
-	// Classify the tables
-	return c.ClassifyTables(tables, options)
-}
-
-// convertToProtoMetadata converts our TableMetadata to the internal proto format
-func (c *TableClassifier) convertToProtoMetadata(metadata TableMetadata) *unifiedmodel.TableMetadata {
-	columns := make([]*unifiedmodel.ColumnMetadata, len(metadata.Columns))
-	for i, col := range metadata.Columns {
-		columns[i] = &unifiedmodel.ColumnMetadata{
+// convertTableToMetadata converts a shared UnifiedModel table to our internal TableMetadata format
+func (c *TableClassifier) convertTableToMetadata(table unifiedmodel.Table) TableMetadata {
+	columns := make([]ColumnMetadata, 0, len(table.Columns))
+	for _, col := range table.Columns {
+		colMetadata := ColumnMetadata{
 			Name:            col.Name,
-			Type:            col.DataType,
-			IsNullable:      col.IsNullable,
+			DataType:        col.DataType,
+			IsNullable:      col.Nullable,
 			IsPrimaryKey:    col.IsPrimaryKey,
-			IsAutoIncrement: col.IsAutoIncrement,
-			IsArray:         col.IsArray,
+			IsUnique:        false, // Not available in shared model
+			IsAutoIncrement: col.AutoIncrement,
+			IsArray:         false, // Not directly available in shared model
 		}
 
 		// Handle optional fields
-		if col.ColumnDefault != nil {
-			columns[i].ColumnDefault = *col.ColumnDefault
+		if col.Default != "" {
+			colMetadata.ColumnDefault = &col.Default
 		}
-		if col.VarcharLength != nil {
-			columns[i].VarcharLength = int32(*col.VarcharLength)
-		}
+
+		columns = append(columns, colMetadata)
 	}
 
-	return &unifiedmodel.TableMetadata{
-		Name:       metadata.Name,
-		Columns:    columns,
-		Properties: metadata.Tags,
+	// Convert indexes
+	indexes := make([]IndexMetadata, 0, len(table.Indexes))
+	for _, idx := range table.Indexes {
+		indexes = append(indexes, IndexMetadata{
+			Name:      idx.Name,
+			Columns:   idx.Columns,
+			IsUnique:  idx.Unique,
+			IsPrimary: false, // Determine from constraints if needed
+		})
+	}
+
+	// Convert constraints
+	constraints := make([]string, 0, len(table.Constraints))
+	for _, constraint := range table.Constraints {
+		constraints = append(constraints, string(constraint.Type)+" "+constraint.Name)
+	}
+
+	return TableMetadata{
+		Name:        table.Name,
+		Columns:     columns,
+		Indexes:     indexes,
+		Constraints: constraints,
+		Tags:        make(map[string]string), // Could be populated from table options if needed
 	}
 }
 
-// convertFromUnifiedModel converts a unified model to our table metadata format
-func (c *TableClassifier) convertFromUnifiedModel(model *models.UnifiedModel) []TableMetadata {
-	var tables []TableMetadata
-
-	for _, table := range model.Tables {
-		columns := make([]ColumnMetadata, len(table.Columns))
-		for i, col := range table.Columns {
-			colMetadata := ColumnMetadata{
-				Name:            col.Name,
-				DataType:        col.DataType.Name,
-				IsNullable:      col.IsNullable,
-				IsPrimaryKey:    col.IsPrimaryKey,
-				IsUnique:        col.IsUnique,
-				IsAutoIncrement: col.IsAutoIncrement,
-				IsArray:         col.DataType.IsArray,
-			}
-
-			// Handle optional fields
-			if col.DefaultValue != nil {
-				colMetadata.ColumnDefault = col.DefaultValue
-			}
-
-			if col.DataType.BaseType != "" {
-				colMetadata.ArrayElementType = &col.DataType.BaseType
-			}
-
-			if col.DataType.CustomTypeName != "" {
-				colMetadata.CustomTypeName = &col.DataType.CustomTypeName
-			}
-
-			if col.DataType.Length > 0 {
-				colMetadata.VarcharLength = &col.DataType.Length
-			}
-
-			columns[i] = colMetadata
+// convertResultToEnrichment converts a ClassificationResult to a TableEnrichment
+func (c *TableClassifier) convertResultToEnrichment(result *ClassificationResult) unifiedmodel.TableEnrichment {
+	// Convert scores
+	scores := make([]unifiedmodel.CategoryScore, len(result.Scores))
+	for i, score := range result.Scores {
+		scores[i] = unifiedmodel.CategoryScore{
+			Category: score.Category,
+			Score:    score.Score,
+			Reason:   score.Reason,
 		}
-
-		indexes := make([]IndexMetadata, len(table.Indexes))
-		for i, idx := range table.Indexes {
-			// Convert IndexColumn to string slice
-			columnNames := make([]string, len(idx.Columns))
-			for j, col := range idx.Columns {
-				columnNames[j] = col.ColumnName
-			}
-
-			indexes[i] = IndexMetadata{
-				Name:      idx.Name,
-				Columns:   columnNames,
-				IsUnique:  idx.IsUnique,
-				IsPrimary: false, // Index doesn't have IsPrimary field, check if it's a primary key index
-			}
-		}
-
-		// Convert constraints to string slice
-		constraintStrings := make([]string, len(table.Constraints))
-		for i, constraint := range table.Constraints {
-			constraintStrings[i] = constraint.Type + " " + constraint.Name
-		}
-
-		tableMetadata := TableMetadata{
-			Name:        table.Name,
-			Columns:     columns,
-			Indexes:     indexes,
-			Constraints: constraintStrings,
-			Tags:        make(map[string]string), // Table doesn't have Tags field, use empty map
-		}
-
-		tables = append(tables, tableMetadata)
 	}
 
-	return tables
+	return unifiedmodel.TableEnrichment{
+		PrimaryCategory:          unifiedmodel.TableCategory(result.PrimaryCategory),
+		ClassificationConfidence: result.Confidence,
+		ClassificationScores:     scores,
+		AccessPattern:            unifiedmodel.AccessPatternReadWrite, // Default value
+		HasPrivilegedData:        false,                               // Would need privileged data detection
+		DataSensitivity:          0.0,                                 // Would need sensitivity analysis
+		Tags:                     []string{},
+		Context:                  make(map[string]string),
+	}
 }
 
 // ClassifyTable is a convenience function that creates a classifier and classifies a single table
@@ -332,8 +309,8 @@ func ClassifyTables(tables []TableMetadata, options *ClassificationOptions) ([]C
 	return classifier.ClassifyTables(tables, options)
 }
 
-// ClassifyFromJSON is a convenience function that creates a classifier and classifies from JSON schema
-func ClassifyFromJSON(schemaType string, data json.RawMessage, options *ClassificationOptions) ([]ClassificationResult, error) {
+// ClassifyUnifiedModel is a convenience function that creates a classifier and classifies from a UnifiedModel
+func ClassifyUnifiedModel(model *unifiedmodel.UnifiedModel, options *ClassificationOptions) ([]unifiedmodel.TableEnrichment, error) {
 	classifier := NewTableClassifier()
-	return classifier.ClassifyFromJSON(schemaType, data, options)
+	return classifier.ClassifyUnifiedModel(model, options)
 }

@@ -99,6 +99,18 @@ func (stc *ScalableTypeConverter) createPostgreSQLMetadata() DatabaseTypeMetadat
 				UnifiedType:  UnifiedTypeJSON,
 				SupportsNull: true,
 			},
+			"decimal": {
+				NativeName:       "decimal",
+				UnifiedType:      UnifiedTypeDecimal,
+				HasPrecision:     true,
+				HasScale:         true,
+				DefaultPrecision: func() *int64 { v := int64(10); return &v }(),
+				MaxPrecision:     func() *int64 { v := int64(1000); return &v }(),
+				DefaultScale:     func() *int64 { v := int64(0); return &v }(),
+				MaxScale:         func() *int64 { v := int64(30); return &v }(),
+				SupportsNull:     true,
+				Aliases:          []string{"numeric"},
+			},
 		},
 		CustomTypeSupport: CustomTypeSupportInfo{
 			SupportsEnum:      true,
@@ -138,6 +150,7 @@ func (stc *ScalableTypeConverter) createPostgreSQLMetadata() DatabaseTypeMetadat
 			UnifiedTypeTimestamp: "timestamp",
 			UnifiedTypeUUID:      "uuid",
 			UnifiedTypeJSON:      "jsonb",
+			UnifiedTypeDecimal:   "decimal",
 		},
 	}
 }
@@ -188,6 +201,18 @@ func (stc *ScalableTypeConverter) createMySQLMetadata() DatabaseTypeMetadata {
 				UnifiedType:  UnifiedTypeJSON,
 				SupportsNull: true,
 			},
+			"decimal": {
+				NativeName:       "decimal",
+				UnifiedType:      UnifiedTypeDecimal,
+				HasPrecision:     true,
+				HasScale:         true,
+				DefaultPrecision: func() *int64 { v := int64(10); return &v }(),
+				MaxPrecision:     func() *int64 { v := int64(65); return &v }(),
+				DefaultScale:     func() *int64 { v := int64(0); return &v }(),
+				MaxScale:         func() *int64 { v := int64(30); return &v }(),
+				SupportsNull:     true,
+				Aliases:          []string{"numeric", "dec"},
+			},
 		},
 		CustomTypeSupport: CustomTypeSupportInfo{
 			SupportsEnum:      true,
@@ -222,6 +247,7 @@ func (stc *ScalableTypeConverter) createMySQLMetadata() DatabaseTypeMetadata {
 			UnifiedTypeBoolean:   "boolean",
 			UnifiedTypeTimestamp: "datetime",
 			UnifiedTypeJSON:      "json",
+			UnifiedTypeDecimal:   "decimal",
 		},
 	}
 }
@@ -265,6 +291,24 @@ func (stc *ScalableTypeConverter) createMongoDBMetadata() DatabaseTypeMetadata {
 				UnifiedType:  UnifiedTypeArray,
 				SupportsNull: true,
 			},
+			"decimal128": {
+				NativeName:       "decimal128",
+				UnifiedType:      UnifiedTypeDecimal,
+				HasPrecision:     true,
+				HasScale:         true,
+				DefaultPrecision: func() *int64 { v := int64(34); return &v }(), // MongoDB decimal128 precision
+				MaxPrecision:     func() *int64 { v := int64(34); return &v }(),
+				DefaultScale:     func() *int64 { v := int64(0); return &v }(),
+				MaxScale:         func() *int64 { v := int64(6144); return &v }(), // MongoDB decimal128 scale
+				SupportsNull:     true,
+			},
+			"objectid": {
+				NativeName:   "objectid",
+				UnifiedType:  UnifiedTypeString, // ObjectId converts to string representation
+				HasLength:    true,
+				MaxLength:    func() *int64 { v := int64(24); return &v }(), // ObjectId is 24 hex characters
+				SupportsNull: false,                                         // ObjectId is always present
+			},
 		},
 		CustomTypeSupport: CustomTypeSupportInfo{
 			SupportsEnum:      false,
@@ -294,10 +338,12 @@ func (stc *ScalableTypeConverter) createMongoDBMetadata() DatabaseTypeMetadata {
 			UnifiedTypeInt32:     "int32",
 			UnifiedTypeInt64:     "int64",
 			UnifiedTypeString:    "string",
+			UnifiedTypeVarchar:   "string", // MongoDB treats varchar as string
 			UnifiedTypeBoolean:   "boolean",
 			UnifiedTypeTimestamp: "date",
 			UnifiedTypeJSON:      "object",
 			UnifiedTypeArray:     "array",
+			UnifiedTypeDecimal:   "decimal128", // MongoDB's decimal type
 		},
 	}
 }
@@ -1023,10 +1069,12 @@ func (stc *ScalableTypeConverter) createNeo4jMetadata() DatabaseTypeMetadata {
 			UnifiedTypeInt64:     "INTEGER",
 			UnifiedTypeFloat64:   "FLOAT",
 			UnifiedTypeString:    "STRING",
+			UnifiedTypeVarchar:   "STRING", // Neo4j treats varchar as STRING
 			UnifiedTypeBoolean:   "BOOLEAN",
 			UnifiedTypeDate:      "DATE",
 			UnifiedTypeTimestamp: "DATETIME",
 			UnifiedTypeArray:     "LIST",
+			UnifiedTypeDecimal:   "FLOAT", // Neo4j doesn't have decimal, use FLOAT
 		},
 	}
 }
