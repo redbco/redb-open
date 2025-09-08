@@ -10,11 +10,11 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a MySQL database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var decryptedPassword string
 	if config.Password == "" {
 		decryptedPassword = ""
@@ -66,7 +66,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           db,
 		DatabaseType: "mysql",
 		DatabaseID:   config.DatabaseID,
@@ -76,7 +76,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a MySQL instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var decryptedPassword string
 	if config.Password == "" {
 		decryptedPassword = ""
@@ -128,7 +128,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           db,
 		InstanceType: "mysql",
 		InstanceID:   config.InstanceID,
@@ -145,7 +145,7 @@ func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	}
 
 	details := make(map[string]interface{})
-	details["uniqueIdentifier"] = common.GenerateUniqueID()
+	details["uniqueIdentifier"] = dbclient.GenerateUniqueID()
 	details["databaseType"] = "mysql"
 
 	// Get database version

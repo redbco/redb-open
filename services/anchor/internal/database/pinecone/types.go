@@ -1,41 +1,5 @@
 package pinecone
 
-import (
-	"github.com/redbco/redb-open/pkg/dbcapabilities"
-	"github.com/redbco/redb-open/pkg/unifiedmodel"
-)
-
-// CreatePineconeUnifiedModel creates a UnifiedModel for Pinecone with database details
-func CreatePineconeUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
-	um := &unifiedmodel.UnifiedModel{
-		DatabaseType:  dbcapabilities.Pinecone,
-		VectorIndexes: make(map[string]unifiedmodel.VectorIndex),
-		Collections:   make(map[string]unifiedmodel.Collection),
-		Vectors:       make(map[string]unifiedmodel.Vector),
-		Embeddings:    make(map[string]unifiedmodel.Embedding),
-		Namespaces:    make(map[string]unifiedmodel.Namespace),
-	}
-	return um
-}
-
-// ConvertPineconeIndex converts PineconeIndexInfo to unifiedmodel.VectorIndex for Pinecone
-func ConvertPineconeIndex(indexInfo PineconeIndexInfo) unifiedmodel.VectorIndex {
-	return unifiedmodel.VectorIndex{
-		Name:      indexInfo.Name,
-		Dimension: indexInfo.Dimension,
-		Metric:    indexInfo.Metric,
-	}
-}
-
-// ConvertPineconeVector converts PineconeVector to unifiedmodel.Vector for Pinecone
-func ConvertPineconeVector(vectorInfo PineconeVector) unifiedmodel.Vector {
-	return unifiedmodel.Vector{
-		Name:      vectorInfo.ID,
-		Dimension: len(vectorInfo.Values),
-		Metric:    "cosine", // Default metric for Pinecone
-	}
-}
-
 // PineconeIndexInfo represents information about a Pinecone index
 type PineconeIndexInfo struct {
 	Name           string            `json:"name"`

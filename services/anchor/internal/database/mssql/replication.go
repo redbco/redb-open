@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // CreateReplicationSource sets up a replication source
 func CreateReplicationSource(db *sql.DB, tableName string, databaseID string, eventHandler func(map[string]interface{})) (*MSSQLReplicationSourceDetails, error) {
 	// Generate unique names for publication
-	pubName := fmt.Sprintf("pub_%s_%s", databaseID, common.GenerateUniqueID())
-	subName := fmt.Sprintf("sub_%s_%s", databaseID, common.GenerateUniqueID())
+	pubName := fmt.Sprintf("pub_%s_%s", databaseID, dbclient.GenerateUniqueID())
+	subName := fmt.Sprintf("sub_%s_%s", databaseID, dbclient.GenerateUniqueID())
 
 	// Check if SQL Server has replication enabled
 	var replicationEnabled int

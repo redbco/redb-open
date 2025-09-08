@@ -4,11 +4,11 @@ import (
 	"fmt"
 
 	"github.com/redbco/redb-open/pkg/logger"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // ConnectReplication - placeholder for databases without CDC
-func ConnectReplication(config common.ReplicationConfig) (*common.ReplicationClient, common.ReplicationSourceInterface, error) {
+func ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.ReplicationClient, dbclient.ReplicationSourceInterface, error) {
 	return nil, nil, fmt.Errorf("change data capture is not supported for DynamoDB databases")
 }
 

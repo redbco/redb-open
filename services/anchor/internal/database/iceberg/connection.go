@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to an Apache Iceberg catalog
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var decryptedPassword string
 	if config.Password != "" {
 		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
@@ -40,7 +40,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error testing Iceberg connection: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "iceberg",
 		DatabaseID:   config.DatabaseID,
@@ -50,7 +50,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to an Apache Iceberg catalog instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var decryptedPassword string
 	if config.Password != "" {
 		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
@@ -61,7 +61,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 	}
 
 	// Convert InstanceConfig to DatabaseConfig for connection
-	dbConfig := common.DatabaseConfig{
+	dbConfig := dbclient.DatabaseConfig{
 		DatabaseID:     config.InstanceID,
 		TenantID:       config.TenantID,
 		WorkspaceID:    config.WorkspaceID,
@@ -96,7 +96,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error testing Iceberg connection: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           client,
 		InstanceType: "iceberg",
 		InstanceID:   config.InstanceID,
@@ -106,7 +106,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // parseConnectionString parses the Iceberg connection string and returns catalog configuration
-func parseConnectionString(config common.DatabaseConfig, decryptedPassword string) (map[string]interface{}, error) {
+func parseConnectionString(config dbclient.DatabaseConfig, decryptedPassword string) (map[string]interface{}, error) {
 	// Parse URL parameters from connection string template
 	// iceberg://{username}:{password}@{host}:{port}/{database}?catalog={catalog}&warehouse={warehouse}
 
@@ -165,7 +165,7 @@ func parseConnectionString(config common.DatabaseConfig, decryptedPassword strin
 
 // getWarehouseFromConfig extracts warehouse path from config
 // In a real implementation, this would parse URL parameters
-func getWarehouseFromConfig(config common.DatabaseConfig) string {
+func getWarehouseFromConfig(config dbclient.DatabaseConfig) string {
 	// This is a simplified implementation
 	// In practice, you'd parse the connection string URL parameters
 	// For now, we'll use a default based on the database name
@@ -234,7 +234,7 @@ func createRestCatalogClient(client *IcebergClient, config map[string]interface{
 func createHiveCatalogClient(client *IcebergClient, config map[string]interface{}) (*IcebergClient, error) {
 	uri, ok := config["uri"].(string)
 	if !ok {
-		return nil, fmt.Errorf("Hive metastore URI not specified")
+		return nil, fmt.Errorf("hive metastore URI not specified")
 	}
 
 	client.BaseURL = uri
@@ -320,7 +320,7 @@ func testHiveCatalogConnection(client *IcebergClient) error {
 	// In a real implementation, you'd test the Hive metastore connection
 	// For now, we'll just validate the configuration
 	if client.BaseURL == "" {
-		return fmt.Errorf("Hive metastore URI not configured")
+		return fmt.Errorf("hive metastore URI not configured")
 	}
 	return nil
 }

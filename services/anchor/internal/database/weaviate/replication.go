@@ -3,16 +3,16 @@ package weaviate
 import (
 	"fmt"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // ConnectReplication - placeholder for databases without CDC
-func ConnectReplication(config common.ReplicationConfig) (*common.ReplicationClient, common.ReplicationSourceInterface, error) {
+func ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.ReplicationClient, dbclient.ReplicationSourceInterface, error) {
 	return nil, nil, fmt.Errorf("change data capture is not supported for %s databases", config.ConnectionType)
 }
 
 // CreateReplicationSource - placeholder for databases without CDC
-func CreateReplicationSource(client *WeaviateClient, classNames []string, databaseID string, databaseName string, eventHandler func(map[string]interface{})) (common.ReplicationSourceInterface, error) {
+func CreateReplicationSource(client *WeaviateClient, classNames []string, databaseID string, databaseName string, eventHandler func(map[string]interface{})) (dbclient.ReplicationSourceInterface, error) {
 	return nil, fmt.Errorf("change data capture is not supported for Weaviate databases")
 }
 

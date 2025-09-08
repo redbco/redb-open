@@ -11,11 +11,11 @@ import (
 	_ "github.com/godror/godror" // Oracle driver
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to an Oracle database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var connString strings.Builder
 
 	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
@@ -60,7 +60,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           db,
 		DatabaseType: "oracle",
 		DatabaseID:   config.DatabaseID,
@@ -70,7 +70,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to an Oracle instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var connString strings.Builder
 
 	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
@@ -115,7 +115,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           db,
 		InstanceType: "oracle",
 		InstanceID:   config.InstanceID,
@@ -184,7 +184,7 @@ func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	return details, nil
 }
 
-func getWalletLocation(config common.DatabaseConfig) string {
+func getWalletLocation(config dbclient.DatabaseConfig) string {
 	// This is a placeholder for Oracle wallet location logic
 	// In a real implementation, this would return the path to the Oracle wallet
 	// based on the SSL configuration
@@ -198,7 +198,7 @@ func getWalletLocation(config common.DatabaseConfig) string {
 	return ""
 }
 
-func getInstanceWalletLocation(config common.InstanceConfig) string {
+func getInstanceWalletLocation(config dbclient.InstanceConfig) string {
 	// This is a placeholder for Oracle wallet location logic
 	// In a real implementation, this would return the path to the Oracle wallet
 	// based on the SSL configuration

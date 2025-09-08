@@ -11,13 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	neo4jgo "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/services/anchor/internal/database/cassandra"
 	"github.com/redbco/redb-open/services/anchor/internal/database/chroma"
 	"github.com/redbco/redb-open/services/anchor/internal/database/clickhouse"
+	"github.com/redbco/redb-open/services/anchor/internal/database/cockroach"
+	"github.com/redbco/redb-open/services/anchor/internal/database/cosmosdb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dynamodb"
+	"github.com/redbco/redb-open/services/anchor/internal/database/edgedb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
+	"github.com/redbco/redb-open/services/anchor/internal/database/iceberg"
+	"github.com/redbco/redb-open/services/anchor/internal/database/mariadb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/milvus"
+	"github.com/redbco/redb-open/services/anchor/internal/database/mongodb"
+	"github.com/redbco/redb-open/services/anchor/internal/database/mssql"
+	"github.com/redbco/redb-open/services/anchor/internal/database/mysql"
+	"github.com/redbco/redb-open/services/anchor/internal/database/neo4j"
 	"github.com/redbco/redb-open/services/anchor/internal/database/pinecone"
 	"github.com/redbco/redb-open/services/anchor/internal/database/postgres"
+	"github.com/redbco/redb-open/services/anchor/internal/database/redis"
+	"github.com/redbco/redb-open/services/anchor/internal/database/snowflake"
 	"github.com/redbco/redb-open/services/anchor/internal/database/weaviate"
 	goredis "github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -36,44 +49,44 @@ func (dm *DatabaseManager) ConnectDatabase(config dbclient.DatabaseConfig) (*dbc
 	switch config.ConnectionType {
 	case string(dbcapabilities.PostgreSQL):
 		client, err = postgres.Connect(config)
-	//case string(dbcapabilities.MySQL):
-	//	client, err = mysql.Connect(config)
-	//case string(dbcapabilities.MariaDB):
-	//	client, err = mariadb.Connect(config)
-	//case string(dbcapabilities.CockroachDB):
-	//	client, err = cockroach.Connect(config)
-	//case string(dbcapabilities.Redis):
-	//	client, err = redis.Connect(config)
-	//case string(dbcapabilities.MongoDB):
-	//	client, err = mongodb.Connect(config)
-	//case string(dbcapabilities.SQLServer):
-	//	client, err = mssql.Connect(config)
-	//case string(dbcapabilities.Cassandra):
-	//	client, err = cassandra.Connect(config)
-	//case string(dbcapabilities.EdgeDB):
-	//	client, err = edgedb.Connect(config)
-	//case string(dbcapabilities.Snowflake):
-	//	client, err = snowflake.Connect(config)
-	//case string(dbcapabilities.ClickHouse):
-	//	client, err = clickhouse.Connect(config)
-	//case string(dbcapabilities.Pinecone):
-	//	client, err = pinecone.Connect(config)
-	//case string(dbcapabilities.Chroma):
-	//	client, err = chroma.Connect(config)
-	//case string(dbcapabilities.Milvus):
-	//	client, err = milvus.Connect(config)
-	//case string(dbcapabilities.Weaviate):
-	//	client, err = weaviate.Connect(config)
-	//case string(dbcapabilities.Elasticsearch):
-	//	client, err = elasticsearch.Connect(config)
-	//case string(dbcapabilities.Neo4j):
-	//	client, err = neo4j.Connect(config)
-	//case string(dbcapabilities.DynamoDB):
-	//	client, err = dynamodb.Connect(config)
-	//case string(dbcapabilities.CosmosDB):
-	//	client, err = cosmosdb.Connect(config)
-	//case string(dbcapabilities.Iceberg):
-	//	client, err = iceberg.Connect(config)
+	case string(dbcapabilities.MySQL):
+		client, err = mysql.Connect(config)
+	case string(dbcapabilities.MariaDB):
+		client, err = mariadb.Connect(config)
+	case string(dbcapabilities.CockroachDB):
+		client, err = cockroach.Connect(config)
+	case string(dbcapabilities.Redis):
+		client, err = redis.Connect(config)
+	case string(dbcapabilities.MongoDB):
+		client, err = mongodb.Connect(config)
+	case string(dbcapabilities.SQLServer):
+		client, err = mssql.Connect(config)
+	case string(dbcapabilities.Cassandra):
+		client, err = cassandra.Connect(config)
+	case string(dbcapabilities.EdgeDB):
+		client, err = edgedb.Connect(config)
+	case string(dbcapabilities.Snowflake):
+		client, err = snowflake.Connect(config)
+	case string(dbcapabilities.ClickHouse):
+		client, err = clickhouse.Connect(config)
+	case string(dbcapabilities.Pinecone):
+		client, err = pinecone.Connect(config)
+	case string(dbcapabilities.Chroma):
+		client, err = chroma.Connect(config)
+	case string(dbcapabilities.Milvus):
+		client, err = milvus.Connect(config)
+	case string(dbcapabilities.Weaviate):
+		client, err = weaviate.Connect(config)
+	case string(dbcapabilities.Elasticsearch):
+		client, err = elasticsearch.Connect(config)
+	case string(dbcapabilities.Neo4j):
+		client, err = neo4j.Connect(config)
+	case string(dbcapabilities.DynamoDB):
+		client, err = dynamodb.Connect(config)
+	case string(dbcapabilities.CosmosDB):
+		client, err = cosmosdb.Connect(config)
+	case string(dbcapabilities.Iceberg):
+		client, err = iceberg.Connect(config)
 	//case string(dbcapabilities.DB2):
 	//	client, err = db2.Connect(config)
 	//case string(dbcapabilities.Oracle):
@@ -307,44 +320,44 @@ func (dm *DatabaseManager) ConnectInstance(config dbclient.InstanceConfig) (*dbc
 	switch config.ConnectionType {
 	case string(dbcapabilities.PostgreSQL):
 		client, err = postgres.ConnectInstance(config)
-	//case string(dbcapabilities.MySQL):
-	//	client, err = mysql.ConnectInstance(config)
-	//case string(dbcapabilities.MariaDB):
-	//	client, err = mariadb.ConnectInstance(config)
-	//case string(dbcapabilities.CockroachDB):
-	//	client, err = cockroach.ConnectInstance(config)
-	//case string(dbcapabilities.Redis):
-	//	client, err = redis.ConnectInstance(config)
-	//case string(dbcapabilities.MongoDB):
-	//	client, err = mongodb.ConnectInstance(config)
-	//case string(dbcapabilities.SQLServer):
-	//	client, err = mssql.ConnectInstance(config)
-	//case string(dbcapabilities.Cassandra):
-	//	client, err = cassandra.ConnectInstance(config)
-	//case string(dbcapabilities.EdgeDB):
-	//	client, err = edgedb.ConnectInstance(config)
-	//case string(dbcapabilities.Snowflake):
-	//	client, err = snowflake.ConnectInstance(config)
-	//case string(dbcapabilities.ClickHouse):
-	//	client, err = clickhouse.ConnectInstance(config)
-	//case string(dbcapabilities.Pinecone):
-	//	client, err = pinecone.ConnectInstance(config)
-	//case string(dbcapabilities.Chroma):
-	//	client, err = chroma.ConnectInstance(config)
-	//case string(dbcapabilities.Milvus):
-	//	client, err = milvus.ConnectInstance(config)
-	//case string(dbcapabilities.Weaviate):
-	//	client, err = weaviate.ConnectInstance(config)
-	//case string(dbcapabilities.Elasticsearch):
-	//	client, err = elasticsearch.ConnectInstance(config)
-	//case string(dbcapabilities.Neo4j):
-	//	client, err = neo4j.ConnectInstance(config)
-	//case string(dbcapabilities.DynamoDB):
-	//	client, err = dynamodb.ConnectInstance(config)
-	//case string(dbcapabilities.CosmosDB):
-	//	client, err = cosmosdb.ConnectInstance(config)
-	//case string(dbcapabilities.Iceberg):
-	//	client, err = iceberg.ConnectInstance(config)
+	case string(dbcapabilities.MySQL):
+		client, err = mysql.ConnectInstance(config)
+	case string(dbcapabilities.MariaDB):
+		client, err = mariadb.ConnectInstance(config)
+	case string(dbcapabilities.CockroachDB):
+		client, err = cockroach.ConnectInstance(config)
+	case string(dbcapabilities.Redis):
+		client, err = redis.ConnectInstance(config)
+	case string(dbcapabilities.MongoDB):
+		client, err = mongodb.ConnectInstance(config)
+	case string(dbcapabilities.SQLServer):
+		client, err = mssql.ConnectInstance(config)
+	case string(dbcapabilities.Cassandra):
+		client, err = cassandra.ConnectInstance(config)
+	case string(dbcapabilities.EdgeDB):
+		client, err = edgedb.ConnectInstance(config)
+	case string(dbcapabilities.Snowflake):
+		client, err = snowflake.ConnectInstance(config)
+	case string(dbcapabilities.ClickHouse):
+		client, err = clickhouse.ConnectInstance(config)
+	case string(dbcapabilities.Pinecone):
+		client, err = pinecone.ConnectInstance(config)
+	case string(dbcapabilities.Chroma):
+		client, err = chroma.ConnectInstance(config)
+	case string(dbcapabilities.Milvus):
+		client, err = milvus.ConnectInstance(config)
+	case string(dbcapabilities.Weaviate):
+		client, err = weaviate.ConnectInstance(config)
+	case string(dbcapabilities.Elasticsearch):
+		client, err = elasticsearch.ConnectInstance(config)
+	case string(dbcapabilities.Neo4j):
+		client, err = neo4j.ConnectInstance(config)
+	case string(dbcapabilities.DynamoDB):
+		client, err = dynamodb.ConnectInstance(config)
+	case string(dbcapabilities.CosmosDB):
+		client, err = cosmosdb.ConnectInstance(config)
+	case string(dbcapabilities.Iceberg):
+		client, err = iceberg.ConnectInstance(config)
 	//case string(dbcapabilities.DB2):
 	//	client, err = db2.ConnectInstance(config)
 	//case string(dbcapabilities.Oracle):

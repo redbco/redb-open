@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gocql/gocql"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
 // CreateReplicationSource sets up a replication source
@@ -101,24 +100,40 @@ func listenWithPolling(session *gocql.Session, details *CassandraReplicationSour
 	log.Printf("Starting polling listener for %s.%s", details.Keyspace, details.TableName)
 
 	// Get primary key columns to track changes
-	primaryKey, err := getTablePrimaryKey(session, details.Keyspace, details.TableName)
-	if err != nil {
+	var primaryKey []string
+	iter := session.Query(`
+		SELECT column_name FROM system_schema.columns 
+		WHERE keyspace_name = ? AND table_name = ? AND kind IN ('partition_key', 'clustering')
+		ORDER BY position`,
+		details.Keyspace, details.TableName).Iter()
+
+	var pkColumn string
+	for iter.Scan(&pkColumn) {
+		primaryKey = append(primaryKey, pkColumn)
+	}
+	if err := iter.Close(); err != nil {
 		log.Printf("Error getting primary key: %v", err)
 		return
 	}
 
 	// Get all columns
-	columns, err := getTableColumns(session, details.Keyspace, details.TableName)
-	if err != nil {
+	var columns []string
+	iter = session.Query(`
+		SELECT column_name FROM system_schema.columns 
+		WHERE keyspace_name = ? AND table_name = ?`,
+		details.Keyspace, details.TableName).Iter()
+
+	var columnName string
+	for iter.Scan(&columnName) {
+		columns = append(columns, columnName)
+	}
+	if err := iter.Close(); err != nil {
 		log.Printf("Error getting columns: %v", err)
 		return
 	}
 
-	// Build column names list
-	var columnNames []string
-	for _, col := range columns {
-		columnNames = append(columnNames, col.Name)
-	}
+	// Use the columns we got from the query
+	columnNames := columns
 
 	// Initial state - fetch all rows
 	currentState, err := fetchAllRows(session, details.Keyspace, details.TableName, columnNames, primaryKey)
@@ -160,8 +175,8 @@ func listenWithPolling(session *gocql.Session, details *CassandraReplicationSour
 func fetchAllRows(session *gocql.Session, keyspace, table string, columns, primaryKey []string) (map[string]map[string]interface{}, error) {
 	query := fmt.Sprintf("SELECT %s FROM %s.%s",
 		strings.Join(columns, ", "),
-		common.QuoteIdentifier(keyspace),
-		common.QuoteIdentifier(table))
+		QuoteIdentifier(keyspace),
+		QuoteIdentifier(table))
 
 	iter := session.Query(query).Iter()
 

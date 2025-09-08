@@ -4,11 +4,11 @@ import (
 	"fmt"
 
 	"github.com/redbco/redb-open/pkg/logger"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // ConnectReplication - placeholder for databases with limited CDC
-func ConnectReplication(config common.ReplicationConfig) (*common.ReplicationClient, common.ReplicationSourceInterface, error) {
+func ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.ReplicationClient, dbclient.ReplicationSourceInterface, error) {
 	return nil, nil, fmt.Errorf("traditional change data capture is not supported for CosmosDB. Use Change Feed instead")
 }
 

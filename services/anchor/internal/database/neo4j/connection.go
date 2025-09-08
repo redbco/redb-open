@@ -8,11 +8,11 @@ import (
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a Neo4j database
-func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(cfg dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var connString strings.Builder
 
 	decryptedPassword, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
@@ -51,7 +51,7 @@ func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error connecting to Neo4j database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           driver,
 		DatabaseType: "neo4j",
 		DatabaseID:   cfg.DatabaseID,
@@ -61,7 +61,7 @@ func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Neo4j instance
-func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(cfg dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var connString strings.Builder
 
 	decryptedPassword, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
@@ -100,7 +100,7 @@ func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) 
 		return nil, fmt.Errorf("error connecting to Neo4j database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           driver,
 		InstanceType: "neo4j",
 		InstanceID:   cfg.InstanceID,

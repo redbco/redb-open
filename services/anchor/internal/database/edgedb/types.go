@@ -1,45 +1,8 @@
 package edgedb
 
 import (
-	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
-
-// CreateEdgeDBUnifiedModel creates a UnifiedModel for EdgeDB with database details
-func CreateEdgeDBUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
-	um := &unifiedmodel.UnifiedModel{
-		DatabaseType: dbcapabilities.EdgeDB,
-		Modules:      make(map[string]unifiedmodel.Module),
-		Types:        make(map[string]unifiedmodel.Type),
-		Functions:    make(map[string]unifiedmodel.Function),
-		Extensions:   make(map[string]unifiedmodel.Extension),
-		Constraints:  make(map[string]unifiedmodel.Constraint),
-	}
-	return um
-}
-
-// ConvertEdgeDBType converts common.TypeInfo to unifiedmodel.Type
-func ConvertEdgeDBType(typeInfo common.TypeInfo) unifiedmodel.Type {
-	return unifiedmodel.Type{
-		Name:     typeInfo.Name,
-		Category: "object", // EdgeDB types are typically object types
-		Definition: map[string]any{
-			"module":      typeInfo.Module,
-			"properties":  typeInfo.Properties,
-			"links":       typeInfo.Links,
-			"constraints": typeInfo.Constraints,
-		},
-	}
-}
-
-// ConvertEdgeDBModule converts common.ModuleInfo to unifiedmodel.Module
-func ConvertEdgeDBModule(moduleInfo common.ModuleInfo) unifiedmodel.Module {
-	return unifiedmodel.Module{
-		Name:    moduleInfo.Name,
-		Comment: moduleInfo.Description,
-	}
-}
 
 // ConvertEdgeDBScalar converts EdgeDBScalarInfo to unifiedmodel.Type
 func ConvertEdgeDBScalar(scalarInfo EdgeDBScalarInfo) unifiedmodel.Type {
@@ -77,10 +40,10 @@ func ConvertEdgeDBConstraint(constraintInfo EdgeDBConstraintInfo) unifiedmodel.C
 
 // EdgeDBScalarInfo represents a scalar type in EdgeDB
 type EdgeDBScalarInfo struct {
-	Module      string                        `json:"module"`
-	Name        string                        `json:"name"`
-	BaseType    string                        `json:"baseType"`
-	Constraints []common.EdgeDBConstraintInfo `json:"constraints"`
+	Module      string                 `json:"module"`
+	Name        string                 `json:"name"`
+	BaseType    string                 `json:"baseType"`
+	Constraints []EdgeDBConstraintInfo `json:"constraints"`
 }
 
 // EdgeDBAliasInfo represents an alias type in EdgeDB

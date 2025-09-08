@@ -1,60 +1,8 @@
 package mongodb
 
 import (
-	"github.com/redbco/redb-open/pkg/dbcapabilities"
-	"github.com/redbco/redb-open/pkg/unifiedmodel"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
-
-// CreateMongoDBUnifiedModel creates a UnifiedModel for MongoDB with database details
-func CreateMongoDBUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
-	um := &unifiedmodel.UnifiedModel{
-		DatabaseType: dbcapabilities.MongoDB,
-		Collections:  make(map[string]unifiedmodel.Collection),
-		Indexes:      make(map[string]unifiedmodel.Index),
-		Functions:    make(map[string]unifiedmodel.Function),
-		Databases:    make(map[string]unifiedmodel.Database),
-	}
-	return um
-}
-
-// ConvertMongoDBCollectionToUnified converts common.CollectionInfo to unifiedmodel.Collection
-func ConvertMongoDBCollectionToUnified(collectionInfo common.CollectionInfo) unifiedmodel.Collection {
-	collection := unifiedmodel.Collection{
-		Name:    collectionInfo.Name,
-		Fields:  make(map[string]unifiedmodel.Field),
-		Indexes: make(map[string]unifiedmodel.Index),
-		Options: collectionInfo.Options,
-	}
-
-	// Convert sample documents to inferred fields
-	for _, sampleDoc := range collectionInfo.SampleDocs {
-		for fieldName, fieldValue := range sampleDoc {
-			if fieldName == "_id" {
-				continue // Skip the MongoDB ObjectId field
-			}
-
-			fieldType := inferFieldType(fieldValue)
-			collection.Fields[fieldName] = unifiedmodel.Field{
-				Name: fieldName,
-				Type: fieldType,
-			}
-		}
-	}
-
-	// Convert indexes
-	for _, idx := range collectionInfo.Indexes {
-		index := unifiedmodel.Index{
-			Name:    idx.Name,
-			Columns: idx.Columns, // In MongoDB, these are field names
-			Unique:  idx.IsUnique,
-		}
-		collection.Indexes[idx.Name] = index
-	}
-
-	return collection
-}
 
 // inferFieldType infers the field type from a sample value
 func inferFieldType(value interface{}) string {

@@ -11,11 +11,11 @@ import (
 	_ "github.com/denisenkom/go-mssqldb"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a Microsoft SQL Server database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -60,7 +60,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           db,
 		DatabaseType: "mssql",
 		DatabaseID:   config.DatabaseID,
@@ -70,7 +70,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Microsoft SQL Server instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -115,7 +115,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           db,
 		InstanceType: "mssql",
 		InstanceID:   config.InstanceID,

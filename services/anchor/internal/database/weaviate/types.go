@@ -1,41 +1,5 @@
 package weaviate
 
-import (
-	"github.com/redbco/redb-open/pkg/dbcapabilities"
-	"github.com/redbco/redb-open/pkg/unifiedmodel"
-)
-
-// CreateWeaviateUnifiedModel creates a UnifiedModel for Weaviate with database details
-func CreateWeaviateUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
-	um := &unifiedmodel.UnifiedModel{
-		DatabaseType:  dbcapabilities.Weaviate,
-		VectorIndexes: make(map[string]unifiedmodel.VectorIndex),
-		Collections:   make(map[string]unifiedmodel.Collection),
-		Vectors:       make(map[string]unifiedmodel.Vector),
-		Embeddings:    make(map[string]unifiedmodel.Embedding),
-		Types:         make(map[string]unifiedmodel.Type),
-	}
-	return um
-}
-
-// ConvertWeaviateClass converts WeaviateClassInfo to unifiedmodel.VectorIndex for Weaviate
-func ConvertWeaviateClass(classInfo WeaviateClassInfo) unifiedmodel.VectorIndex {
-	return unifiedmodel.VectorIndex{
-		Name:      classInfo.Class,
-		Dimension: 0,        // Weaviate doesn't expose vector dimensions directly
-		Metric:    "cosine", // Default metric for Weaviate
-	}
-}
-
-// ConvertWeaviateObject converts WeaviateObject to unifiedmodel.Vector for Weaviate
-func ConvertWeaviateObject(objectInfo WeaviateObject) unifiedmodel.Vector {
-	return unifiedmodel.Vector{
-		Name:      objectInfo.ID,
-		Dimension: len(objectInfo.Vector),
-		Metric:    "cosine", // Default metric for Weaviate
-	}
-}
-
 // WeaviateClassInfo represents information about a Weaviate class
 type WeaviateClassInfo struct {
 	Class               string                 `json:"class"`

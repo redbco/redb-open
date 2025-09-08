@@ -1,61 +1,8 @@
 package snowflake
 
 import (
-	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
-
-// CreateSnowflakeUnifiedModel creates a UnifiedModel for Snowflake with database details
-func CreateSnowflakeUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
-	um := &unifiedmodel.UnifiedModel{
-		DatabaseType: dbcapabilities.Snowflake,
-		Tables:       make(map[string]unifiedmodel.Table),
-		Schemas:      make(map[string]unifiedmodel.Schema),
-		Functions:    make(map[string]unifiedmodel.Function),
-		Procedures:   make(map[string]unifiedmodel.Procedure),
-		Sequences:    make(map[string]unifiedmodel.Sequence),
-		Views:        make(map[string]unifiedmodel.View),
-	}
-	return um
-}
-
-// ConvertSnowflakeTable converts common.TableInfo to unifiedmodel.Table for Snowflake
-func ConvertSnowflakeTable(tableInfo common.TableInfo) unifiedmodel.Table {
-	table := unifiedmodel.Table{
-		Name:        tableInfo.Name,
-		Comment:     tableInfo.Schema, // Store schema name in comment
-		Columns:     make(map[string]unifiedmodel.Column),
-		Indexes:     make(map[string]unifiedmodel.Index),
-		Constraints: make(map[string]unifiedmodel.Constraint),
-	}
-
-	// Convert columns
-	for _, col := range tableInfo.Columns {
-		var defaultValue string
-		if col.ColumnDefault != nil {
-			defaultValue = *col.ColumnDefault
-		}
-		table.Columns[col.Name] = unifiedmodel.Column{
-			Name:         col.Name,
-			DataType:     col.DataType,
-			Nullable:     col.IsNullable,
-			Default:      defaultValue,
-			IsPrimaryKey: col.IsPrimaryKey,
-		}
-	}
-
-	// Convert indexes
-	for _, idx := range tableInfo.Indexes {
-		table.Indexes[idx.Name] = unifiedmodel.Index{
-			Name:    idx.Name,
-			Columns: idx.Columns,
-			Unique:  idx.IsUnique,
-		}
-	}
-
-	return table
-}
 
 // ConvertSnowflakeStage converts SnowflakeStageInfo to unifiedmodel.ExternalTable (stages are similar to external tables)
 func ConvertSnowflakeStage(stageInfo SnowflakeStageInfo) unifiedmodel.ExternalTable {

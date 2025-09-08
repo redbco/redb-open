@@ -4,23 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
-
-// CreateCassandraUnifiedModel creates a UnifiedModel for Cassandra with database details
-func CreateCassandraUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
-	um := &unifiedmodel.UnifiedModel{
-		DatabaseType:      dbcapabilities.Cassandra,
-		Keyspaces:         make(map[string]unifiedmodel.Keyspace),
-		Tables:            make(map[string]unifiedmodel.Table),
-		Types:             make(map[string]unifiedmodel.Type),
-		Functions:         make(map[string]unifiedmodel.Function),
-		MaterializedViews: make(map[string]unifiedmodel.MaterializedView),
-	}
-	return um
-}
 
 // ConvertCassandraKeyspace converts KeyspaceInfo to unifiedmodel.Keyspace
 func ConvertCassandraKeyspace(keyspaceInfo KeyspaceInfo) unifiedmodel.Keyspace {
@@ -30,43 +15,6 @@ func ConvertCassandraKeyspace(keyspaceInfo KeyspaceInfo) unifiedmodel.Keyspace {
 		ReplicationOptions:  keyspaceInfo.ReplicationOptions,
 		DurableWrites:       keyspaceInfo.DurableWrites,
 	}
-}
-
-// ConvertCassandraTable converts common.TableInfo to unifiedmodel.Table for Cassandra
-func ConvertCassandraTable(tableInfo common.TableInfo) unifiedmodel.Table {
-	table := unifiedmodel.Table{
-		Name:        tableInfo.Name,
-		Comment:     tableInfo.Schema, // In Cassandra, store keyspace in comment for reference
-		Columns:     make(map[string]unifiedmodel.Column),
-		Indexes:     make(map[string]unifiedmodel.Index),
-		Constraints: make(map[string]unifiedmodel.Constraint),
-	}
-
-	// Convert columns
-	for _, col := range tableInfo.Columns {
-		var defaultValue string
-		if col.ColumnDefault != nil {
-			defaultValue = *col.ColumnDefault
-		}
-		table.Columns[col.Name] = unifiedmodel.Column{
-			Name:         col.Name,
-			DataType:     col.DataType,
-			Nullable:     col.IsNullable,
-			Default:      defaultValue,
-			IsPrimaryKey: col.IsPrimaryKey,
-		}
-	}
-
-	// Convert indexes
-	for _, idx := range tableInfo.Indexes {
-		table.Indexes[idx.Name] = unifiedmodel.Index{
-			Name:    idx.Name,
-			Columns: idx.Columns,
-			Unique:  idx.IsUnique,
-		}
-	}
-
-	return table
 }
 
 // ConvertCassandraType converts CassandraType to unifiedmodel.Type
@@ -102,16 +50,6 @@ func ConvertCassandraAggregate(aggregateInfo AggregateInfo) unifiedmodel.Functio
 			aggregateInfo.StateType,
 			aggregateInfo.FinalFunc,
 			aggregateInfo.InitCond),
-	}
-}
-
-// ConvertCassandraMaterializedView converts common.MaterializedViewInfo to unifiedmodel.MaterializedView
-func ConvertCassandraMaterializedView(mvInfo common.MaterializedViewInfo) unifiedmodel.MaterializedView {
-	return unifiedmodel.MaterializedView{
-		Name:       mvInfo.Name,
-		Definition: mvInfo.Definition,
-		// Note: Cassandra materialized views don't have direct base table reference in UnifiedModel
-		// The keyspace and base table info is embedded in the definition
 	}
 }
 

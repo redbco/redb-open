@@ -9,7 +9,7 @@ import (
 
 	chromav2 "github.com/amikos-tech/chroma-go/pkg/api/v2"
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 const (
@@ -18,7 +18,7 @@ const (
 )
 
 // Connect establishes a connection to a Chroma database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	// Accept either vendor or type to identify provider; prefer type when set
 	provider := config.ConnectionType
 	if provider == "" {
@@ -108,7 +108,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		}
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "chroma",
 		DatabaseID:   config.DatabaseID,
@@ -118,7 +118,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Chroma instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	// Accept either vendor or type to identify provider; prefer type when set
 	provider := config.ConnectionType
 	if provider == "" {
@@ -204,7 +204,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		}
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           client,
 		InstanceType: "chroma",
 		InstanceID:   config.InstanceID,

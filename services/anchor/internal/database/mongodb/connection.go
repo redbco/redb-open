@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -16,7 +16,7 @@ import (
 )
 
 // Connect establishes a connection to a MongoDB database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -79,7 +79,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 	// Get the database
 	db := client.Database(config.DatabaseName)
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           db,
 		DatabaseType: "mongodb",
 		DatabaseID:   config.DatabaseID,
@@ -89,7 +89,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a MongoDB instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -152,7 +152,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 	// Get the database
 	db := client.Database(config.DatabaseName)
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           db,
 		InstanceType: "mongodb",
 		InstanceID:   config.InstanceID,
@@ -242,7 +242,7 @@ func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	return details, nil
 }
 
-func getSslMode(config common.DatabaseConfig) string {
+func getSslMode(config dbclient.DatabaseConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}
@@ -252,7 +252,7 @@ func getSslMode(config common.DatabaseConfig) string {
 	return "require"
 }
 
-func getInstanceSslMode(config common.InstanceConfig) string {
+func getInstanceSslMode(config dbclient.InstanceConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}

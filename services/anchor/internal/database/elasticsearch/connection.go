@@ -12,11 +12,11 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to an Elasticsearch cluster
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 
 	var decryptedPassword string
 	if config.Password == "" {
@@ -79,7 +79,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		IsConnected: 1,
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "elasticsearch",
 		DatabaseID:   config.DatabaseID,
@@ -89,7 +89,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to an Elasticsearch instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 
 	var decryptedPassword string
 	if config.Password == "" {
@@ -152,7 +152,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		IsConnected: 1,
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           client,
 		InstanceType: "elasticsearch",
 		InstanceID:   config.InstanceID,
@@ -418,7 +418,7 @@ func getProtocolSuffix(ssl bool) string {
 	return ""
 }
 
-func createTLSConfig(config common.DatabaseConfig) (*tls.Config, error) {
+func createTLSConfig(config dbclient.DatabaseConfig) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: config.SSLRejectUnauthorized != nil && !*config.SSLRejectUnauthorized,
 	}
@@ -446,7 +446,7 @@ func createTLSConfig(config common.DatabaseConfig) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-func createInstanceTLSConfig(config common.InstanceConfig) (*tls.Config, error) {
+func createInstanceTLSConfig(config dbclient.InstanceConfig) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: config.SSLRejectUnauthorized != nil && !*config.SSLRejectUnauthorized,
 	}

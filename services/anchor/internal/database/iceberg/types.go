@@ -2,59 +2,7 @@ package iceberg
 
 import (
 	"fmt"
-
-	"github.com/redbco/redb-open/pkg/dbcapabilities"
-	"github.com/redbco/redb-open/pkg/unifiedmodel"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
-
-// CreateIcebergUnifiedModel creates a UnifiedModel for Iceberg with database details
-func CreateIcebergUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
-	um := &unifiedmodel.UnifiedModel{
-		DatabaseType:   dbcapabilities.Iceberg,
-		Tables:         make(map[string]unifiedmodel.Table),
-		Namespaces:     make(map[string]unifiedmodel.Namespace),
-		Views:          make(map[string]unifiedmodel.View),
-		ExternalTables: make(map[string]unifiedmodel.ExternalTable),
-		Snapshots:      make(map[string]unifiedmodel.Snapshot),
-	}
-	return um
-}
-
-// ConvertIcebergTable converts IcebergTableInfo to unifiedmodel.Table for Iceberg
-func ConvertIcebergTable(tableInfo IcebergTableInfo) unifiedmodel.Table {
-	table := unifiedmodel.Table{
-		Name:        tableInfo.Name,
-		Comment:     tableInfo.Location, // Store location as comment for reference
-		Columns:     make(map[string]unifiedmodel.Column),
-		Indexes:     make(map[string]unifiedmodel.Index),
-		Constraints: make(map[string]unifiedmodel.Constraint),
-	}
-
-	// Convert columns
-	for _, col := range tableInfo.Columns {
-		var defaultValue string
-		if col.ColumnDefault != nil {
-			defaultValue = *col.ColumnDefault
-		}
-		table.Columns[col.Name] = unifiedmodel.Column{
-			Name:         col.Name,
-			DataType:     col.DataType,
-			Nullable:     col.IsNullable,
-			Default:      defaultValue,
-			IsPrimaryKey: col.IsPrimaryKey,
-		}
-	}
-
-	return table
-}
-
-// ConvertIcebergNamespace converts IcebergNamespaceInfo to unifiedmodel.Namespace for Iceberg
-func ConvertIcebergNamespace(namespaceInfo IcebergNamespaceInfo) unifiedmodel.Namespace {
-	return unifiedmodel.Namespace{
-		Name: namespaceInfo.Name,
-	}
-}
 
 // IcebergNamespaceInfo represents an Iceberg namespace (similar to schema)
 type IcebergNamespaceInfo struct {
@@ -63,9 +11,10 @@ type IcebergNamespaceInfo struct {
 	Description string            `json:"description,omitempty"`
 }
 
-// IcebergTableInfo extends common.TableInfo with Iceberg-specific metadata
+// IcebergTableInfo represents Iceberg table information with Iceberg-specific metadata
 type IcebergTableInfo struct {
-	common.TableInfo
+	Name              string                  `json:"name"`
+	Schema            string                  `json:"schema"`
 	TableUUID         string                  `json:"tableUUID"`
 	Location          string                  `json:"location"`
 	CurrentSchemaID   int                     `json:"currentSchemaId"`

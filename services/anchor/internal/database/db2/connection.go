@@ -11,11 +11,11 @@ import (
 	_ "github.com/ibmdb/go_ibm_db" // Db2 driver
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to an IBM Db2 database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -64,7 +64,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           db,
 		DatabaseType: "db2",
 		DatabaseID:   config.DatabaseID,
@@ -74,7 +74,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to an IBM Db2 instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -123,7 +123,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           db,
 		InstanceType: "db2",
 		InstanceID:   config.InstanceID,
@@ -188,7 +188,7 @@ func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	return details, nil
 }
 
-func getSslMode(config common.DatabaseConfig) string {
+func getSslMode(config dbclient.DatabaseConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}
@@ -198,7 +198,7 @@ func getSslMode(config common.DatabaseConfig) string {
 	return "SSL_VERIFY_SERVER_CERTIFICATE"
 }
 
-func getInstanceSslMode(config common.InstanceConfig) string {
+func getInstanceSslMode(config dbclient.InstanceConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}

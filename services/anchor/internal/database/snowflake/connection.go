@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 	"github.com/snowflakedb/gosnowflake"
 )
 
 // Connect establishes a connection to a Snowflake database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var decryptedPassword string
 	if config.Password == "" {
 		decryptedPassword = ""
@@ -73,7 +73,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error pinging Snowflake database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           db,
 		DatabaseType: "snowflake",
 		DatabaseID:   config.DatabaseID,
@@ -83,7 +83,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Snowflake instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var decryptedPassword string
 	if config.Password == "" {
 		decryptedPassword = ""
@@ -142,7 +142,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error pinging Snowflake database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           db,
 		InstanceType: "snowflake",
 		InstanceID:   config.InstanceID,

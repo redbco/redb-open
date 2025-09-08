@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 const (
@@ -19,7 +19,7 @@ const (
 )
 
 // Connect establishes a connection to a Milvus database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	provider := config.ConnectionType
 	if provider == "" {
 		provider = config.DatabaseVendor
@@ -64,7 +64,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error connecting to Milvus: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "milvus",
 		DatabaseID:   config.DatabaseID,
@@ -74,7 +74,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Milvus instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	provider := config.ConnectionType
 	if provider == "" {
 		provider = config.DatabaseVendor
@@ -119,7 +119,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error connecting to Milvus instance: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:          client,
 		InstanceID:  config.InstanceID,
 		Config:      config,

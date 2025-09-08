@@ -10,11 +10,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a CockroachDB database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -64,7 +64,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           pool,
 		DatabaseType: "cockroach",
 		DatabaseID:   config.DatabaseID,
@@ -74,7 +74,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a CockroachDB instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -124,7 +124,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           pool,
 		InstanceType: "cockroach",
 		InstanceID:   config.InstanceID,
@@ -197,7 +197,7 @@ func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	return details, nil
 }
 
-func getSslMode(config common.DatabaseConfig) string {
+func getSslMode(config dbclient.DatabaseConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}
@@ -207,7 +207,7 @@ func getSslMode(config common.DatabaseConfig) string {
 	return "verify-full"
 }
 
-func getInstanceSslMode(config common.InstanceConfig) string {
+func getInstanceSslMode(config dbclient.InstanceConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}

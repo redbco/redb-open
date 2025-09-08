@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // CreateReplicationSource sets up a replication source
@@ -18,8 +18,8 @@ func CreateReplicationSource(conn ClickhouseConn, tableName string, databaseID s
 	ctx := context.Background()
 
 	// Generate unique names for the materialized view and buffer table
-	bufferTableName := fmt.Sprintf("_buffer_%s_%s", tableName, common.GenerateUniqueID())
-	mvName := fmt.Sprintf("_mv_%s_%s", tableName, common.GenerateUniqueID())
+	bufferTableName := fmt.Sprintf("_buffer_%s_%s", tableName, dbclient.GenerateUniqueID())
+	mvName := fmt.Sprintf("_mv_%s_%s", tableName, dbclient.GenerateUniqueID())
 
 	// Get columns for the source table
 	columns, err := getColumns(conn, tableName)

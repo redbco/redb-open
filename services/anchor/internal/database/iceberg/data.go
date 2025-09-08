@@ -302,13 +302,13 @@ func getTableMetadataREST(client *IcebergClient, namespace, tableName string) (*
 // getTableMetadataHive gets table metadata using Hive metastore
 func getTableMetadataHive(client *IcebergClient, namespace, tableName string) (*IcebergTableMetadata, error) {
 	// In a real implementation, you'd use Hive metastore client
-	return nil, fmt.Errorf("Hive table metadata retrieval not implemented")
+	return nil, fmt.Errorf("hive table metadata retrieval not implemented")
 }
 
 // getTableMetadataHadoop gets table metadata using Hadoop catalog
 func getTableMetadataHadoop(client *IcebergClient, namespace, tableName string) (*IcebergTableMetadata, error) {
 	// In a real implementation, you'd read metadata files from the warehouse
-	return nil, fmt.Errorf("Hadoop table metadata retrieval not implemented")
+	return nil, fmt.Errorf("hadoop table metadata retrieval not implemented")
 }
 
 // ListSnapshots lists all snapshots for an Iceberg table
@@ -404,10 +404,10 @@ func createSnapshotREST(client *IcebergClient, namespace, tableName, operation s
 
 // createSnapshotHive creates a snapshot using Hive metastore
 func createSnapshotHive(client *IcebergClient, namespace, tableName, operation string) error {
-	return fmt.Errorf("Hive snapshot creation not implemented")
+	return fmt.Errorf("hive snapshot creation not implemented")
 }
 
 // createSnapshotHadoop creates a snapshot using Hadoop catalog
 func createSnapshotHadoop(client *IcebergClient, namespace, tableName, operation string) error {
-	return fmt.Errorf("Hadoop snapshot creation not implemented")
+	return fmt.Errorf("hadoop snapshot creation not implemented")
 }

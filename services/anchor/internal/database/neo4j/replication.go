@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // CreateReplicationSource sets up a replication source
 func CreateReplicationSource(driver neo4j.DriverWithContext, labelOrType string, isRelationship bool, databaseID string, eventHandler func(map[string]interface{})) (*Neo4jReplicationSourceDetails, error) {
 	// Generate unique name for the source
-	sourceName := fmt.Sprintf("source_%s_%s", databaseID, common.GenerateUniqueID())
+	sourceName := fmt.Sprintf("source_%s_%s", databaseID, dbclient.GenerateUniqueID())
 
 	details := &Neo4jReplicationSourceDetails{
 		SourceName:  sourceName,

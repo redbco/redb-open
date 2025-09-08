@@ -3,20 +3,20 @@ package iceberg
 import (
 	"fmt"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // ConnectReplication creates a new replication client and connection for Iceberg
 // Note: Apache Iceberg doesn't support traditional Change Data Capture (CDC)
-func ConnectReplication(config common.ReplicationConfig) (*common.ReplicationClient, common.ReplicationSourceInterface, error) {
+func ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.ReplicationClient, dbclient.ReplicationSourceInterface, error) {
 	// Iceberg doesn't support traditional CDC, so we return an error with explanation
-	return nil, nil, fmt.Errorf("Apache Iceberg doesn't support traditional Change Data Capture (CDC). " +
+	return nil, nil, fmt.Errorf("apache iceberg doesn't support traditional Change Data Capture (CDC). " +
 		"Consider using table snapshots, time travel queries, or external change tracking mechanisms")
 }
 
 // CreateReplicationSource creates a replication source using an existing database client
 // Note: Apache Iceberg doesn't support traditional Change Data Capture (CDC)
-func CreateReplicationSource(db interface{}, config common.ReplicationConfig) (common.ReplicationSourceInterface, error) {
+func CreateReplicationSource(db interface{}, config dbclient.ReplicationConfig) (dbclient.ReplicationSourceInterface, error) {
 	client, ok := db.(*IcebergClient)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection type")

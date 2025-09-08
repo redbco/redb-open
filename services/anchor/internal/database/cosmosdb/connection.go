@@ -8,11 +8,11 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a CosmosDB database
-func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(cfg dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var decryptedPassword string
 	if cfg.Password == "" {
 		decryptedPassword = ""
@@ -58,7 +58,7 @@ func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
 		}
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "cosmosdb",
 		DatabaseID:   cfg.DatabaseID,
@@ -68,7 +68,7 @@ func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a CosmosDB instance
-func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(cfg dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var decryptedPassword string
 	if cfg.Password == "" {
 		decryptedPassword = ""
@@ -81,7 +81,7 @@ func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) 
 	}
 
 	// Convert instance config to database config for reuse
-	dbConfig := common.DatabaseConfig{
+	dbConfig := dbclient.DatabaseConfig{
 		DatabaseID:     cfg.InstanceID,
 		WorkspaceID:    cfg.WorkspaceID,
 		TenantID:       cfg.TenantID,
@@ -135,7 +135,7 @@ func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) 
 		}
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           client,
 		InstanceType: "cosmosdb",
 		InstanceID:   cfg.InstanceID,
@@ -145,7 +145,7 @@ func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) 
 }
 
 // buildEndpointURL constructs the CosmosDB endpoint URL
-func buildEndpointURL(cfg common.DatabaseConfig) string {
+func buildEndpointURL(cfg dbclient.DatabaseConfig) string {
 	// CosmosDB endpoint format: https://{account}.documents.azure.com:443/
 	// The account name can be extracted from the Host field
 	host := cfg.Host

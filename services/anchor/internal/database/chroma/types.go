@@ -2,21 +2,8 @@ package chroma
 
 import (
 	chromav2 "github.com/amikos-tech/chroma-go/pkg/api/v2"
-	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
 )
-
-// CreateChromaUnifiedModel creates a UnifiedModel for Chroma with database details
-func CreateChromaUnifiedModel(uniqueIdentifier, version string, databaseSize int64) *unifiedmodel.UnifiedModel {
-	um := &unifiedmodel.UnifiedModel{
-		DatabaseType:  dbcapabilities.Chroma,
-		VectorIndexes: make(map[string]unifiedmodel.VectorIndex),
-		Collections:   make(map[string]unifiedmodel.Collection),
-		Vectors:       make(map[string]unifiedmodel.Vector),
-		Embeddings:    make(map[string]unifiedmodel.Embedding),
-	}
-	return um
-}
 
 // ConvertChromaCollection converts ChromaCollectionInfo to unifiedmodel.VectorIndex for Chroma
 func ConvertChromaCollection(collectionInfo ChromaCollectionInfo) unifiedmodel.VectorIndex {

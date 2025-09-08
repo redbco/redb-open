@@ -13,7 +13,7 @@ import (
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // ClickhouseConn is a wrapper interface that combines the necessary methods
@@ -27,7 +27,7 @@ type ClickhouseConn interface {
 }
 
 // Connect establishes a connection to a Clickhouse database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 
 	var decryptedPassword string
 	if config.Password == "" {
@@ -94,7 +94,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error testing Clickhouse connection: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           conn,
 		DatabaseType: "clickhouse",
 		DatabaseID:   config.DatabaseID,
@@ -104,7 +104,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Clickhouse instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 
 	var decryptedPassword string
 	if config.Password == "" {
@@ -171,7 +171,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error testing Clickhouse connection: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           conn,
 		InstanceType: "clickhouse",
 		InstanceID:   config.InstanceID,

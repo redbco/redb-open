@@ -12,11 +12,11 @@ import (
 	gelcfg "github.com/geldata/gel-go/gelcfg"
 	"github.com/geldata/gel-go/geltypes"
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to an EdgeDB database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 
 	var decryptedPassword string
 	if config.Password == "" {
@@ -87,7 +87,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("unexpected response from EdgeDB connection test")
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "edgedb",
 		DatabaseID:   config.DatabaseID,
@@ -97,7 +97,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to an EdgeDB instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 
 	var decryptedPassword string
 	if config.Password == "" {
@@ -168,7 +168,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("unexpected response from EdgeDB connection test")
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           client,
 		InstanceType: "edgedb",
 		InstanceID:   config.InstanceID,

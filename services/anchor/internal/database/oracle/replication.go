@@ -9,13 +9,13 @@ import (
 	"time"
 
 	_ "github.com/godror/godror" // Oracle driver
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // CreateReplicationSource sets up a replication source
 func CreateReplicationSource(db *sql.DB, tableName string, databaseID string, eventHandler func(map[string]interface{})) (*OracleReplicationSourceDetails, error) {
 	// Generate unique session ID for LogMiner
-	logMinerSessionID := fmt.Sprintf("logminer_%s_%s", databaseID, common.GenerateUniqueID())
+	logMinerSessionID := fmt.Sprintf("logminer_%s_%s", databaseID, dbclient.GenerateUniqueID())
 
 	// Ensure supplemental logging is enabled for the table
 	_, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS", tableName))
