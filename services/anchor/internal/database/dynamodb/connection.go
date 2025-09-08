@@ -11,11 +11,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a DynamoDB database
-func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(cfg dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var decryptedPassword string
 	if cfg.Password == "" {
 		decryptedPassword = ""
@@ -44,7 +44,7 @@ func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error testing DynamoDB connection: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "dynamodb",
 		DatabaseID:   cfg.DatabaseID,
@@ -54,7 +54,7 @@ func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a DynamoDB instance
-func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(cfg dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var decryptedPassword string
 	if cfg.Password == "" {
 		decryptedPassword = ""
@@ -67,7 +67,7 @@ func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) 
 	}
 
 	// Convert instance config to database config for reuse
-	dbConfig := common.DatabaseConfig{
+	dbConfig := dbclient.DatabaseConfig{
 		DatabaseID:     cfg.InstanceID,
 		WorkspaceID:    cfg.WorkspaceID,
 		TenantID:       cfg.TenantID,
@@ -106,7 +106,7 @@ func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) 
 		return nil, fmt.Errorf("error testing DynamoDB connection: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           client,
 		InstanceType: "dynamodb",
 		InstanceID:   cfg.InstanceID,
@@ -116,7 +116,7 @@ func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) 
 }
 
 // buildAWSConfig creates AWS configuration for DynamoDB connection
-func buildAWSConfig(cfg common.DatabaseConfig, secretKey string) (aws.Config, error) {
+func buildAWSConfig(cfg dbclient.DatabaseConfig, secretKey string) (aws.Config, error) {
 	// For DynamoDB, we use the Username as Access Key ID and Password as Secret Access Key
 	// Region can be specified in the DatabaseName field or Host field
 	region := cfg.DatabaseName
@@ -166,7 +166,7 @@ func buildAWSConfig(cfg common.DatabaseConfig, secretKey string) (aws.Config, er
 }
 
 // DiscoverDetails fetches database details
-func DiscoverDetails(db interface{}) (*DynamoDBDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	client, ok := db.(*dynamodb.Client)
 	if !ok {
 		return nil, fmt.Errorf("invalid DynamoDB client type")
@@ -196,15 +196,14 @@ func DiscoverDetails(db interface{}) (*DynamoDBDetails, error) {
 		}
 	}
 
-	details := &DynamoDBDetails{
-		UniqueIdentifier: "dynamodb-instance", // DynamoDB doesn't have unique instance IDs
-		DatabaseType:     "dynamodb",
-		DatabaseEdition:  "AWS DynamoDB",
-		Version:          "latest", // DynamoDB is always latest version
-		DatabaseSize:     totalSize,
-		Region:           "unknown", // Would need to be extracted from config
-		BillingMode:      "unknown", // Would need to check each table
-	}
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = "dynamodb-instance" // DynamoDB doesn't have unique instance IDs
+	details["databaseType"] = "dynamodb"
+	details["databaseEdition"] = "AWS DynamoDB"
+	details["version"] = "latest" // DynamoDB is always latest version
+	details["databaseSize"] = totalSize
+	details["region"] = "unknown"      // Would need to be extracted from config
+	details["billingMode"] = "unknown" // Would need to check each table
 
 	return details, nil
 }

@@ -2,7 +2,6 @@ package elasticsearch
 
 import (
 	"github.com/elastic/go-elasticsearch/v8"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
 // ElasticsearchClient wraps the Elasticsearch client with additional metadata
@@ -16,27 +15,6 @@ func (c *ElasticsearchClient) Close() {
 	// Elasticsearch client doesn't have an explicit close method
 	// Just mark as disconnected
 	c.IsConnected = 0
-}
-
-// ElasticsearchDetails contains information about an Elasticsearch cluster
-type ElasticsearchDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	ClusterName      string `json:"clusterName"`
-	ClusterHealth    string `json:"clusterHealth"`
-	NumberOfNodes    int    `json:"numberOfNodes"`
-}
-
-// ElasticsearchSchema represents the schema of an Elasticsearch cluster
-type ElasticsearchSchema struct {
-	Indices    []common.TableInfo `json:"indices"` // Using TableInfo to represent indices
-	Templates  []TemplateInfo     `json:"templates"`
-	Pipelines  []PipelineInfo     `json:"pipelines"`
-	Aliases    []AliasInfo        `json:"aliases"`
-	Components []ComponentInfo    `json:"components"`
 }
 
 // TemplateInfo represents an Elasticsearch index template

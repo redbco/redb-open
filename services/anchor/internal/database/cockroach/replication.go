@@ -6,13 +6,13 @@ import (
 	"log"
 	"time"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // CreateReplicationSource sets up a replication source using CockroachDB's changefeed
 func CreateReplicationSource(db *sql.DB, tableName string, databaseID string, eventHandler func(map[string]interface{})) (*CockroachReplicationSourceDetails, error) {
 	// Generate unique ID for the changefeed
-	changefeedID := fmt.Sprintf("feed_%s_%s", databaseID, common.GenerateUniqueID())
+	changefeedID := fmt.Sprintf("feed_%s_%s", databaseID, dbclient.GenerateUniqueID())
 
 	// For simplicity, we'll use a file sink in this example
 	// In a real implementation, you might use Kafka, cloud storage, or webhook

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 const (
@@ -19,7 +19,7 @@ const (
 )
 
 // Connect establishes a connection to a Weaviate database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	provider := config.ConnectionType
 	if provider == "" {
 		provider = config.DatabaseVendor
@@ -64,7 +64,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error connecting to Weaviate: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "weaviate",
 		DatabaseID:   config.DatabaseID,
@@ -74,7 +74,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Weaviate instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	provider := config.ConnectionType
 	if provider == "" {
 		provider = config.DatabaseVendor
@@ -119,7 +119,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error connecting to Weaviate instance: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:          client,
 		InstanceID:  config.InstanceID,
 		Config:      config,
@@ -128,7 +128,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches database details
-func DiscoverDetails(client *WeaviateClient) (*WeaviateDetails, error) {
+func DiscoverDetails(client *WeaviateClient) (map[string]interface{}, error) {
 	// Get classes to determine database size
 	classes, err := listClasses(client)
 	if err != nil {
@@ -147,17 +147,18 @@ func DiscoverDetails(client *WeaviateClient) (*WeaviateDetails, error) {
 		totalCount += details.ObjectCount
 	}
 
-	return &WeaviateDetails{
-		UniqueIdentifier: fmt.Sprintf("weaviate_%s_%d", client.Host, client.Port),
-		DatabaseType:     "weaviate",
-		DatabaseEdition:  "community",
-		Version:          "1.0.0", // Weaviate doesn't expose version via API
-		DatabaseSize:     totalSize,
-		Host:             client.Host,
-		Port:             client.Port,
-		ClassCount:       int64(len(classes)),
-		TotalObjects:     totalCount,
-	}, nil
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = fmt.Sprintf("weaviate_%s_%d", client.Host, client.Port)
+	details["databaseType"] = "weaviate"
+	details["databaseEdition"] = "community"
+	details["version"] = "1.0.0" // Weaviate doesn't expose version via API
+	details["databaseSize"] = totalSize
+	details["host"] = client.Host
+	details["port"] = client.Port
+	details["classCount"] = int64(len(classes))
+	details["totalObjects"] = totalCount
+
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Weaviate database

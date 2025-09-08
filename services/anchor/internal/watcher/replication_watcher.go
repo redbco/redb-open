@@ -11,7 +11,7 @@ import (
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/anchor/internal/config"
 	"github.com/redbco/redb-open/services/anchor/internal/database"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 	"github.com/redbco/redb-open/services/anchor/internal/state"
 )
 
@@ -198,7 +198,7 @@ func (w *ReplicationWatcher) setupReplicationClient(ctx context.Context, source 
 	}
 
 	// Create replication configuration
-	replicationConfig := common.ReplicationConfig{
+	replicationConfig := dbclient.ReplicationConfig{
 		ReplicationID:     source.ReplicationSourceID,
 		DatabaseID:        source.DatabaseID,
 		WorkspaceID:       source.WorkspaceID,
@@ -233,7 +233,7 @@ func (w *ReplicationWatcher) setupReplicationClient(ctx context.Context, source 
 	}
 
 	// Start the replication source
-	if replicationSource, ok := client.ReplicationSource.(common.ReplicationSourceInterface); ok {
+	if replicationSource, ok := client.ReplicationSource.(dbclient.ReplicationSourceInterface); ok {
 		if err := replicationSource.Start(); err != nil {
 			w.logger.Error("Failed to start replication source for %s: %v", source.ReplicationSourceID, err)
 			// Don't return error, just log it
@@ -296,7 +296,7 @@ func (w *ReplicationWatcher) periodicReplicationHealthCheck(ctx context.Context)
 	return w.setupInitialReplicationClients(ctx)
 }
 
-func (w *ReplicationWatcher) checkReplicationClientHealth(client *common.ReplicationClient, dbManager *database.DatabaseManager) {
+func (w *ReplicationWatcher) checkReplicationClientHealth(client *dbclient.ReplicationClient, dbManager *database.DatabaseManager) {
 	// Check if the underlying database is still connected
 	_, err := dbManager.GetDatabaseClient(client.DatabaseID)
 	if err != nil {
@@ -312,7 +312,7 @@ func (w *ReplicationWatcher) checkReplicationClientHealth(client *common.Replica
 	}
 
 	// Check if the replication source is still active
-	if replicationSource, ok := client.ReplicationSource.(common.ReplicationSourceInterface); ok {
+	if replicationSource, ok := client.ReplicationSource.(dbclient.ReplicationSourceInterface); ok {
 		if !replicationSource.IsActive() {
 			w.logger.Warn("Replication source for client %s is not active, attempting to restart",
 				client.ReplicationID)

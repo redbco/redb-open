@@ -10,11 +10,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a CockroachDB database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -64,7 +64,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           pool,
 		DatabaseType: "cockroach",
 		DatabaseID:   config.DatabaseID,
@@ -74,7 +74,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a CockroachDB instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -124,7 +124,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           pool,
 		InstanceType: "cockroach",
 		InstanceID:   config.InstanceID,
@@ -134,14 +134,14 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of a CockroachDB database
-func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	pool, ok := db.(*pgxpool.Pool)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details CockroachDetails
-	details.DatabaseType = "cockroach"
+	details := make(map[string]interface{})
+	details["databaseType"] = "cockroach"
 
 	// Get server version
 	var version string
@@ -149,7 +149,7 @@ func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching version: %v", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Get database size
 	var size int64
@@ -158,7 +158,7 @@ func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database size: %v", err)
 	}
-	details.DatabaseSize = size
+	details["databaseSize"] = size
 
 	// Get unique identifier (database ID)
 	var dbID string
@@ -167,7 +167,7 @@ func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database ID: %v", err)
 	}
-	details.UniqueIdentifier = dbID
+	details["uniqueIdentifier"] = dbID
 
 	// Get cluster ID
 	var clusterID string
@@ -176,7 +176,7 @@ func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
 		// If we can't get the cluster ID, it's not critical
 		clusterID = "unknown"
 	}
-	details.ClusterID = clusterID
+	details["clusterId"] = clusterID
 
 	// Get node ID
 	var nodeID string
@@ -185,19 +185,19 @@ func DiscoverDetails(db interface{}) (*CockroachDetails, error) {
 		// If we can't get the node ID, it's not critical
 		nodeID = "unknown"
 	}
-	details.NodeID = nodeID
+	details["nodeId"] = nodeID
 
 	// Determine edition
 	if strings.Contains(strings.ToLower(version), "enterprise") {
-		details.DatabaseEdition = "enterprise"
+		details["databaseEdition"] = "enterprise"
 	} else {
-		details.DatabaseEdition = "core"
+		details["databaseEdition"] = "core"
 	}
 
-	return &details, nil
+	return details, nil
 }
 
-func getSslMode(config common.DatabaseConfig) string {
+func getSslMode(config dbclient.DatabaseConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}
@@ -207,7 +207,7 @@ func getSslMode(config common.DatabaseConfig) string {
 	return "verify-full"
 }
 
-func getInstanceSslMode(config common.InstanceConfig) string {
+func getInstanceSslMode(config dbclient.InstanceConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}

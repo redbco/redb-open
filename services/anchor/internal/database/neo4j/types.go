@@ -1,26 +1,5 @@
 package neo4j
 
-import "github.com/redbco/redb-open/services/anchor/internal/database/common"
-
-// Neo4jDetails contains information about a Neo4j database
-type Neo4jDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-}
-
-// Neo4jSchema represents the schema of a Neo4j database
-type Neo4jSchema struct {
-	Labels            []LabelInfo            `json:"labels"`
-	RelationshipTypes []RelationshipTypeInfo `json:"relationshipTypes"`
-	Constraints       []ConstraintInfo       `json:"constraints"`
-	Indexes           []common.IndexInfo     `json:"indexes"`
-	Procedures        []common.ProcedureInfo `json:"procedures"`
-	Functions         []common.FunctionInfo  `json:"functions"`
-}
-
 // LabelInfo represents a node label in Neo4j
 type LabelInfo struct {
 	Name       string         `json:"name"`

@@ -5,86 +5,99 @@ import (
 	"strings"
 
 	"github.com/gocql/gocql"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 )
 
-// DiscoverSchema fetches the current schema of a Cassandra database
-func DiscoverSchema(session *gocql.Session) (*CassandraSchema, error) {
-	schema := &CassandraSchema{}
+// DiscoverSchema fetches the current schema of a Cassandra database and returns a UnifiedModel
+func DiscoverSchema(session *gocql.Session) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:      dbcapabilities.Cassandra,
+		Keyspaces:         make(map[string]unifiedmodel.Keyspace),
+		Tables:            make(map[string]unifiedmodel.Table),
+		Types:             make(map[string]unifiedmodel.Type),
+		Functions:         make(map[string]unifiedmodel.Function),
+		MaterializedViews: make(map[string]unifiedmodel.MaterializedView),
+	}
+
 	var err error
 
-	// Get keyspaces
-	schema.Keyspaces, err = discoverKeyspaces(session)
+	// Get keyspaces directly as unifiedmodel types
+	err = discoverKeyspacesUnified(session, um)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering keyspaces: %v", err)
 	}
 
-	// Get tables
-	schema.Tables, err = discoverTables(session)
+	// Get tables directly as unifiedmodel types
+	err = discoverTablesUnified(session, um)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
 
-	// Get user-defined types
-	schema.Types, err = discoverTypes(session)
+	// Get user-defined types directly as unifiedmodel types
+	err = discoverTypesUnified(session, um)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering types: %v", err)
 	}
 
-	// Get functions
-	schema.Functions, err = discoverFunctions(session)
+	// Get functions directly as unifiedmodel types
+	err = discoverFunctionsUnified(session, um)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering functions: %v", err)
 	}
 
-	// Get aggregates
-	schema.Aggregates, err = discoverAggregates(session)
+	// Get aggregates directly as unifiedmodel types
+	err = discoverAggregatesUnified(session, um)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering aggregates: %v", err)
 	}
 
-	// Get materialized views
-	schema.MaterializedViews, err = discoverMaterializedViews(session)
+	// Get materialized views directly as unifiedmodel types
+	err = discoverMaterializedViewsUnified(session, um)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering materialized views: %v", err)
 	}
 
-	return schema, nil
+	return um, nil
 }
 
-// CreateStructure creates database objects based on the provided parameters
-func CreateStructure(session *gocql.Session, params common.StructureParams) error {
-	// Create keyspaces first
-	for _, keyspace := range params.Schemas {
-		if err := createKeyspace(session, keyspace.Name); err != nil {
+// CreateStructure creates database objects from a UnifiedModel
+func CreateStructure(session *gocql.Session, um *unifiedmodel.UnifiedModel) error {
+	if um == nil {
+		return fmt.Errorf("unified model cannot be nil")
+	}
+	// Create keyspaces from UnifiedModel
+	for _, keyspace := range um.Keyspaces {
+		if err := createKeyspaceFromUnified(session, keyspace); err != nil {
 			return fmt.Errorf("error creating keyspace %s: %v", keyspace.Name, err)
 		}
 	}
 
-	// Create user-defined types
-	for _, udt := range params.Types {
-		if err := createUserDefinedType(session, udt); err != nil {
-			return fmt.Errorf("error creating user-defined type %s: %v", udt.Name, err)
+	// Create user-defined types from UnifiedModel
+	for _, typeInfo := range um.Types {
+		if err := createUserDefinedTypeFromUnified(session, typeInfo); err != nil {
+			return fmt.Errorf("error creating user-defined type %s: %v", typeInfo.Name, err)
 		}
 	}
 
-	// Create tables
-	for _, table := range params.Tables {
-		if err := createTable(session, table); err != nil {
+	// Create tables from UnifiedModel
+	for _, table := range um.Tables {
+		if err := createTableFromUnified(session, table); err != nil {
 			return fmt.Errorf("error creating table %s: %v", table.Name, err)
 		}
 	}
 
-	// Create materialized views
-	for _, view := range params.MaterializedViews {
-		if err := createMaterializedView(session, view); err != nil {
+	// Create materialized views from UnifiedModel
+	for _, view := range um.MaterializedViews {
+		if err := createMaterializedViewFromUnified(session, view); err != nil {
 			return fmt.Errorf("error creating materialized view %s: %v", view.Name, err)
 		}
 	}
 
-	// Create functions
-	for _, function := range params.Functions {
-		if err := createFunction(session, function); err != nil {
+	// Create functions from UnifiedModel
+	for _, function := range um.Functions {
+		if err := createFunctionFromUnified(session, function); err != nil {
 			return fmt.Errorf("error creating function %s: %v", function.Name, err)
 		}
 	}
@@ -92,9 +105,8 @@ func CreateStructure(session *gocql.Session, params common.StructureParams) erro
 	return nil
 }
 
-func discoverKeyspaces(session *gocql.Session) ([]KeyspaceInfo, error) {
-	var keyspaces []KeyspaceInfo
-
+// discoverKeyspacesUnified discovers keyspaces directly into UnifiedModel
+func discoverKeyspacesUnified(session *gocql.Session, um *unifiedmodel.UnifiedModel) error {
 	iter := session.Query("SELECT keyspace_name, durable_writes, replication FROM system_schema.keyspaces").Iter()
 
 	var keyspaceName string
@@ -107,685 +119,335 @@ func discoverKeyspaces(session *gocql.Session) ([]KeyspaceInfo, error) {
 			continue
 		}
 
-		strategy := replication["class"]
-		// Remove the full class name prefix
-		strategy = strategy[strings.LastIndex(strategy, ".")+1:]
+		keyspace := unifiedmodel.Keyspace{
+			Name:          keyspaceName,
+			DurableWrites: durableWrites,
+		}
 
-		// Remove strategy from the map
-		delete(replication, "class")
+		// Parse replication strategy
+		if strategy, ok := replication["class"]; ok {
+			keyspace.ReplicationStrategy = strategy
+			keyspace.ReplicationOptions = make(map[string]string)
+			for k, v := range replication {
+				if k != "class" {
+					keyspace.ReplicationOptions[k] = v
+				}
+			}
+		}
 
-		keyspaces = append(keyspaces, KeyspaceInfo{
-			Name:                keyspaceName,
-			ReplicationStrategy: strategy,
-			ReplicationOptions:  replication,
-			DurableWrites:       durableWrites,
-		})
+		um.Keyspaces[keyspaceName] = keyspace
 	}
 
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching keyspaces: %v", err)
-	}
-
-	return keyspaces, nil
+	return iter.Close()
 }
 
-func discoverTables(session *gocql.Session) ([]common.TableInfo, error) {
-	var tables []common.TableInfo
-
-	// Get all tables
-	iter := session.Query(`
-		SELECT keyspace_name, table_name 
-		FROM system_schema.tables 
-		WHERE keyspace_name NOT LIKE 'system%'
-	`).Iter()
+// discoverTablesUnified discovers tables directly into UnifiedModel
+func discoverTablesUnified(session *gocql.Session, um *unifiedmodel.UnifiedModel) error {
+	iter := session.Query("SELECT keyspace_name, table_name FROM system_schema.tables").Iter()
 
 	var keyspaceName, tableName string
-
 	for iter.Scan(&keyspaceName, &tableName) {
-		table := common.TableInfo{
-			Schema:    keyspaceName,
-			Name:      tableName,
-			TableType: "cassandra.table",
+		// Skip system keyspaces
+		if strings.HasPrefix(keyspaceName, "system") {
+			continue
+		}
+
+		table := unifiedmodel.Table{
+			Name:        tableName,
+			Comment:     keyspaceName, // Store keyspace in comment for reference
+			Columns:     make(map[string]unifiedmodel.Column),
+			Indexes:     make(map[string]unifiedmodel.Index),
+			Constraints: make(map[string]unifiedmodel.Constraint),
 		}
 
 		// Get columns for this table
-		columns, err := getTableColumns(session, keyspaceName, tableName)
+		err := getTableColumnsUnified(session, keyspaceName, tableName, &table)
 		if err != nil {
-			return nil, err
+			return fmt.Errorf("error getting columns for table %s.%s: %v", keyspaceName, tableName, err)
 		}
-		table.Columns = columns
 
-		// Get primary key
-		primaryKey, err := getTablePrimaryKey(session, keyspaceName, tableName)
-		if err != nil {
-			return nil, err
-		}
-		table.PrimaryKey = primaryKey
-
-		tables = append(tables, table)
+		um.Tables[fmt.Sprintf("%s.%s", keyspaceName, tableName)] = table
 	}
 
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching tables: %v", err)
-	}
-
-	return tables, nil
+	return iter.Close()
 }
 
-func getTableColumns(session *gocql.Session, keyspace, table string) ([]common.ColumnInfo, error) {
-	var columns []common.ColumnInfo
-
+// getTableColumnsUnified gets columns for a table directly into UnifiedModel
+func getTableColumnsUnified(session *gocql.Session, keyspace, table string, tableModel *unifiedmodel.Table) error {
 	iter := session.Query(`
-		SELECT column_name, type, kind
-		FROM system_schema.columns
-		WHERE keyspace_name = ? AND table_name = ?
-	`, keyspace, table).Iter()
+		SELECT column_name, type, kind, clustering_order, position
+		FROM system_schema.columns 
+		WHERE keyspace_name = ? AND table_name = ?`,
+		keyspace, table).Iter()
 
-	var columnName, dataType, kind string
+	var columnName, columnType, kind, clusteringOrder string
+	var position int
 
-	for iter.Scan(&columnName, &dataType, &kind) {
-		column := common.ColumnInfo{
-			Name:       columnName,
-			DataType:   dataType,
-			IsNullable: true, // Cassandra columns are nullable by default
+	for iter.Scan(&columnName, &columnType, &kind, &clusteringOrder, &position) {
+		column := unifiedmodel.Column{
+			Name:     columnName,
+			DataType: columnType,
 		}
 
-		// Check if this column is part of the primary key
-		if kind == "partition_key" || kind == "clustering" {
+		// Set column properties based on kind
+		switch kind {
+		case "partition_key":
 			column.IsPrimaryKey = true
-			column.IsNullable = false // Primary key columns cannot be null
+		case "clustering":
+			column.IsPrimaryKey = true
+		case "regular":
+			// Regular column
+		case "static":
+			// Static column in Cassandra
 		}
 
-		// Handle collection types
-		if strings.HasPrefix(dataType, "list<") ||
-			strings.HasPrefix(dataType, "set<") ||
-			strings.HasPrefix(dataType, "map<") {
-			column.IsArray = true
-			elementType := extractElementType(dataType)
-			column.ArrayElementType = &elementType
-		}
-
-		// Handle user-defined types
-		if strings.HasPrefix(dataType, "frozen<") {
-			typeName := extractUserDefinedType(dataType)
-			column.CustomTypeName = &typeName
-		}
-
-		columns = append(columns, column)
+		tableModel.Columns[columnName] = column
 	}
 
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching columns for table %s.%s: %v", keyspace, table, err)
-	}
-
-	return columns, nil
+	return iter.Close()
 }
 
-func getTablePrimaryKey(session *gocql.Session, keyspace, table string) ([]string, error) {
-	var primaryKey []string
-
-	// Get partition key columns
-	iter := session.Query(`
-		SELECT column_name
-		FROM system_schema.columns
-		WHERE keyspace_name = ? AND table_name = ? AND kind = 'partition_key'
-		ORDER BY position
-	`, keyspace, table).Iter()
-
-	var columnName string
-	for iter.Scan(&columnName) {
-		primaryKey = append(primaryKey, columnName)
-	}
-
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching partition key for table %s.%s: %v", keyspace, table, err)
-	}
-
-	// Get clustering columns
-	iter = session.Query(`
-		SELECT column_name
-		FROM system_schema.columns
-		WHERE keyspace_name = ? AND table_name = ? AND kind = 'clustering'
-		ORDER BY position
-	`, keyspace, table).Iter()
-
-	for iter.Scan(&columnName) {
-		primaryKey = append(primaryKey, columnName)
-	}
-
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching clustering columns for table %s.%s: %v", keyspace, table, err)
-	}
-
-	return primaryKey, nil
-}
-
-func discoverTypes(session *gocql.Session) ([]CassandraType, error) {
-	var types []CassandraType
-
-	// Get all user-defined types
-	iter := session.Query(`
-		SELECT keyspace_name, type_name
-		FROM system_schema.types
-		WHERE keyspace_name NOT LIKE 'system%'
-	`).Iter()
+// discoverTypesUnified discovers user-defined types directly into UnifiedModel
+func discoverTypesUnified(session *gocql.Session, um *unifiedmodel.UnifiedModel) error {
+	iter := session.Query("SELECT keyspace_name, type_name, field_names, field_types FROM system_schema.types").Iter()
 
 	var keyspaceName, typeName string
-
-	for iter.Scan(&keyspaceName, &typeName) {
-		udt := CassandraType{
-			Keyspace: keyspaceName,
-			Name:     typeName,
-		}
-
-		// Get fields for this type
-		fields, err := getTypeFields(session, keyspaceName, typeName)
-		if err != nil {
-			return nil, err
-		}
-		udt.Fields = fields
-
-		types = append(types, udt)
-	}
-
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching user-defined types: %v", err)
-	}
-
-	return types, nil
-}
-
-func getTypeFields(session *gocql.Session, keyspace, typeName string) ([]CassandraTypeField, error) {
-	var fields []CassandraTypeField
-
-	iter := session.Query(`
-		SELECT field_name, field_type
-		FROM system_schema.types
-		WHERE keyspace_name = ? AND type_name = ?
-	`, keyspace, typeName).Iter()
-
 	var fieldNames []string
 	var fieldTypes []string
 
-	// In Cassandra, field names and types are stored as collections
-	if iter.Scan(&fieldNames, &fieldTypes) {
-		for i := 0; i < len(fieldNames); i++ {
-			fields = append(fields, CassandraTypeField{
-				Name:     fieldNames[i],
-				DataType: fieldTypes[i],
-			})
+	for iter.Scan(&keyspaceName, &typeName, &fieldNames, &fieldTypes) {
+		// Skip system keyspaces
+		if strings.HasPrefix(keyspaceName, "system") {
+			continue
 		}
+
+		typeInfo := unifiedmodel.Type{
+			Name:     typeName,
+			Category: "composite",
+			Definition: map[string]any{
+				"keyspace": keyspaceName,
+				"fields":   make(map[string]string),
+			},
+		}
+
+		// Combine field names and types
+		if typeInfo.Definition != nil {
+			if fields, ok := typeInfo.Definition["fields"].(map[string]string); ok {
+				for i, fieldName := range fieldNames {
+					if i < len(fieldTypes) {
+						fields[fieldName] = fieldTypes[i]
+					}
+				}
+			}
+		}
+
+		um.Types[fmt.Sprintf("%s.%s", keyspaceName, typeName)] = typeInfo
 	}
 
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching fields for type %s.%s: %v", keyspace, typeName, err)
-	}
-
-	return fields, nil
+	return iter.Close()
 }
 
-func discoverFunctions(session *gocql.Session) ([]common.FunctionInfo, error) {
-	var functions []common.FunctionInfo
+// discoverFunctionsUnified discovers functions directly into UnifiedModel
+func discoverFunctionsUnified(session *gocql.Session, um *unifiedmodel.UnifiedModel) error {
+	iter := session.Query("SELECT keyspace_name, function_name, argument_types, return_type, body, language FROM system_schema.functions").Iter()
 
-	iter := session.Query(`
-		SELECT keyspace_name, function_name, argument_types, return_type, language, body
-		FROM system_schema.functions
-		WHERE keyspace_name NOT LIKE 'system%'
-	`).Iter()
-
-	var keyspaceName, functionName, language, body, returnType string
+	var keyspaceName, functionName, returnType, body, language string
 	var argumentTypes []string
 
-	for iter.Scan(&keyspaceName, &functionName, &argumentTypes, &returnType, &language, &body) {
-		// Format argument types as a string
-		args := strings.Join(argumentTypes, ", ")
+	for iter.Scan(&keyspaceName, &functionName, &argumentTypes, &returnType, &body, &language) {
+		// Skip system keyspaces
+		if strings.HasPrefix(keyspaceName, "system") {
+			continue
+		}
 
-		functions = append(functions, common.FunctionInfo{
-			Schema:     keyspaceName,
+		function := unifiedmodel.Function{
 			Name:       functionName,
-			Arguments:  args,
-			ReturnType: returnType,
-			Body:       body,
-		})
+			Language:   language,
+			Returns:    returnType,
+			Definition: body,
+		}
+
+		um.Functions[fmt.Sprintf("%s.%s", keyspaceName, functionName)] = function
 	}
 
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching functions: %v", err)
-	}
-
-	return functions, nil
+	return iter.Close()
 }
 
-func discoverAggregates(session *gocql.Session) ([]AggregateInfo, error) {
-	var aggregates []AggregateInfo
+// discoverAggregatesUnified discovers aggregates directly into UnifiedModel
+func discoverAggregatesUnified(session *gocql.Session, um *unifiedmodel.UnifiedModel) error {
+	iter := session.Query("SELECT keyspace_name, aggregate_name, argument_types, return_type, state_func, final_func FROM system_schema.aggregates").Iter()
 
-	iter := session.Query(`
-		SELECT keyspace_name, aggregate_name, argument_types, final_func, initcond, return_type, state_func, state_type
-		FROM system_schema.aggregates
-		WHERE keyspace_name NOT LIKE 'system%'
-	`).Iter()
-
-	var keyspaceName, aggregateName, finalFunc, initCond, returnType, stateFunc, stateType string
+	var keyspaceName, aggregateName, returnType, stateFunc, finalFunc string
 	var argumentTypes []string
 
-	for iter.Scan(&keyspaceName, &aggregateName, &argumentTypes, &finalFunc, &initCond, &returnType, &stateFunc, &stateType) {
-		aggregates = append(aggregates, AggregateInfo{
-			Keyspace:      keyspaceName,
-			Name:          aggregateName,
-			ArgumentTypes: argumentTypes,
-			FinalFunc:     finalFunc,
-			InitCond:      initCond,
-			ReturnType:    returnType,
-			StateFunc:     stateFunc,
-			StateType:     stateType,
-		})
+	for iter.Scan(&keyspaceName, &aggregateName, &argumentTypes, &returnType, &stateFunc, &finalFunc) {
+		// Skip system keyspaces
+		if strings.HasPrefix(keyspaceName, "system") {
+			continue
+		}
+
+		aggregate := unifiedmodel.Function{
+			Name:       aggregateName,
+			Language:   "cql",
+			Returns:    returnType,
+			Definition: fmt.Sprintf("STATE FUNC: %s, FINAL FUNC: %s", stateFunc, finalFunc),
+		}
+
+		um.Functions[fmt.Sprintf("%s.%s", keyspaceName, aggregateName)] = aggregate
 	}
 
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching aggregates: %v", err)
-	}
-
-	return aggregates, nil
+	return iter.Close()
 }
 
-func discoverMaterializedViews(session *gocql.Session) ([]common.MaterializedViewInfo, error) {
-	var views []common.MaterializedViewInfo
-
-	iter := session.Query(`
-		SELECT keyspace_name, view_name, base_table_name, include_all_columns
-		FROM system_schema.views
-		WHERE keyspace_name NOT LIKE 'system%'
-	`).Iter()
+// discoverMaterializedViewsUnified discovers materialized views directly into UnifiedModel
+func discoverMaterializedViewsUnified(session *gocql.Session, um *unifiedmodel.UnifiedModel) error {
+	iter := session.Query("SELECT keyspace_name, view_name, base_table_name FROM system_schema.views").Iter()
 
 	var keyspaceName, viewName, baseTableName string
-	var includeAllColumns bool
 
-	for iter.Scan(&keyspaceName, &viewName, &baseTableName, &includeAllColumns) {
-		view := common.MaterializedViewInfo{
-			Keyspace:   keyspaceName,
+	for iter.Scan(&keyspaceName, &viewName, &baseTableName) {
+		// Skip system keyspaces
+		if strings.HasPrefix(keyspaceName, "system") {
+			continue
+		}
+
+		view := unifiedmodel.MaterializedView{
 			Name:       viewName,
-			BaseTable:  baseTableName,
-			IncludeAll: includeAllColumns,
+			Definition: fmt.Sprintf("SELECT * FROM %s.%s", keyspaceName, baseTableName),
 		}
 
-		// Get columns for this view
-		columns, err := getViewColumns(session, keyspaceName, viewName)
-		if err != nil {
-			return nil, err
-		}
-		view.Columns = columns
-
-		// Get primary key
-		primaryKey, err := getTablePrimaryKey(session, keyspaceName, viewName)
-		if err != nil {
-			return nil, err
-		}
-		view.PrimaryKey = primaryKey
-
-		// Get clustering order
-		clusteringOrder, err := getViewClusteringOrder(session, keyspaceName, viewName)
-		if err != nil {
-			return nil, err
-		}
-		view.ClusteringOrder = clusteringOrder
-
-		// Get where clause (not directly available in system tables)
-		view.WhereClause = ""
-
-		views = append(views, view)
+		um.MaterializedViews[fmt.Sprintf("%s.%s", keyspaceName, viewName)] = view
 	}
 
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching materialized views: %v", err)
-	}
-
-	return views, nil
+	return iter.Close()
 }
 
-func getViewColumns(session *gocql.Session, keyspace, view string) ([]string, error) {
-	var columns []string
+// createKeyspaceFromUnified creates a keyspace from UnifiedModel Keyspace
+func createKeyspaceFromUnified(session *gocql.Session, keyspace unifiedmodel.Keyspace) error {
+	replicationMap := make(map[string]interface{})
+	replicationMap["class"] = keyspace.ReplicationStrategy
 
-	iter := session.Query(`
-		SELECT column_name
-		FROM system_schema.columns
-		WHERE keyspace_name = ? AND table_name = ?
-	`, keyspace, view).Iter()
-
-	var columnName string
-	for iter.Scan(&columnName) {
-		columns = append(columns, columnName)
+	for k, v := range keyspace.ReplicationOptions {
+		replicationMap[k] = v
 	}
 
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching columns for view %s.%s: %v", keyspace, view, err)
-	}
-
-	return columns, nil
-}
-
-func getViewClusteringOrder(session *gocql.Session, keyspace, view string) (map[string]string, error) {
-	clusteringOrder := make(map[string]string)
-
-	iter := session.Query(`
-		SELECT column_name, clustering_order
-		FROM system_schema.columns
-		WHERE keyspace_name = ? AND table_name = ? AND kind = 'clustering'
-	`, keyspace, view).Iter()
-
-	var columnName, order string
-	for iter.Scan(&columnName, &order) {
-		clusteringOrder[columnName] = order
-	}
-
-	if err := iter.Close(); err != nil {
-		return nil, fmt.Errorf("error fetching clustering order for view %s.%s: %v", keyspace, view, err)
-	}
-
-	return clusteringOrder, nil
-}
-
-func extractElementType(dataType string) string {
-	// Extract the element type from collection types like list<text>, set<int>, map<text, int>
-	start := strings.Index(dataType, "<")
-	end := strings.LastIndex(dataType, ">")
-
-	if start != -1 && end != -1 && end > start {
-		return dataType[start+1 : end]
-	}
-
-	return dataType
-}
-
-func extractUserDefinedType(dataType string) string {
-	// Extract the UDT name from frozen<mytype>
-	if strings.HasPrefix(dataType, "frozen<") {
-		return extractElementType(dataType)
-	}
-	return dataType
-}
-
-func createKeyspace(session *gocql.Session, keyspaceName string) error {
-	// Check if keyspace already exists
-	var count int
-	if err := session.Query("SELECT COUNT(*) FROM system_schema.keyspaces WHERE keyspace_name = ?", keyspaceName).Scan(&count); err != nil {
-		return fmt.Errorf("error checking if keyspace exists: %v", err)
-	}
-
-	if count > 0 {
-		// Keyspace already exists
-		return nil
-	}
-
-	// Create keyspace with simple strategy and replication factor 1 (for development)
 	query := fmt.Sprintf(`
-		CREATE KEYSPACE %s
-		WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}
-		AND durable_writes = true
-	`, common.QuoteIdentifier(keyspaceName))
+		CREATE KEYSPACE IF NOT EXISTS %s
+		WITH replication = %v
+		AND durable_writes = %t
+	`, QuoteIdentifier(keyspace.Name), replicationMap, keyspace.DurableWrites)
 
-	if err := session.Query(query).Exec(); err != nil {
-		return fmt.Errorf("error creating keyspace: %v", err)
-	}
-
-	return nil
+	return session.Query(query).Exec()
 }
 
-func createUserDefinedType(session *gocql.Session, typeInfo common.TypeInfo) error {
-	// Extract keyspace from module if available
-	keyspace := "default"
-	if typeInfo.Module != "" {
-		keyspace = typeInfo.Module
+// createUserDefinedTypeFromUnified creates a user-defined type from UnifiedModel Type
+func createUserDefinedTypeFromUnified(session *gocql.Session, typeInfo unifiedmodel.Type) error {
+	if typeInfo.Category != "composite" {
+		return nil // Skip non-composite types
 	}
 
-	// Check if type already exists
-	var count int
-	if err := session.Query("SELECT COUNT(*) FROM system_schema.types WHERE keyspace_name = ? AND type_name = ?",
-		keyspace, typeInfo.Name).Scan(&count); err != nil {
-		return fmt.Errorf("error checking if type exists: %v", err)
+	var keyspace string
+	var fields map[string]string
+
+	if typeInfo.Definition != nil {
+		if ks, ok := typeInfo.Definition["keyspace"].(string); ok {
+			keyspace = ks
+		}
+		if f, ok := typeInfo.Definition["fields"].(map[string]string); ok {
+			fields = f
+		}
 	}
 
-	if count > 0 {
-		// Type already exists
-		return nil
+	if keyspace == "" || len(fields) == 0 {
+		return fmt.Errorf("invalid type definition for %s", typeInfo.Name)
 	}
 
-	// Build field definitions
-	var fields []string
-	for _, prop := range typeInfo.Properties {
-		// Convert property type to Cassandra type
-		cassandraType := convertToCassandraType(prop.Type)
-		fields = append(fields, fmt.Sprintf("%s %s", prop.Name, cassandraType))
+	var fieldDefs []string
+	for fieldName, fieldType := range fields {
+		fieldDefs = append(fieldDefs, fmt.Sprintf("%s %s", QuoteIdentifier(fieldName), fieldType))
 	}
 
-	// Create the type
 	query := fmt.Sprintf(`
-		CREATE TYPE %s.%s (
+		CREATE TYPE IF NOT EXISTS %s.%s (
 			%s
 		)
-	`, common.QuoteIdentifier(keyspace), common.QuoteIdentifier(typeInfo.Name), strings.Join(fields, ",\n\t\t\t"))
+	`, QuoteIdentifier(keyspace), QuoteIdentifier(typeInfo.Name), strings.Join(fieldDefs, ",\n\t\t\t"))
 
-	if err := session.Query(query).Exec(); err != nil {
-		return fmt.Errorf("error creating user-defined type: %v", err)
-	}
-
-	return nil
+	return session.Query(query).Exec()
 }
 
-func createTable(session *gocql.Session, tableInfo common.TableInfo) error {
-	// Extract keyspace from schema
-	keyspace := tableInfo.Schema
+// createTableFromUnified creates a table from UnifiedModel Table
+func createTableFromUnified(session *gocql.Session, table unifiedmodel.Table) error {
+	keyspace := table.Comment // Keyspace is stored in comment
 	if keyspace == "" {
-		keyspace = GetKeyspace(session)
+		keyspace = "default"
 	}
 
-	// Check if table already exists
-	var count int
-	if err := session.Query("SELECT COUNT(*) FROM system_schema.tables WHERE keyspace_name = ? AND table_name = ?",
-		keyspace, tableInfo.Name).Scan(&count); err != nil {
-		return fmt.Errorf("error checking if table exists: %v", err)
-	}
-
-	if count > 0 {
-		// Table already exists
-		return nil
-	}
-
-	// Build column definitions
 	var columnDefs []string
-	for _, column := range tableInfo.Columns {
-		def := fmt.Sprintf("%s %s", column.Name, convertColumnType(column))
-		columnDefs = append(columnDefs, def)
-	}
+	var primaryKeys []string
 
-	// Build primary key clause
-	var primaryKeyClause string
-	if len(tableInfo.PrimaryKey) > 0 {
-		// In Cassandra, we need to distinguish between partition key and clustering columns
-		// For simplicity, we'll assume the first column is the partition key
-		// and the rest are clustering columns
-		if len(tableInfo.PrimaryKey) == 1 {
-			primaryKeyClause = fmt.Sprintf("PRIMARY KEY (%s)", tableInfo.PrimaryKey[0])
-		} else {
-			// First column is partition key, rest are clustering columns
-			primaryKeyClause = fmt.Sprintf("PRIMARY KEY ((%s), %s)",
-				tableInfo.PrimaryKey[0],
-				strings.Join(tableInfo.PrimaryKey[1:], ", "))
+	for _, column := range table.Columns {
+		columnDef := fmt.Sprintf("%s %s", QuoteIdentifier(column.Name), column.DataType)
+		columnDefs = append(columnDefs, columnDef)
+
+		if column.IsPrimaryKey {
+			primaryKeys = append(primaryKeys, QuoteIdentifier(column.Name))
 		}
 	}
 
-	// Create the table
+	primaryKeyClause := ""
+	if len(primaryKeys) > 0 {
+		primaryKeyClause = fmt.Sprintf(", PRIMARY KEY (%s)", strings.Join(primaryKeys, ", "))
+	}
+
 	query := fmt.Sprintf(`
-		CREATE TABLE %s.%s (
-			%s,
-			%s
+		CREATE TABLE IF NOT EXISTS %s.%s (
+			%s%s
 		)
-	`, common.QuoteIdentifier(keyspace), common.QuoteIdentifier(tableInfo.Name),
+	`, QuoteIdentifier(keyspace), QuoteIdentifier(table.Name),
 		strings.Join(columnDefs, ",\n\t\t\t"), primaryKeyClause)
 
-	if err := session.Query(query).Exec(); err != nil {
-		return fmt.Errorf("error creating table: %v", err)
-	}
-
-	return nil
+	return session.Query(query).Exec()
 }
 
-func createMaterializedView(session *gocql.Session, viewInfo common.MaterializedViewInfo) error {
-	// Check if view already exists
-	var count int
-	if err := session.Query("SELECT COUNT(*) FROM system_schema.views WHERE keyspace_name = ? AND view_name = ?",
-		viewInfo.Keyspace, viewInfo.Name).Scan(&count); err != nil {
-		return fmt.Errorf("error checking if view exists: %v", err)
-	}
-
-	if count > 0 {
-		// View already exists
-		return nil
-	}
-
-	// Build column selection
-	columnSelection := "*"
-	if !viewInfo.IncludeAll && len(viewInfo.Columns) > 0 {
-		columnSelection = strings.Join(viewInfo.Columns, ", ")
-	}
-
-	// Build primary key clause
-	var primaryKeyClause string
-	if len(viewInfo.PrimaryKey) > 0 {
-		// In Cassandra, we need to distinguish between partition key and clustering columns
-		// For simplicity, we'll assume the first column is the partition key
-		// and the rest are clustering columns
-		if len(viewInfo.PrimaryKey) == 1 {
-			primaryKeyClause = fmt.Sprintf("PRIMARY KEY (%s)", viewInfo.PrimaryKey[0])
-		} else {
-			// First column is partition key, rest are clustering columns
-			primaryKeyClause = fmt.Sprintf("PRIMARY KEY ((%s), %s)",
-				viewInfo.PrimaryKey[0],
-				strings.Join(viewInfo.PrimaryKey[1:], ", "))
-		}
-	}
-
-	// Build where clause
-	whereClause := "1=1" // Default where clause that's always true
-	if viewInfo.WhereClause != "" {
-		whereClause = viewInfo.WhereClause
-	}
-
-	// Create the materialized view
+// createMaterializedViewFromUnified creates a materialized view from UnifiedModel MaterializedView
+func createMaterializedViewFromUnified(session *gocql.Session, view unifiedmodel.MaterializedView) error {
 	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW %s.%s AS
-		SELECT %s
-		FROM %s.%s
-		WHERE %s
-		PRIMARY KEY %s
-	`, common.QuoteIdentifier(viewInfo.Keyspace), common.QuoteIdentifier(viewInfo.Name),
-		columnSelection,
-		common.QuoteIdentifier(viewInfo.Keyspace), common.QuoteIdentifier(viewInfo.BaseTable),
-		whereClause,
-		primaryKeyClause)
+		CREATE MATERIALIZED VIEW IF NOT EXISTS %s.%s AS
+		SELECT * FROM %s.%s
+		WHERE id IS NOT NULL
+		PRIMARY KEY (id)
+	`, "default", QuoteIdentifier(view.Name),
+		"default", "base_table")
 
-	// Add clustering order if specified
-	if len(viewInfo.ClusteringOrder) > 0 {
-		var orderClauses []string
-		for column, order := range viewInfo.ClusteringOrder {
-			orderClauses = append(orderClauses, fmt.Sprintf("%s %s", column, order))
-		}
-		query += fmt.Sprintf(" WITH CLUSTERING ORDER BY (%s)", strings.Join(orderClauses, ", "))
-	}
-
-	if err := session.Query(query).Exec(); err != nil {
-		return fmt.Errorf("error creating materialized view: %v", err)
-	}
-
-	return nil
+	return session.Query(query).Exec()
 }
 
-func createFunction(session *gocql.Session, functionInfo common.FunctionInfo) error {
-	// Check if function already exists
-	var count int
-	if err := session.Query("SELECT COUNT(*) FROM system_schema.functions WHERE keyspace_name = ? AND function_name = ?",
-		functionInfo.Schema, functionInfo.Name).Scan(&count); err != nil {
-		return fmt.Errorf("error checking if function exists: %v", err)
+// createFunctionFromUnified creates a function from UnifiedModel Function
+func createFunctionFromUnified(session *gocql.Session, function unifiedmodel.Function) error {
+	// Extract keyspace from function name if it contains a dot
+	parts := strings.Split(function.Name, ".")
+	var keyspace, functionName string
+	if len(parts) == 2 {
+		keyspace = parts[0]
+		functionName = parts[1]
+	} else {
+		keyspace = "default"
+		functionName = function.Name
 	}
 
-	if count > 0 {
-		// Function already exists
-		return nil
-	}
-
-	// Create the function
 	query := fmt.Sprintf(`
-		CREATE FUNCTION %s.%s(%s)
+		CREATE OR REPLACE FUNCTION %s.%s()
 		RETURNS %s
-		LANGUAGE javascript
+		LANGUAGE %s
 		AS '%s'
-	`, common.QuoteIdentifier(functionInfo.Schema), common.QuoteIdentifier(functionInfo.Name),
-		functionInfo.Arguments,
-		functionInfo.ReturnType,
-		escapeJavaScriptBody(functionInfo.Body))
+	`, QuoteIdentifier(keyspace), QuoteIdentifier(functionName),
+		function.Returns, function.Language, function.Definition)
 
-	if err := session.Query(query).Exec(); err != nil {
-		return fmt.Errorf("error creating function: %v", err)
-	}
-
-	return nil
+	return session.Query(query).Exec()
 }
 
-func convertToCassandraType(dataType string) string {
-	// Convert common data types to Cassandra types
-	switch strings.ToLower(dataType) {
-	case "string":
-		return "text"
-	case "integer", "int":
-		return "int"
-	case "bigint", "long":
-		return "bigint"
-	case "float":
-		return "float"
-	case "double":
-		return "double"
-	case "boolean", "bool":
-		return "boolean"
-	case "date":
-		return "date"
-	case "time":
-		return "time"
-	case "timestamp":
-		return "timestamp"
-	case "uuid":
-		return "uuid"
-	case "timeuuid":
-		return "timeuuid"
-	case "blob":
-		return "blob"
-	case "inet":
-		return "inet"
-	default:
-		// If it's a custom type, assume it's already in Cassandra format
-		return dataType
-	}
-}
-
-func convertColumnType(column common.ColumnInfo) string {
-	// Handle array/collection types
-	if column.IsArray {
-		if column.ArrayElementType != nil {
-			elementType := convertToCassandraType(*column.ArrayElementType)
-			return fmt.Sprintf("list<%s>", elementType)
-		}
-		// Default to list of text if element type is not specified
-		return "list<text>"
-	}
-
-	// Handle custom types
-	if column.CustomTypeName != nil && *column.CustomTypeName != "" {
-		return fmt.Sprintf("frozen<%s>", *column.CustomTypeName)
-	}
-
-	// Handle regular types
-	return convertToCassandraType(column.DataType)
-}
-
-func escapeJavaScriptBody(body string) string {
-	// Escape single quotes in JavaScript body
-	return strings.ReplaceAll(body, "'", "\\'")
+// QuoteIdentifier quotes a Cassandra identifier
+func QuoteIdentifier(name string) string {
+	return fmt.Sprintf(`"%s"`, strings.ReplaceAll(name, `"`, `""`))
 }

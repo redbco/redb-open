@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
 // CreateReplicationSource creates a replication source for a MariaDB table
@@ -130,8 +128,8 @@ func getReplicationChanges(db *sql.DB, tableName string, since time.Time) ([]Mar
 	if timestampColumn != "" {
 		// Get rows updated since last check
 		query = fmt.Sprintf("SELECT * FROM %s WHERE %s > ?",
-			common.QuoteIdentifier(tableName),
-			common.QuoteIdentifier(timestampColumn))
+			QuoteIdentifier(tableName),
+			QuoteIdentifier(timestampColumn))
 
 		rows, err := db.Query(query, since.Format("2006-01-02 15:04:05"))
 		if err != nil {

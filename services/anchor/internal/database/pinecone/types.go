@@ -1,22 +1,5 @@
 package pinecone
 
-// PineconeDetails contains information about a Pinecone vector database
-type PineconeDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	Environment      string `json:"environment"`
-	Region           string `json:"region"`
-}
-
-// PineconeSchema represents the schema of a Pinecone vector database
-type PineconeSchema struct {
-	Indexes     []PineconeIndexInfo      `json:"indexes"`
-	Collections []PineconeCollectionInfo `json:"collections"`
-}
-
 // PineconeIndexInfo represents information about a Pinecone index
 type PineconeIndexInfo struct {
 	Name           string            `json:"name"`

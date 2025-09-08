@@ -1,27 +1,56 @@
 package cassandra
 
-import "github.com/redbco/redb-open/services/anchor/internal/database/common"
+import (
+	"fmt"
+	"strings"
 
-// CassandraDetails contains information about a Cassandra database
-type CassandraDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	Keyspaces        int    `json:"keyspaces"`
-	Datacenter       string `json:"datacenter"`
-	ClusterName      string `json:"clusterName"`
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
+)
+
+// ConvertCassandraKeyspace converts KeyspaceInfo to unifiedmodel.Keyspace
+func ConvertCassandraKeyspace(keyspaceInfo KeyspaceInfo) unifiedmodel.Keyspace {
+	return unifiedmodel.Keyspace{
+		Name:                keyspaceInfo.Name,
+		ReplicationStrategy: keyspaceInfo.ReplicationStrategy,
+		ReplicationOptions:  keyspaceInfo.ReplicationOptions,
+		DurableWrites:       keyspaceInfo.DurableWrites,
+	}
 }
 
-// CassandraSchema represents the schema of a Cassandra database
-type CassandraSchema struct {
-	Keyspaces         []KeyspaceInfo                `json:"keyspaces"`
-	Tables            []common.TableInfo            `json:"tables"`
-	Types             []CassandraType               `json:"types"`
-	Functions         []common.FunctionInfo         `json:"functions"`
-	Aggregates        []AggregateInfo               `json:"aggregates"`
-	MaterializedViews []common.MaterializedViewInfo `json:"materializedViews"`
+// ConvertCassandraType converts CassandraType to unifiedmodel.Type
+func ConvertCassandraType(cassType CassandraType) unifiedmodel.Type {
+	fields := make(map[string]unifiedmodel.Property)
+	for _, field := range cassType.Fields {
+		fields[field.Name] = unifiedmodel.Property{
+			Name: field.Name,
+			Type: field.DataType,
+		}
+	}
+
+	return unifiedmodel.Type{
+		Name:     cassType.Name,
+		Category: "user_defined",
+		Definition: map[string]any{
+			"keyspace": cassType.Keyspace,
+			"fields":   fields,
+		},
+	}
+}
+
+// ConvertCassandraAggregate converts AggregateInfo to unifiedmodel.Function
+func ConvertCassandraAggregate(aggregateInfo AggregateInfo) unifiedmodel.Function {
+	return unifiedmodel.Function{
+		Name:     aggregateInfo.Name,
+		Language: "cql", // Cassandra uses CQL
+		Returns:  aggregateInfo.ReturnType,
+		Definition: fmt.Sprintf("AGGREGATE %s(%s) SFUNC %s STYPE %s FINALFUNC %s INITCOND %s",
+			aggregateInfo.Name,
+			strings.Join(aggregateInfo.ArgumentTypes, ", "),
+			aggregateInfo.StateFunc,
+			aggregateInfo.StateType,
+			aggregateInfo.FinalFunc,
+			aggregateInfo.InitCond),
+	}
 }
 
 // KeyspaceInfo represents a Cassandra keyspace

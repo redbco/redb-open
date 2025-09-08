@@ -10,11 +10,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a PostgreSQL database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -64,7 +64,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           pool,
 		DatabaseType: "postgres",
 		DatabaseID:   config.DatabaseID,
@@ -74,7 +74,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a PostgreSQL instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -124,7 +124,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           pool,
 		InstanceType: "postgres",
 		InstanceID:   config.InstanceID,
@@ -133,15 +133,15 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 	}, nil
 }
 
-// DiscoverDetails fetches the details of a PostgreSQL database
-func DiscoverDetails(db interface{}) (*PostgresDetails, error) {
+// DiscoverDetails fetches basic details of a PostgreSQL database for metadata purposes
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	pool, ok := db.(*pgxpool.Pool)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details PostgresDetails
-	details.DatabaseType = "postgres"
+	details := make(map[string]interface{})
+	details["databaseType"] = "postgres"
 
 	// Get server version
 	var version string
@@ -149,7 +149,7 @@ func DiscoverDetails(db interface{}) (*PostgresDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching version: %v", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Get database size
 	var size int64
@@ -158,7 +158,7 @@ func DiscoverDetails(db interface{}) (*PostgresDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database size: %v", err)
 	}
-	details.DatabaseSize = size
+	details["databaseSize"] = size
 
 	// Get unique identifier (OID)
 	var oid string
@@ -167,19 +167,19 @@ func DiscoverDetails(db interface{}) (*PostgresDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database OID: %v", err)
 	}
-	details.UniqueIdentifier = oid
+	details["uniqueIdentifier"] = oid
 
 	// Get database edition
 	if strings.Contains(strings.ToLower(version), "enterprise") {
-		details.DatabaseEdition = "enterprise"
+		details["databaseEdition"] = "enterprise"
 	} else {
-		details.DatabaseEdition = "community"
+		details["databaseEdition"] = "community"
 	}
 
-	return &details, nil
+	return details, nil
 }
 
-func getSslMode(config common.DatabaseConfig) string {
+func getSslMode(config dbclient.DatabaseConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}
@@ -189,7 +189,7 @@ func getSslMode(config common.DatabaseConfig) string {
 	return "verify-full"
 }
 
-func getInstanceSslMode(config common.InstanceConfig) string {
+func getInstanceSslMode(config dbclient.InstanceConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}

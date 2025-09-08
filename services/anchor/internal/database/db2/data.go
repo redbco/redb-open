@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
 // FetchData retrieves data from a specified table
@@ -23,7 +21,7 @@ func FetchData(db *sql.DB, tableName string, limit int) ([]map[string]interface{
 	// Build and execute query
 	query := fmt.Sprintf("SELECT %s FROM %s",
 		strings.Join(columns, ", "),
-		common.QuoteIdentifier(tableName))
+		QuoteIdentifier(tableName))
 	if limit > 0 {
 		query += fmt.Sprintf(" FETCH FIRST %d ROWS ONLY", limit)
 	}
@@ -86,7 +84,7 @@ func InsertData(db *sql.DB, tableName string, data []map[string]interface{}) (in
 	// Prepare the statement
 	stmt, err := tx.Prepare(fmt.Sprintf(
 		"INSERT INTO %s (%s) VALUES (%s)",
-		common.QuoteIdentifier(tableName),
+		QuoteIdentifier(tableName),
 		strings.Join(columns, ", "),
 		strings.Join(placeholders, ", "),
 	))

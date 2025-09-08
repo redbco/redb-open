@@ -17,17 +17,62 @@ const (
 	ObjectTypeMaterializedView ObjectType = "materialized_view"
 	ObjectTypeTemporaryTable   ObjectType = "temporary_table"
 	ObjectTypeMemoryTable      ObjectType = "memory_table"
+	ObjectTypeExternalTable    ObjectType = "external_table"
+	ObjectTypeForeignTable     ObjectType = "foreign_table"
+
 	// Graph types
 	ObjectTypeNode         ObjectType = "node"
 	ObjectTypeRelationship ObjectType = "relationship"
 	ObjectTypeGraph        ObjectType = "graph"
+
 	// Vector types
 	ObjectTypeVector      ObjectType = "vector"
 	ObjectTypeVectorIndex ObjectType = "vector_index"
 	ObjectTypeEmbedding   ObjectType = "embedding"
+
 	// Search types
 	ObjectTypeSearchIndex ObjectType = "search_index"
 	ObjectTypeDocument    ObjectType = "document"
+
+	// Structural definition objects
+	ObjectTypeColumn   ObjectType = "column"
+	ObjectTypeField    ObjectType = "field"
+	ObjectTypeProperty ObjectType = "property"
+	ObjectTypeType     ObjectType = "type"
+	ObjectTypeSequence ObjectType = "sequence"
+
+	// Integrity and performance objects
+	ObjectTypeIndex      ObjectType = "index"
+	ObjectTypeConstraint ObjectType = "constraint"
+
+	// Executable code objects
+	ObjectTypeFunction  ObjectType = "function"
+	ObjectTypeProcedure ObjectType = "procedure"
+	ObjectTypeTrigger   ObjectType = "trigger"
+	ObjectTypeAggregate ObjectType = "aggregate"
+	ObjectTypeOperator  ObjectType = "operator"
+	ObjectTypePackage   ObjectType = "package"
+	ObjectTypeRule      ObjectType = "rule"
+
+	// Security and access control
+	ObjectTypeUser   ObjectType = "user"
+	ObjectTypeRole   ObjectType = "role"
+	ObjectTypeGrant  ObjectType = "grant"
+	ObjectTypePolicy ObjectType = "policy"
+
+	// Physical storage
+	ObjectTypeTablespace ObjectType = "tablespace"
+	ObjectTypeDatafile   ObjectType = "datafile"
+
+	// Connectivity and integration
+	ObjectTypeServer             ObjectType = "server"
+	ObjectTypeConnection         ObjectType = "connection"
+	ObjectTypeForeignDataWrapper ObjectType = "foreign_data_wrapper"
+	ObjectTypeUserMapping        ObjectType = "user_mapping"
+
+	// Extensions and customization
+	ObjectTypeExtension ObjectType = "extension"
+	ObjectTypePlugin    ObjectType = "plugin"
 )
 
 type ConstraintType string
@@ -134,6 +179,7 @@ type UnifiedModel struct {
 	Partitions    map[string]Partition    `json:"partitions"`
 	SubPartitions map[string]SubPartition `json:"sub_partitions"`
 	Shards        map[string]Shard        `json:"shards"`
+	Keyspaces     map[string]Keyspace     `json:"keyspaces"`
 	Namespaces    map[string]Namespace    `json:"namespaces"`
 
 	// Structural definition objects
@@ -358,6 +404,7 @@ type TransientTable struct {
 type View struct {
 	Name       string            `json:"name"`
 	Definition string            `json:"definition"`
+	Comment    string            `json:"comment,omitempty"`
 	Columns    map[string]Column `json:"columns,omitempty"`
 	Options    map[string]any    `json:"options,omitempty"`
 }
@@ -484,6 +531,14 @@ type Shard struct {
 	Strategy string         `json:"strategy,omitempty"`
 	Key      []string       `json:"key,omitempty"`
 	Options  map[string]any `json:"options,omitempty"`
+}
+
+// TODO: This should be refactored (currently used by Cassandra)
+type Keyspace struct {
+	Name                string            `json:"name"`
+	ReplicationStrategy string            `json:"replicationStrategy"`
+	ReplicationOptions  map[string]string `json:"replicationOptions"`
+	DurableWrites       bool              `json:"durableWrites"`
 }
 
 type Namespace struct {
@@ -665,6 +720,7 @@ type PackageBody struct {
 
 type Module struct {
 	Name     string         `json:"name"`
+	Comment  string         `json:"comment,omitempty"`
 	Language string         `json:"language,omitempty"`
 	Code     string         `json:"code,omitempty"`
 	Options  map[string]any `json:"options,omitempty"`

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // SnowflakeStreamDetails contains information about a Snowflake stream
@@ -26,8 +26,8 @@ type SnowflakeStreamDetails struct {
 // CreateReplicationSource sets up a replication source using Snowflake streams
 func CreateReplicationSource(db *sql.DB, tableName string, databaseID string, eventHandler func(map[string]interface{})) (*SnowflakeStreamDetails, error) {
 	// Generate unique names for stream and task
-	streamName := fmt.Sprintf("stream_%s_%s", databaseID, common.GenerateUniqueID())
-	taskName := fmt.Sprintf("task_%s_%s", databaseID, common.GenerateUniqueID())
+	streamName := fmt.Sprintf("stream_%s_%s", databaseID, dbclient.GenerateUniqueID())
+	taskName := fmt.Sprintf("task_%s_%s", databaseID, dbclient.GenerateUniqueID())
 
 	// Get current schema
 	var schemaName string

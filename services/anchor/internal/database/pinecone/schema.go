@@ -8,15 +8,21 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 )
 
-// DiscoverSchema fetches the current schema of a Pinecone database
-// This is a more detailed implementation than the one in connection.go
-func DiscoverSchema(client *PineconeClient) (*PineconeSchema, error) {
-	schema := &PineconeSchema{}
+// DiscoverSchema fetches the current schema of a Pinecone database and returns a UnifiedModel
+func DiscoverSchema(client *PineconeClient) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:  dbcapabilities.Pinecone,
+		VectorIndexes: make(map[string]unifiedmodel.VectorIndex),
+		Collections:   make(map[string]unifiedmodel.Collection),
+		Vectors:       make(map[string]unifiedmodel.Vector),
+		Embeddings:    make(map[string]unifiedmodel.Embedding),
+		Namespaces:    make(map[string]unifiedmodel.Namespace),
+	}
 
 	// Get indexes
 	indexNames, err := listIndexes(client)
@@ -24,7 +30,7 @@ func DiscoverSchema(client *PineconeClient) (*PineconeSchema, error) {
 		return nil, fmt.Errorf("error fetching indexes: %v", err)
 	}
 
-	// Get details for each index
+	// Get details for each index and convert to unified model
 	for _, indexName := range indexNames {
 		indexDetails, err := describeIndex(client, indexName)
 		if err != nil {
@@ -61,390 +67,231 @@ func DiscoverSchema(client *PineconeClient) (*PineconeSchema, error) {
 			MetadataConfig: indexDetails.MetadataConfig,
 		}
 
-		schema.Indexes = append(schema.Indexes, indexInfo)
+		// Convert to vector index directly
+		vectorIndex := unifiedmodel.VectorIndex{
+			Name:      indexInfo.Name,
+			Dimension: indexInfo.Dimension,
+			Metric:    indexInfo.Metric,
+			Parameters: map[string]any{
+				"pods":         indexInfo.Pods,
+				"replicas":     indexInfo.Replicas,
+				"pod_type":     indexInfo.PodType,
+				"vector_count": indexInfo.VectorCount,
+				"index_size":   indexInfo.IndexSize,
+				"environment":  indexInfo.Environment,
+				"region":       indexInfo.Region,
+			},
+		}
+		um.VectorIndexes[indexName] = vectorIndex
+
+		// Create namespaces for this index
+		for _, namespace := range indexStats.Namespaces {
+			um.Namespaces[namespace] = unifiedmodel.Namespace{
+				Name: namespace,
+			}
+		}
 	}
 
 	// Get collections (if supported by the Pinecone version)
 	collections, err := listCollections(client)
 	if err == nil {
 		for _, collName := range collections {
-			collDetails, err := describeCollection(client, collName)
+			_, err := describeCollection(client, collName)
 			if err != nil {
 				continue // Skip this collection if we can't get details
 			}
-			schema.Collections = append(schema.Collections, collDetails)
-		}
-	}
 
-	return schema, nil
-}
-
-// CreateStructure creates database objects based on the provided parameters
-func CreateStructure(client *PineconeClient, params common.StructureParams) error {
-	// For Pinecone, we'll create indexes based on the provided parameters
-	// Extract Pinecone-specific parameters from the generic structure
-
-	// Check if we have any indexes to create
-	if len(params.Tables) == 0 {
-		return fmt.Errorf("no indexes specified for creation")
-	}
-
-	// In Pinecone, we'll treat tables as indexes
-	for _, table := range params.Tables {
-		// Extract index parameters from table info
-		dimension := 0
-		metric := "cosine"
-		podType := "p1.x1"
-		pods := 1
-
-		// Look for dimension in table metadata or columns
-		for _, column := range table.Columns {
-			if column.Name == "dimension" && column.ColumnDefault != nil {
-				// Try to parse dimension from column default
-				fmt.Sscanf(*column.ColumnDefault, "%d", &dimension)
+			// Add collection to unified model
+			um.Collections[collName] = unifiedmodel.Collection{
+				Name: collName,
 			}
 		}
+	}
 
-		// If dimension is still 0, use a default value
-		if dimension == 0 {
-			dimension = 1536 // Common dimension for embeddings
+	return um, nil
+}
+
+// CreateStructure creates database objects from a UnifiedModel
+func CreateStructure(client *PineconeClient, um *unifiedmodel.UnifiedModel) error {
+	if um == nil {
+		return fmt.Errorf("unified model cannot be nil")
+	}
+
+	// Create vector indexes from UnifiedModel
+	for _, vectorIndex := range um.VectorIndexes {
+		if err := createVectorIndexFromUnified(client, vectorIndex); err != nil {
+			return fmt.Errorf("error creating vector index %s: %v", vectorIndex.Name, err)
 		}
+	}
 
-		// Create the index
-		if err := createIndex(client, table.Name, dimension, metric, podType, pods); err != nil {
-			return fmt.Errorf("error creating index %s: %v", table.Name, err)
+	// Create collections from UnifiedModel (if any)
+	for _, collection := range um.Collections {
+		if err := createCollectionFromUnified(client, collection); err != nil {
+			return fmt.Errorf("error creating collection %s: %v", collection.Name, err)
 		}
 	}
 
 	return nil
 }
 
-// createIndex creates a new Pinecone index
-func createIndex(client *PineconeClient, name string, dimension int, metric string, podType string, pods int) error {
-	// Check if index already exists
-	indexes, err := listIndexes(client)
+// createIndex creates a Pinecone index with the specified parameters
+func createIndex(client *PineconeClient, name string, dimension int, metric, podType string, pods int) error {
+	// Create index request payload
+	indexRequest := map[string]interface{}{
+		"name":      name,
+		"dimension": dimension,
+		"metric":    metric,
+		"pod_type":  podType,
+		"pods":      pods,
+	}
+
+	// Convert to JSON
+	jsonData, err := json.Marshal(indexRequest)
 	if err != nil {
-		return fmt.Errorf("error checking existing indexes: %v", err)
+		return fmt.Errorf("error marshaling index request: %v", err)
 	}
 
-	for _, idx := range indexes {
-		if idx == name {
-			return fmt.Errorf("index %s already exists", name)
-		}
-	}
-
-	// Create index request
-	createReq := struct {
-		Name      string `json:"name"`
-		Dimension int    `json:"dimension"`
-		Metric    string `json:"metric"`
-		PodType   string `json:"pod_type"`
-		Pods      int    `json:"pods"`
-	}{
-		Name:      name,
-		Dimension: dimension,
-		Metric:    metric,
-		PodType:   podType,
-		Pods:      pods,
-	}
-
-	// Convert request to JSON
-	createJSON, err := json.Marshal(createReq)
-	if err != nil {
-		return fmt.Errorf("error marshaling create request: %v", err)
-	}
-
-	// Create HTTP request
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/databases", client.BaseURL), bytes.NewBuffer(createJSON))
+	// Make HTTP request to create index
+	url := fmt.Sprintf("%s/databases", client.BaseURL)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("error creating request: %v", err)
 	}
 
-	req.Header.Set("Api-Key", client.APIKey)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Api-Key", client.APIKey)
 
-	// Execute request
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("error executing create index: %v", err)
+		return fmt.Errorf("error making request: %v", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("create index failed with status %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("error creating index: %s (status: %d)", string(body), resp.StatusCode)
 	}
 
-	// Wait for index to be ready
+	// Wait for index to be ready (Pinecone indexes take time to initialize)
 	return waitForIndexReady(client, name)
 }
 
-// waitForIndexReady waits for an index to be ready
+// waitForIndexReady waits for a Pinecone index to become ready
 func waitForIndexReady(client *PineconeClient, indexName string) error {
-	maxRetries := 30
-	retryInterval := 10 * time.Second
-
-	for i := 0; i < maxRetries; i++ {
-		indexDetails, err := describeIndex(client, indexName)
+	maxAttempts := 30
+	for i := 0; i < maxAttempts; i++ {
+		status, err := getIndexStatus(client, indexName)
 		if err != nil {
-			// If we can't describe the index, it might not be created yet
-			time.Sleep(retryInterval)
-			continue
+			return fmt.Errorf("error checking index status: %v", err)
 		}
 
-		if indexDetails.Status == "Ready" {
+		if status == "Ready" {
 			return nil
 		}
 
-		time.Sleep(retryInterval)
+		time.Sleep(10 * time.Second) // Wait 10 seconds between checks
 	}
 
-	return fmt.Errorf("timeout waiting for index %s to be ready", indexName)
+	return fmt.Errorf("index %s did not become ready within timeout", indexName)
 }
 
-// createCollection creates a new Pinecone collection
-func CreateCollection(client *PineconeClient, name string, sourceIndex string) error {
-	// Check if collection already exists
-	collections, err := listCollections(client)
-	if err == nil {
-		for _, coll := range collections {
-			if coll == name {
-				return fmt.Errorf("collection %s already exists", name)
-			}
+// getIndexStatus gets the current status of a Pinecone index
+func getIndexStatus(client *PineconeClient, indexName string) (string, error) {
+	url := fmt.Sprintf("%s/databases/%s", client.BaseURL, indexName)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %v", err)
+	}
+
+	req.Header.Set("Api-Key", client.APIKey)
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("error making request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("error getting index status: %d", resp.StatusCode)
+	}
+
+	var indexInfo map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&indexInfo); err != nil {
+		return "", fmt.Errorf("error decoding response: %v", err)
+	}
+
+	if status, ok := indexInfo["status"].(map[string]interface{}); ok {
+		if state, ok := status["state"].(string); ok {
+			return state, nil
 		}
 	}
 
-	// Create collection request
-	createReq := struct {
-		Name        string `json:"name"`
-		SourceIndex string `json:"source"`
-	}{
-		Name:        name,
-		SourceIndex: sourceIndex,
-	}
-
-	// Convert request to JSON
-	createJSON, err := json.Marshal(createReq)
-	if err != nil {
-		return fmt.Errorf("error marshaling create collection request: %v", err)
-	}
-
-	// Create HTTP request
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/collections", client.BaseURL), bytes.NewBuffer(createJSON))
-	if err != nil {
-		return fmt.Errorf("error creating request: %v", err)
-	}
-
-	req.Header.Set("Api-Key", client.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	// Execute request
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("error executing create collection: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("create collection failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
+	return "Unknown", nil
 }
 
-// deleteIndex deletes a Pinecone index
-func deleteIndex(client *PineconeClient, indexName string) error {
-	// Create HTTP request
-	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/databases/%s", client.BaseURL, indexName), nil)
-	if err != nil {
-		return fmt.Errorf("error creating request: %v", err)
+// createVectorIndexFromUnified creates a vector index from UnifiedModel VectorIndex
+func createVectorIndexFromUnified(client *PineconeClient, vectorIndex unifiedmodel.VectorIndex) error {
+	if vectorIndex.Name == "" {
+		return fmt.Errorf("vector index name cannot be empty")
 	}
 
-	req.Header.Set("Api-Key", client.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	// Execute request
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("error executing delete index: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("delete index failed with status %d: %s", resp.StatusCode, string(body))
+	if vectorIndex.Dimension == 0 {
+		return fmt.Errorf("vector index dimension must be specified")
 	}
 
-	return nil
-}
-
-// deleteCollection deletes a Pinecone collection
-func deleteCollection(client *PineconeClient, collectionName string) error {
-	// Create HTTP request
-	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/collections/%s", client.BaseURL, collectionName), nil)
-	if err != nil {
-		return fmt.Errorf("error creating request: %v", err)
+	// Extract Pinecone-specific parameters from Options
+	metric := vectorIndex.Metric
+	if metric == "" {
+		metric = "cosine" // Default metric
 	}
 
-	req.Header.Set("Api-Key", client.APIKey)
-	req.Header.Set("Content-Type", "application/json")
+	podType := "p1.x1" // Default pod type
+	pods := 1          // Default number of pods
 
-	// Execute request
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("error executing delete collection: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("delete collection failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
-// configureIndex updates the configuration of a Pinecone index
-func configureIndex(client *PineconeClient, indexName string, pods int, replicas int, podType string) error {
-	// Create configure request
-	configReq := struct {
-		Replicas int    `json:"replicas,omitempty"`
-		PodType  string `json:"pod_type,omitempty"`
-	}{
-		Replicas: replicas,
-		PodType:  podType,
-	}
-
-	// Convert request to JSON
-	configJSON, err := json.Marshal(configReq)
-	if err != nil {
-		return fmt.Errorf("error marshaling configure request: %v", err)
-	}
-
-	// Create HTTP request
-	req, err := http.NewRequest("PATCH", fmt.Sprintf("%s/databases/%s", client.BaseURL, indexName), bytes.NewBuffer(configJSON))
-	if err != nil {
-		return fmt.Errorf("error creating request: %v", err)
-	}
-
-	req.Header.Set("Api-Key", client.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	// Execute request
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("error executing configure index: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("configure index failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
-// These functions are included for compatibility with the PostgreSQL interface
-// but they're not fully implemented for Pinecone
-
-func discoverTablesAndColumns(pool *pgxpool.Pool) (map[string]*common.TableInfo, []string, error) {
-	return nil, nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func fetchPartitioningInfo(pool *pgxpool.Pool, table *common.TableInfo) error {
-	return fmt.Errorf("not implemented for Pinecone")
-}
-
-func getSchemas(pool *pgxpool.Pool) ([]common.DatabaseSchemaInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func discoverEnumTypes(pool *pgxpool.Pool) ([]common.EnumInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func getFunctions(pool *pgxpool.Pool) ([]common.FunctionInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func getTriggers(pool *pgxpool.Pool) ([]common.TriggerInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func getSequences(pool *pgxpool.Pool) ([]common.SequenceInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func getExtensions(pool *pgxpool.Pool) ([]common.ExtensionInfo, error) {
-	return nil, fmt.Errorf("not implemented for Pinecone")
-}
-
-func CreateTable(tx pgx.Tx, tableInfo common.TableInfo, enumTypes []common.EnumInfo) error {
-	return fmt.Errorf("not implemented for Pinecone")
-}
-
-func AddTableConstraints(tx pgx.Tx, tableInfo common.TableInfo) error {
-	return fmt.Errorf("not implemented for Pinecone")
-}
-
-func createEnumType(tx pgx.Tx, enumName string, enumValues []string) error {
-	return fmt.Errorf("not implemented for Pinecone")
-}
-
-// ConvertToCommonSchema converts a PineconeSchema to a common.SchemaInfo
-// This is useful for compatibility with systems that expect the common schema format
-func ConvertToCommonSchema(pineconeSchema *PineconeSchema) *common.SchemaInfo {
-	commonSchema := &common.SchemaInfo{
-		SchemaType: "pinecone",
-		Tables:     make([]common.TableInfo, 0, len(pineconeSchema.Indexes)),
-	}
-
-	// Convert indexes to tables
-	for _, index := range pineconeSchema.Indexes {
-		tableInfo := common.TableInfo{
-			Name:      index.Name,
-			Schema:    "default",
-			TableType: "pinecone.index",
-			Columns: []common.ColumnInfo{
-				{
-					Name:         "id",
-					DataType:     "string",
-					IsPrimaryKey: true,
-					IsNullable:   false,
-				},
-				{
-					Name:       "values",
-					DataType:   "vector",
-					IsNullable: false,
-				},
-				{
-					Name:       "metadata",
-					DataType:   "json",
-					IsNullable: true,
-				},
-			},
-			PrimaryKey: []string{"id"},
+	if vectorIndex.Parameters != nil {
+		if pt, ok := vectorIndex.Parameters["pod_type"].(string); ok {
+			podType = pt
 		}
-
-		// Add dimension as a column
-		dimensionColumn := common.ColumnInfo{
-			Name:       "dimension",
-			DataType:   "integer",
-			IsNullable: false,
+		if p, ok := vectorIndex.Parameters["pods"].(int); ok {
+			pods = p
 		}
-		dimensionDefault := fmt.Sprintf("%d", index.Dimension)
-		dimensionColumn.ColumnDefault = &dimensionDefault
-		tableInfo.Columns = append(tableInfo.Columns, dimensionColumn)
-
-		commonSchema.Tables = append(commonSchema.Tables, tableInfo)
 	}
 
-	return commonSchema
+	// Create the index using Pinecone API
+	return createIndex(client, vectorIndex.Name, vectorIndex.Dimension, metric, podType, pods)
+}
+
+// createCollectionFromUnified creates a collection from UnifiedModel Collection
+func createCollectionFromUnified(client *PineconeClient, collection unifiedmodel.Collection) error {
+	if collection.Name == "" {
+		return fmt.Errorf("collection name cannot be empty")
+	}
+
+	// For Pinecone, collections are typically created as indexes
+	// We'll create a vector index with default parameters
+	dimension := 1536 // Default dimension
+	metric := "cosine"
+	podType := "p1.x1"
+	pods := 1
+
+	// Extract parameters from collection options if available
+	if collection.Options != nil {
+		if d, ok := collection.Options["dimension"].(int); ok {
+			dimension = d
+		}
+		if m, ok := collection.Options["metric"].(string); ok {
+			metric = m
+		}
+		if pt, ok := collection.Options["pod_type"].(string); ok {
+			podType = pt
+		}
+		if p, ok := collection.Options["pods"].(int); ok {
+			pods = p
+		}
+	}
+
+	// Create the index
+	return createIndex(client, collection.Name, dimension, metric, podType, pods)
 }

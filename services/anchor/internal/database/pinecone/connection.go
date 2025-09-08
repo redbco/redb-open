@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 const (
@@ -20,7 +20,7 @@ const (
 )
 
 // Connect establishes a connection to a Pinecone database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	provider := config.ConnectionType
 	if provider == "" {
 		provider = config.DatabaseVendor
@@ -62,7 +62,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error connecting to Pinecone: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "pinecone",
 		DatabaseID:   config.DatabaseID,
@@ -72,7 +72,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Pinecone instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	provider := config.ConnectionType
 	if provider == "" {
 		provider = config.DatabaseVendor
@@ -114,7 +114,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error connecting to Pinecone: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           client,
 		InstanceType: "pinecone",
 		InstanceID:   config.InstanceID,
@@ -124,19 +124,18 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of a Pinecone database
-func DiscoverDetails(db interface{}) (*PineconeDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	client, ok := db.(*PineconeClient)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	details := &PineconeDetails{
-		DatabaseType: "pinecone",
-		Environment:  client.Environment,
-	}
+	details := make(map[string]interface{})
+	details["databaseType"] = "pinecone"
+	details["environment"] = client.Environment
 
 	// Get version information
-	details.Version = "1.0" // Pinecone doesn't expose version info directly
+	details["version"] = "1.0" // Pinecone doesn't expose version info directly
 
 	// Get database size (sum of all indexes)
 	indexes, err := listIndexes(client)
@@ -152,16 +151,16 @@ func DiscoverDetails(db interface{}) (*PineconeDetails, error) {
 		}
 		totalSize += indexStats.IndexSize
 	}
-	details.DatabaseSize = totalSize
+	details["databaseSize"] = totalSize
 
 	// Generate a unique identifier
-	details.UniqueIdentifier = client.ProjectID
+	details["uniqueIdentifier"] = client.ProjectID
 
 	// Determine edition (free or standard)
 	if strings.Contains(client.Environment, "free") {
-		details.DatabaseEdition = "free"
+		details["databaseEdition"] = "free"
 	} else {
-		details.DatabaseEdition = "standard"
+		details["databaseEdition"] = "standard"
 	}
 
 	return details, nil

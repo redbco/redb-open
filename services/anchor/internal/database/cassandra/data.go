@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/gocql/gocql"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
 // FetchData retrieves data from a specified table
@@ -29,29 +28,35 @@ func FetchData(session *gocql.Session, tableName string, limit int) ([]map[strin
 		return nil, fmt.Errorf("keyspace not specified and no default keyspace in session")
 	}
 
-	// Get columns for the table
-	columns, err := getTableColumns(session, keyspace, table)
-	if err != nil {
+	// Get columns for the table using a simple query
+	var columns []string
+	iter := session.Query(`
+		SELECT column_name FROM system_schema.columns 
+		WHERE keyspace_name = ? AND table_name = ?`,
+		keyspace, table).Iter()
+
+	var columnName string
+	for iter.Scan(&columnName) {
+		columns = append(columns, columnName)
+	}
+	if err := iter.Close(); err != nil {
 		return nil, err
 	}
 
-	// Build column names list
-	var columnNames []string
-	for _, col := range columns {
-		columnNames = append(columnNames, col.Name)
-	}
+	// Use the columns we got from the query
+	columnNames := columns
 
 	// Build and execute query
 	query := fmt.Sprintf("SELECT %s FROM %s.%s",
 		strings.Join(columnNames, ", "),
-		common.QuoteIdentifier(keyspace),
-		common.QuoteIdentifier(table))
+		QuoteIdentifier(keyspace),
+		QuoteIdentifier(table))
 
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
 
-	iter := session.Query(query).Iter()
+	iter = session.Query(query).Iter()
 
 	// Create a result slice
 	var result []map[string]interface{}
@@ -115,8 +120,8 @@ func InsertData(session *gocql.Session, tableName string, data []map[string]inte
 	// Prepare the statement
 	query := fmt.Sprintf(
 		"INSERT INTO %s.%s (%s) VALUES (%s)",
-		common.QuoteIdentifier(keyspace),
-		common.QuoteIdentifier(table),
+		QuoteIdentifier(keyspace),
+		QuoteIdentifier(table),
 		strings.Join(columns, ", "),
 		strings.Join(placeholders, ", "),
 	)
@@ -182,8 +187,8 @@ func UpsertData(session *gocql.Session, tableName string, data []map[string]inte
 	// but for general upsert behavior, we use regular INSERT
 	query := fmt.Sprintf(
 		"INSERT INTO %s.%s (%s) VALUES (%s)",
-		common.QuoteIdentifier(keyspace),
-		common.QuoteIdentifier(table),
+		QuoteIdentifier(keyspace),
+		QuoteIdentifier(table),
 		strings.Join(columns, ", "),
 		strings.Join(placeholders, ", "),
 	)
@@ -268,8 +273,8 @@ func UpdateData(session *gocql.Session, tableName string, data []map[string]inte
 	// Prepare the query
 	query := fmt.Sprintf(
 		"UPDATE %s.%s SET %s WHERE %s",
-		common.QuoteIdentifier(keyspace),
-		common.QuoteIdentifier(table),
+		QuoteIdentifier(keyspace),
+		QuoteIdentifier(table),
 		strings.Join(setColumns, " = ?, ")+" = ?",
 		strings.Join(whereColumns, " = ? AND ")+" = ?",
 	)
@@ -330,8 +335,8 @@ func WipeDatabase(session *gocql.Session) error {
 	// Truncate all tables
 	for _, table := range tables {
 		query := fmt.Sprintf("TRUNCATE TABLE %s.%s",
-			common.QuoteIdentifier(keyspace),
-			common.QuoteIdentifier(table))
+			QuoteIdentifier(keyspace),
+			QuoteIdentifier(table))
 
 		if err := session.Query(query).Exec(); err != nil {
 			return fmt.Errorf("error truncating table %s: %v", table, err)

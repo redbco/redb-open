@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
 // FetchData retrieves data from a specified table
@@ -23,7 +21,7 @@ func FetchData(db *sql.DB, tableName string, limit int) ([]map[string]interface{
 	// Build and execute query
 	query := fmt.Sprintf("SELECT %s FROM %s",
 		strings.Join(columns, ", "),
-		common.QuoteIdentifier(tableName))
+		QuoteIdentifier(tableName))
 	if limit > 0 {
 		query = fmt.Sprintf("%s LIMIT %d", query, limit)
 	}
@@ -107,7 +105,7 @@ func InsertData(db *sql.DB, tableName string, data []map[string]interface{}) (in
 	}
 
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-		common.QuoteIdentifier(tableName),
+		QuoteIdentifier(tableName),
 		strings.Join(columns, ", "),
 		strings.Join(placeholders, ", "))
 
@@ -175,7 +173,7 @@ func WipeDatabase(db *sql.DB) error {
 			return err
 		}
 
-		_, err = db.Exec(fmt.Sprintf("TRUNCATE TABLE %s", common.QuoteIdentifier(tableName)))
+		_, err = db.Exec(fmt.Sprintf("TRUNCATE TABLE %s", QuoteIdentifier(tableName)))
 		if err != nil {
 			return fmt.Errorf("error truncating table %s: %v", tableName, err)
 		}
@@ -223,7 +221,7 @@ func BatchInsertData(db *sql.DB, tableName string, data []map[string]interface{}
 		// Build the multi-value insert query
 		var query strings.Builder
 		fmt.Fprintf(&query, "INSERT INTO %s (%s) VALUES ",
-			common.QuoteIdentifier(tableName),
+			QuoteIdentifier(tableName),
 			strings.Join(columns, ", "))
 
 		// Create placeholders for each row
@@ -345,14 +343,14 @@ func UpsertData(db *sql.DB, tableName string, data []map[string]interface{}, uni
 			}
 		}
 		if !isUnique {
-			updateSet = append(updateSet, fmt.Sprintf("%s = VALUES(%s)", common.QuoteIdentifier(col), common.QuoteIdentifier(col)))
+			updateSet = append(updateSet, fmt.Sprintf("%s = VALUES(%s)", QuoteIdentifier(col), QuoteIdentifier(col)))
 		}
 	}
 
 	// Prepare the query
 	query := fmt.Sprintf(
 		"INSERT INTO %s (%s) VALUES (%s) ON DUPLICATE KEY UPDATE %s",
-		common.QuoteIdentifier(tableName),
+		QuoteIdentifier(tableName),
 		strings.Join(columns, ", "),
 		strings.Join(placeholders, ", "),
 		strings.Join(updateSet, ", "),
@@ -420,7 +418,7 @@ func UpdateData(db *sql.DB, tableName string, data []map[string]interface{}, whe
 	// Build the WHERE clause
 	whereConditions := make([]string, len(whereColumns))
 	for i, col := range whereColumns {
-		whereConditions[i] = fmt.Sprintf("%s = ?", common.QuoteIdentifier(col))
+		whereConditions[i] = fmt.Sprintf("%s = ?", QuoteIdentifier(col))
 	}
 
 	// Build the SET clause
@@ -434,14 +432,14 @@ func UpdateData(db *sql.DB, tableName string, data []map[string]interface{}, whe
 			}
 		}
 		if !isWhereColumn {
-			setClause = append(setClause, fmt.Sprintf("%s = ?", common.QuoteIdentifier(col)))
+			setClause = append(setClause, fmt.Sprintf("%s = ?", QuoteIdentifier(col)))
 		}
 	}
 
 	// Prepare the query
 	query := fmt.Sprintf(
 		"UPDATE %s SET %s WHERE %s",
-		common.QuoteIdentifier(tableName),
+		QuoteIdentifier(tableName),
 		strings.Join(setClause, ", "),
 		strings.Join(whereConditions, " AND "),
 	)
@@ -503,7 +501,7 @@ func DeleteData(db *sql.DB, tableName string, whereClause string, whereArgs ...i
 	}
 
 	// Build the query
-	query := fmt.Sprintf("DELETE FROM %s", common.QuoteIdentifier(tableName))
+	query := fmt.Sprintf("DELETE FROM %s", QuoteIdentifier(tableName))
 
 	// Add WHERE clause if provided
 	if whereClause != "" {

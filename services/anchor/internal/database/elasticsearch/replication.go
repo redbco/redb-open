@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v8"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // CreateReplicationSource sets up a replication source for an Elasticsearch index
 func CreateReplicationSource(esClient *ElasticsearchClient, indexName string, databaseID string, eventHandler func(map[string]interface{})) (*ElasticsearchReplicationSourceDetails, error) {
 	client := esClient.Client
 	// Generate a unique watch ID
-	watchID := fmt.Sprintf("watch_%s_%s", databaseID, common.GenerateUniqueID())
+	watchID := fmt.Sprintf("watch_%s_%s", databaseID, dbclient.GenerateUniqueID())
 
 	// Create a watcher to monitor changes in the index
 	err := createWatcher(client, watchID, indexName)

@@ -1,23 +1,5 @@
 package milvus
 
-// MilvusDetails contains information about a Milvus vector database
-type MilvusDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	Host             string `json:"host"`
-	Port             int    `json:"port"`
-	CollectionCount  int64  `json:"collectionCount"`
-	TotalVectors     int64  `json:"totalVectors"`
-}
-
-// MilvusSchema represents the schema of a Milvus vector database
-type MilvusSchema struct {
-	Collections []MilvusCollectionInfo `json:"collections"`
-}
-
 // MilvusCollectionInfo represents information about a Milvus collection
 type MilvusCollectionInfo struct {
 	Name        string                 `json:"name"`

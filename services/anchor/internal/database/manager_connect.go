@@ -15,11 +15,12 @@ import (
 	"github.com/redbco/redb-open/services/anchor/internal/database/chroma"
 	"github.com/redbco/redb-open/services/anchor/internal/database/clickhouse"
 	"github.com/redbco/redb-open/services/anchor/internal/database/cockroach"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 	"github.com/redbco/redb-open/services/anchor/internal/database/cosmosdb"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 	"github.com/redbco/redb-open/services/anchor/internal/database/dynamodb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/edgedb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
+	"github.com/redbco/redb-open/services/anchor/internal/database/iceberg"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mariadb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/milvus"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mongodb"
@@ -36,13 +37,13 @@ import (
 )
 
 // ConnectDatabase establishes a connection to a database
-func (dm *DatabaseManager) ConnectDatabase(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func (dm *DatabaseManager) ConnectDatabase(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	// Log connection attempt with unified logging
 	if dm.dbLogger != nil {
 		dm.dbLogger.LogClientConnectionAttempt(config.ConnectionType, config.DatabaseID, config.Host, config.Port)
 	}
 
-	var client *common.DatabaseClient
+	var client *dbclient.DatabaseClient
 	var err error
 
 	switch config.ConnectionType {
@@ -84,6 +85,8 @@ func (dm *DatabaseManager) ConnectDatabase(config common.DatabaseConfig) (*commo
 		client, err = dynamodb.Connect(config)
 	case string(dbcapabilities.CosmosDB):
 		client, err = cosmosdb.Connect(config)
+	case string(dbcapabilities.Iceberg):
+		client, err = iceberg.Connect(config)
 	//case string(dbcapabilities.DB2):
 	//	client, err = db2.Connect(config)
 	//case string(dbcapabilities.Oracle):
@@ -173,7 +176,7 @@ func (dm *DatabaseManager) DisconnectDatabase(id string) error {
 }
 
 // closeDatabase closes the database connection properly based on the type
-func closeDatabase(client *common.DatabaseClient) error {
+func closeDatabase(client *dbclient.DatabaseClient) error {
 	atomic.StoreInt32(&client.IsConnected, 0)
 
 	switch client.DatabaseType {
@@ -280,6 +283,9 @@ func closeDatabase(client *common.DatabaseClient) error {
 	case string(dbcapabilities.CosmosDB):
 		// CosmosDB client doesn't need explicit close
 		return nil
+	case string(dbcapabilities.Iceberg):
+		// Iceberg client cleanup (HTTP client, etc.)
+		return nil
 	//case string(dbcapabilities.DB2):
 	//	if db, ok := client.DB.(*sql.DB); ok {
 	//		return db.Close()
@@ -296,7 +302,7 @@ func closeDatabase(client *common.DatabaseClient) error {
 }
 
 // ConnectInstance establishes a connection to a database instance
-func (dm *DatabaseManager) ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func (dm *DatabaseManager) ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	// Log instance connection attempt with unified logging
 	if dm.dbLogger != nil {
 		dm.dbLogger.LogConnectionAttempt(DatabaseLogContext{
@@ -308,7 +314,7 @@ func (dm *DatabaseManager) ConnectInstance(config common.InstanceConfig) (*commo
 		})
 	}
 
-	var client *common.InstanceClient
+	var client *dbclient.InstanceClient
 	var err error
 
 	switch config.ConnectionType {
@@ -350,6 +356,8 @@ func (dm *DatabaseManager) ConnectInstance(config common.InstanceConfig) (*commo
 		client, err = dynamodb.ConnectInstance(config)
 	case string(dbcapabilities.CosmosDB):
 		client, err = cosmosdb.ConnectInstance(config)
+	case string(dbcapabilities.Iceberg):
+		client, err = iceberg.ConnectInstance(config)
 	//case string(dbcapabilities.DB2):
 	//	client, err = db2.ConnectInstance(config)
 	//case string(dbcapabilities.Oracle):
@@ -425,7 +433,7 @@ func (dm *DatabaseManager) DisconnectInstance(id string) error {
 }
 
 // closeInstance closes the database connection properly based on the type
-func closeInstance(client *common.InstanceClient) error {
+func closeInstance(client *dbclient.InstanceClient) error {
 	atomic.StoreInt32(&client.IsConnected, 0)
 
 	switch client.InstanceType {
@@ -532,6 +540,9 @@ func closeInstance(client *common.InstanceClient) error {
 	case string(dbcapabilities.CosmosDB):
 		// No explicit close method for azure cosmos db client
 		return fmt.Errorf("invalid cosmosdb connection type")
+	case string(dbcapabilities.Iceberg):
+		// Iceberg client cleanup (HTTP client, etc.)
+		return fmt.Errorf("invalid iceberg connection type")
 	//case string(dbcapabilities.DB2):
 	//	if db, ok := client.DB.(*sql.DB); ok {
 	//		return db.Close()
@@ -548,7 +559,7 @@ func closeInstance(client *common.InstanceClient) error {
 }
 
 // Refactor ConnectReplication for multi-table support
-func (dm *DatabaseManager) ConnectReplication(config common.ReplicationConfig) (*common.ReplicationClient, error) {
+func (dm *DatabaseManager) ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.ReplicationClient, error) {
 	// Log replication connection attempt
 	if dm.dbLogger != nil {
 		dm.dbLogger.LogReplicationEvent(DatabaseLogContext{
@@ -676,11 +687,11 @@ func (dm *DatabaseManager) DisconnectReplication(id string) error {
 }
 
 // closeReplication closes the replication connection properly based on the type
-func closeReplication(client *common.ReplicationClient) error {
+func closeReplication(client *dbclient.ReplicationClient) error {
 	atomic.StoreInt32(&client.IsConnected, 0)
 
 	// Close the replication source if it implements the interface
-	if source, ok := client.ReplicationSource.(common.ReplicationSourceInterface); ok {
+	if source, ok := client.ReplicationSource.(dbclient.ReplicationSourceInterface); ok {
 		if err := source.Close(); err != nil {
 			return fmt.Errorf("failed to close replication source: %w", err)
 		}
@@ -749,6 +760,9 @@ func closeReplication(client *common.ReplicationClient) error {
 		return nil
 	case string(dbcapabilities.CosmosDB):
 		// No explicit close method for azure cosmos db client
+		return nil
+	case string(dbcapabilities.Iceberg):
+		// Iceberg doesn't support traditional replication
 		return nil
 	//case string(dbcapabilities.DB2):
 	//	if db, ok := client.Connection.(*sql.DB); ok {

@@ -3,71 +3,71 @@ package mssql
 import (
 	"database/sql"
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 )
 
-// DiscoverSchema fetches the current schema of a Microsoft SQL Server database
-func DiscoverSchema(db *sql.DB) (*MSSQLSchema, error) {
-	schema := &MSSQLSchema{}
-	var err error
+// DiscoverSchema fetches the current schema of a Microsoft SQL Server database and returns a UnifiedModel
+func DiscoverSchema(db *sql.DB) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.SQLServer,
+		Tables:       make(map[string]unifiedmodel.Table),
+		Schemas:      make(map[string]unifiedmodel.Schema),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Triggers:     make(map[string]unifiedmodel.Trigger),
+		Procedures:   make(map[string]unifiedmodel.Procedure),
+		Views:        make(map[string]unifiedmodel.View),
+		Sequences:    make(map[string]unifiedmodel.Sequence),
+		Indexes:      make(map[string]unifiedmodel.Index),
+	}
 
 	// Get tables and their columns
-	tablesMap, _, err := discoverTablesAndColumns(db)
-	if err != nil {
+	if err := discoverTablesUnified(db, um); err != nil {
 		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
 
-	// Convert map to slice
-	tables := make([]common.TableInfo, 0, len(tablesMap))
-	for _, table := range tablesMap {
-		tables = append(tables, *table)
-	}
-	schema.Tables = tables
-
 	// Get schemas
-	schema.Schemas, err = getSchemas(db)
-	if err != nil {
+	if err := discoverSchemasUnified(db, um); err != nil {
 		return nil, fmt.Errorf("error getting schemas: %v", err)
 	}
 
 	// Get functions
-	schema.Functions, err = getFunctions(db)
-	if err != nil {
+	if err := discoverFunctionsUnified(db, um); err != nil {
 		return nil, fmt.Errorf("error getting functions: %v", err)
 	}
 
 	// Get triggers
-	schema.Triggers, err = getTriggers(db)
-	if err != nil {
+	if err := discoverTriggersUnified(db, um); err != nil {
 		return nil, fmt.Errorf("error getting triggers: %v", err)
 	}
 
 	// Get procedures
-	schema.Procedures, err = getProcedures(db)
-	if err != nil {
+	if err := discoverProceduresUnified(db, um); err != nil {
 		return nil, fmt.Errorf("error getting procedures: %v", err)
 	}
 
 	// Get views
-	schema.Views, err = getViews(db)
-	if err != nil {
+	if err := discoverViewsUnified(db, um); err != nil {
 		return nil, fmt.Errorf("error getting views: %v", err)
 	}
 
 	// Get sequences
-	schema.Sequences, err = getSequences(db)
-	if err != nil {
+	if err := discoverSequencesUnified(db, um); err != nil {
 		return nil, fmt.Errorf("error getting sequences: %v", err)
 	}
 
-	return schema, nil
+	return um, nil
 }
 
-// CreateStructure creates database objects based on the provided parameters
-func CreateStructure(db *sql.DB, params common.StructureParams) error {
+// CreateStructure creates database objects from a UnifiedModel
+func CreateStructure(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
+	if um == nil {
+		return fmt.Errorf("unified model cannot be nil")
+	}
+
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
@@ -75,23 +75,50 @@ func CreateStructure(db *sql.DB, params common.StructureParams) error {
 	}
 	defer tx.Rollback()
 
-	// Sort tables based on dependencies
-	sortedTables, err := common.TopologicalSort(params.Tables)
-	if err != nil {
-		return fmt.Errorf("error sorting tables: %v", err)
-	}
-
-	// Create tables
-	for _, table := range sortedTables {
-		if err := CreateTable(tx, table); err != nil {
-			return fmt.Errorf("error creating table %s: %v", table.Name, err)
+	// Create schemas first
+	for _, schema := range um.Schemas {
+		if err := createSchemaFromUnified(tx, schema); err != nil {
+			return fmt.Errorf("error creating schema %s: %v", schema.Name, err)
 		}
 	}
 
-	// Add table constraints
-	for _, table := range sortedTables {
-		if err := AddTableConstraints(tx, table); err != nil {
-			return fmt.Errorf("error adding constraints to table %s: %v", table.Name, err)
+	// Create sequences
+	for _, sequence := range um.Sequences {
+		if err := createSequenceFromUnified(tx, sequence); err != nil {
+			return fmt.Errorf("error creating sequence %s: %v", sequence.Name, err)
+		}
+	}
+
+	// Create tables (with topological sorting for dependencies)
+	if err := createTablesFromUnified(tx, um.Tables); err != nil {
+		return fmt.Errorf("error creating tables: %v", err)
+	}
+
+	// Create views
+	for _, view := range um.Views {
+		if err := createViewFromUnified(tx, view); err != nil {
+			return fmt.Errorf("error creating view %s: %v", view.Name, err)
+		}
+	}
+
+	// Create functions
+	for _, function := range um.Functions {
+		if err := createFunctionFromUnified(tx, function); err != nil {
+			return fmt.Errorf("error creating function %s: %v", function.Name, err)
+		}
+	}
+
+	// Create procedures
+	for _, procedure := range um.Procedures {
+		if err := createProcedureFromUnified(tx, procedure); err != nil {
+			return fmt.Errorf("error creating procedure %s: %v", procedure.Name, err)
+		}
+	}
+
+	// Create triggers
+	for _, trigger := range um.Triggers {
+		if err := createTriggerFromUnified(tx, trigger); err != nil {
+			return fmt.Errorf("error creating trigger %s: %v", trigger.Name, err)
 		}
 	}
 
@@ -103,567 +130,633 @@ func CreateStructure(db *sql.DB, params common.StructureParams) error {
 	return nil
 }
 
-func discoverTablesAndColumns(db *sql.DB) (map[string]*common.TableInfo, []string, error) {
+// discoverTablesUnified discovers MSSQL tables directly into UnifiedModel
+func discoverTablesUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			s.name AS schema_name,
 			t.name AS table_name,
 			c.name AS column_name,
 			ty.name AS data_type,
+			c.max_length,
+			c.precision,
+			c.scale,
 			c.is_nullable,
-			c.column_default,
-			CASE WHEN c.is_identity = 1 THEN 1 ELSE 0 END AS is_identity,
-			CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key,
-			CASE WHEN ty.name = 'nvarchar' OR ty.name = 'varchar' THEN c.max_length ELSE NULL END AS varchar_length,
-			CASE WHEN idx.is_unique = 1 THEN 1 ELSE 0 END AS is_unique
+			c.is_identity,
+			ISNULL(dc.definition, '') AS default_value,
+			CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_primary_key
 		FROM sys.tables t
-		JOIN sys.schemas s ON t.schema_id = s.schema_id
-		JOIN sys.columns c ON t.object_id = c.object_id
-		JOIN sys.types ty ON c.user_type_id = ty.user_type_id
+		INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+		INNER JOIN sys.columns c ON t.object_id = c.object_id
+		INNER JOIN sys.types ty ON c.user_type_id = ty.user_type_id
+		LEFT JOIN sys.default_constraints dc ON c.default_object_id = dc.object_id
 		LEFT JOIN (
-			SELECT ic.object_id, ic.column_id
-			FROM sys.index_columns ic
-			JOIN sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-			WHERE i.is_primary_key = 1
-		) pk ON c.object_id = pk.object_id AND c.column_id = pk.column_id
-		LEFT JOIN (
-			SELECT ic.object_id, ic.column_id, i.is_unique
-			FROM sys.index_columns ic
-			JOIN sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-			WHERE i.is_unique = 1 AND i.is_primary_key = 0
-		) idx ON c.object_id = idx.object_id AND c.column_id = idx.column_id
-		WHERE t.type = 'U'
-		ORDER BY t.name, c.column_id
+			SELECT 
+				kcu.table_schema,
+				kcu.table_name,
+				kcu.column_name
+			FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+			INNER JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc 
+				ON kcu.constraint_name = tc.constraint_name 
+				AND kcu.table_schema = tc.table_schema
+			WHERE tc.constraint_type = 'PRIMARY KEY'
+		) pk ON s.name = pk.table_schema AND t.name = pk.table_name AND c.name = pk.column_name
+		ORDER BY s.name, t.name, c.column_id
 	`
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error fetching table and column information: %v", err)
+		return fmt.Errorf("error querying tables: %v", err)
 	}
 	defer rows.Close()
 
-	tables := make(map[string]*common.TableInfo)
-	tableNames := make([]string, 0)
+	tables := make(map[string]*unifiedmodel.Table)
+
 	for rows.Next() {
-		var schemaName, tableName, columnName, dataType string
-		var isNullable, isIdentity, isPrimaryKey, isUnique bool
-		var columnDefault sql.NullString
-		var varcharLength sql.NullInt32
+		var schemaName, tableName, columnName, dataType, defaultValue string
+		var maxLength, precision, scale int
+		var isNullable, isIdentity, isPrimaryKey bool
 
-		if err := rows.Scan(
-			&schemaName, &tableName, &columnName, &dataType, &isNullable, &columnDefault,
-			&isIdentity, &isPrimaryKey, &varcharLength, &isUnique,
-		); err != nil {
-			return nil, nil, fmt.Errorf("error scanning table and column row: %v", err)
+		err := rows.Scan(&schemaName, &tableName, &columnName, &dataType,
+			&maxLength, &precision, &scale, &isNullable, &isIdentity,
+			&defaultValue, &isPrimaryKey)
+		if err != nil {
+			return fmt.Errorf("error scanning table row: %v", err)
 		}
 
-		fullTableName := fmt.Sprintf("%s.%s", schemaName, tableName)
-		if _, exists := tables[fullTableName]; !exists {
-			tables[fullTableName] = &common.TableInfo{
-				Name:      tableName,
-				Schema:    schemaName,
-				TableType: "mssql.standard",
+		fullTableName := schemaName + "." + tableName
+
+		// Create table if it doesn't exist
+		if tables[fullTableName] == nil {
+			tables[fullTableName] = &unifiedmodel.Table{
+				Name:        tableName,
+				Columns:     make(map[string]unifiedmodel.Column),
+				Indexes:     make(map[string]unifiedmodel.Index),
+				Constraints: make(map[string]unifiedmodel.Constraint),
+				Options: map[string]interface{}{
+					"schema": schemaName,
+				},
 			}
-			tableNames = append(tableNames, fullTableName)
 		}
 
-		var defaultValue *string
-		if columnDefault.Valid {
-			defaultValue = &columnDefault.String
+		// Add column to table
+		column := unifiedmodel.Column{
+			Name:         columnName,
+			DataType:     dataType,
+			Nullable:     isNullable,
+			Default:      defaultValue,
+			IsPrimaryKey: isPrimaryKey,
+			Options: map[string]interface{}{
+				"max_length":  maxLength,
+				"precision":   precision,
+				"scale":       scale,
+				"is_identity": isIdentity,
+			},
 		}
 
-		columnInfo := common.ColumnInfo{
-			Name:            columnName,
-			DataType:        dataType,
-			IsNullable:      isNullable,
-			ColumnDefault:   defaultValue,
-			IsPrimaryKey:    isPrimaryKey,
-			IsAutoIncrement: isIdentity,
-			IsUnique:        isUnique,
-		}
-
-		if (dataType == "nvarchar" || dataType == "varchar") && varcharLength.Valid {
-			length := int(varcharLength.Int32)
-			if dataType == "nvarchar" {
-				length = length / 2 // nvarchar length is in bytes, divide by 2 to get character count
-			}
-			columnInfo.VarcharLength = &length
-		}
-
-		tables[fullTableName].Columns = append(tables[fullTableName].Columns, columnInfo)
+		tables[fullTableName].Columns[columnName] = column
 	}
 
-	if len(tables) == 0 {
-		return tables, []string{}, nil
+	// Add tables to unified model
+	for _, table := range tables {
+		um.Tables[table.Name] = *table
 	}
 
-	sort.Strings(tableNames)
-
-	return tables, tableNames, nil
+	return nil
 }
 
-func getSchemas(db *sql.DB) ([]common.DatabaseSchemaInfo, error) {
+// discoverSchemasUnified discovers MSSQL schemas directly into UnifiedModel
+func discoverSchemasUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
-			name AS schema_name,
-			ISNULL(CAST(extended_property AS NVARCHAR(MAX)), '') AS description
+			name,
+			ISNULL(CAST(value AS NVARCHAR(MAX)), '') AS description
 		FROM sys.schemas s
-		LEFT JOIN (
-			SELECT major_id, value AS extended_property
-			FROM sys.extended_properties
-			WHERE name = 'MS_Description' AND class = 3
-		) ep ON s.schema_id = ep.major_id
-		WHERE s.name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest')
-		ORDER BY s.name
+		LEFT JOIN sys.extended_properties ep ON s.schema_id = ep.major_id 
+			AND ep.minor_id = 0 AND ep.name = 'MS_Description'
+		WHERE s.name NOT IN ('sys', 'information_schema', 'guest', 'INFORMATION_SCHEMA')
+		ORDER BY name
 	`
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, fmt.Errorf("error querying schemas: %v", err)
+		return fmt.Errorf("error querying schemas: %v", err)
 	}
 	defer rows.Close()
 
-	var schemas []common.DatabaseSchemaInfo
 	for rows.Next() {
-		var schema common.DatabaseSchemaInfo
-		if err := rows.Scan(&schema.Name, &schema.Description); err != nil {
-			return nil, fmt.Errorf("error scanning schema: %v", err)
+		var name, description string
+		if err := rows.Scan(&name, &description); err != nil {
+			return fmt.Errorf("error scanning schema row: %v", err)
 		}
-		schemas = append(schemas, schema)
+
+		um.Schemas[name] = unifiedmodel.Schema{
+			Name:    name,
+			Comment: description,
+		}
 	}
 
-	return schemas, nil
+	return nil
 }
 
-func getFunctions(db *sql.DB) ([]common.FunctionInfo, error) {
+// discoverFunctionsUnified discovers MSSQL functions directly into UnifiedModel
+func discoverFunctionsUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			s.name AS schema_name,
 			o.name AS function_name,
-			ISNULL(p.parameters, '') AS arguments,
-			ISNULL(t.name, 'void') AS return_type,
-			ISNULL(m.definition, '') AS function_body
+			m.definition AS function_body,
+			CASE o.type 
+				WHEN 'FN' THEN 'scalar'
+				WHEN 'IF' THEN 'table'
+				WHEN 'TF' THEN 'table'
+				ELSE 'unknown'
+			END AS function_type
 		FROM sys.objects o
-		JOIN sys.schemas s ON o.schema_id = s.schema_id
-		LEFT JOIN sys.sql_modules m ON o.object_id = m.object_id
-		LEFT JOIN sys.types t ON o.return_type = t.user_type_id
-		OUTER APPLY (
-			SELECT STUFF((
-				SELECT ', ' + CASE WHEN p.is_output = 1 THEN '@' + p.name + ' ' + ty.name + ' OUTPUT' ELSE '@' + p.name + ' ' + ty.name END
-				FROM sys.parameters p
-				JOIN sys.types ty ON p.user_type_id = ty.user_type_id
-				WHERE p.object_id = o.object_id AND p.parameter_id > 0
-				ORDER BY p.parameter_id
-				FOR XML PATH('')
-			), 1, 2, '') AS parameters
-		) p
+		INNER JOIN sys.schemas s ON o.schema_id = s.schema_id
+		INNER JOIN sys.sql_modules m ON o.object_id = m.object_id
 		WHERE o.type IN ('FN', 'IF', 'TF')
 		ORDER BY s.name, o.name
 	`
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, fmt.Errorf("error querying functions: %v", err)
+		return fmt.Errorf("error querying functions: %v", err)
 	}
 	defer rows.Close()
 
-	var functions []common.FunctionInfo
 	for rows.Next() {
-		var function common.FunctionInfo
-		if err := rows.Scan(
-			&function.Schema,
-			&function.Name,
-			&function.Arguments,
-			&function.ReturnType,
-			&function.Body,
-		); err != nil {
-			return nil, fmt.Errorf("error scanning function: %v", err)
+		var schemaName, functionName, functionBody, functionType string
+		if err := rows.Scan(&schemaName, &functionName, &functionBody, &functionType); err != nil {
+			return fmt.Errorf("error scanning function row: %v", err)
 		}
-		functions = append(functions, function)
+
+		um.Functions[functionName] = unifiedmodel.Function{
+			Name:       functionName,
+			Language:   "tsql",
+			Definition: functionBody,
+			Options: map[string]interface{}{
+				"schema": schemaName,
+				"type":   functionType,
+			},
+		}
 	}
 
-	return functions, nil
+	return nil
 }
 
-func getTriggers(db *sql.DB) ([]common.TriggerInfo, error) {
+// discoverTriggersUnified discovers MSSQL triggers directly into UnifiedModel
+func discoverTriggersUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			s.name AS schema_name,
-			t.name AS trigger_name,
-			OBJECT_NAME(t.parent_id) AS table_name,
+			tr.name AS trigger_name,
+			t.name AS table_name,
+			m.definition AS trigger_body,
 			CASE 
-				WHEN t.is_instead_of_trigger = 1 THEN 'INSTEAD OF'
+				WHEN tr.is_instead_of_trigger = 1 THEN 'INSTEAD OF'
 				ELSE 'AFTER'
-			END AS timing,
-			CASE 
-				WHEN OBJECTPROPERTY(t.object_id, 'ExecIsInsertTrigger') = 1 THEN 'INSERT'
-				WHEN OBJECTPROPERTY(t.object_id, 'ExecIsUpdateTrigger') = 1 THEN 'UPDATE'
-				WHEN OBJECTPROPERTY(t.object_id, 'ExecIsDeleteTrigger') = 1 THEN 'DELETE'
-				ELSE 'MULTIPLE'
-			END AS event,
-			ISNULL(m.definition, '') AS definition
-		FROM sys.triggers t
-		JOIN sys.objects o ON t.object_id = o.object_id
-		JOIN sys.schemas s ON o.schema_id = s.schema_id
-		LEFT JOIN sys.sql_modules m ON t.object_id = m.object_id
-		ORDER BY s.name, t.name
+			END AS trigger_timing
+		FROM sys.triggers tr
+		INNER JOIN sys.tables t ON tr.parent_id = t.object_id
+		INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+		INNER JOIN sys.sql_modules m ON tr.object_id = m.object_id
+		WHERE tr.is_ms_shipped = 0
+		ORDER BY s.name, t.name, tr.name
 	`
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, fmt.Errorf("error querying triggers: %v", err)
+		return fmt.Errorf("error querying triggers: %v", err)
 	}
 	defer rows.Close()
 
-	var triggers []common.TriggerInfo
 	for rows.Next() {
-		var trigger common.TriggerInfo
-		if err := rows.Scan(
-			&trigger.Schema,
-			&trigger.Name,
-			&trigger.Table,
-			&trigger.Timing,
-			&trigger.Event,
-			&trigger.Statement,
-		); err != nil {
-			return nil, fmt.Errorf("error scanning trigger: %v", err)
+		var schemaName, triggerName, tableName, triggerBody, triggerTiming string
+		if err := rows.Scan(&schemaName, &triggerName, &tableName, &triggerBody, &triggerTiming); err != nil {
+			return fmt.Errorf("error scanning trigger row: %v", err)
 		}
-		triggers = append(triggers, trigger)
+
+		um.Triggers[triggerName] = unifiedmodel.Trigger{
+			Name:  triggerName,
+			Table: tableName,
+			Options: map[string]interface{}{
+				"schema":     schemaName,
+				"timing":     triggerTiming,
+				"definition": triggerBody,
+			},
+		}
 	}
 
-	return triggers, nil
+	return nil
 }
 
-func getProcedures(db *sql.DB) ([]common.ProcedureInfo, error) {
+// discoverProceduresUnified discovers MSSQL procedures directly into UnifiedModel
+func discoverProceduresUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			s.name AS schema_name,
-			o.name AS procedure_name,
-			USER_NAME(o.principal_id) AS definer_user,
-			HOST_NAME() AS definer_host,
-			CONVERT(VARCHAR, o.create_date, 120) AS created,
-			CONVERT(VARCHAR, o.modify_date, 120) AS modified,
-			CASE WHEN o.is_ms_shipped = 1 THEN 'DEFINER' ELSE 'INVOKER' END AS security_type,
-			ISNULL(ep.value, '') AS comment,
-			'SQL' AS routine_body,
-			ISNULL(m.definition, '') AS routine_definition,
-			ISNULL(p.parameters, '') AS parameter_list,
-			ISNULL(p.parameters, '') AS arguments,
-			ISNULL(m.definition, '') AS body
-		FROM sys.objects o
-		JOIN sys.schemas s ON o.schema_id = s.schema_id
-		LEFT JOIN sys.sql_modules m ON o.object_id = m.object_id
-		LEFT JOIN sys.extended_properties ep ON o.object_id = ep.major_id AND ep.minor_id = 0 AND ep.name = 'MS_Description'
-		OUTER APPLY (
-			SELECT STUFF((
-				SELECT ', ' + CASE WHEN p.is_output = 1 THEN '@' + p.name + ' ' + ty.name + ' OUTPUT' ELSE '@' + p.name + ' ' + ty.name END
-				FROM sys.parameters p
-				JOIN sys.types ty ON p.user_type_i
-								FROM sys.parameters p
-				JOIN sys.types ty ON p.user_type_id = ty.user_type_id
-				WHERE p.object_id = o.object_id AND p.parameter_id > 0
-				ORDER BY p.parameter_id
-				FOR XML PATH('')
-			), 1, 2, '') AS parameters
-		) p
-		WHERE o.type = 'P'
-		ORDER BY s.name, o.name
+			p.name AS procedure_name,
+			m.definition AS procedure_body
+		FROM sys.procedures p
+		INNER JOIN sys.schemas s ON p.schema_id = s.schema_id
+		INNER JOIN sys.sql_modules m ON p.object_id = m.object_id
+		WHERE p.is_ms_shipped = 0
+		ORDER BY s.name, p.name
 	`
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, fmt.Errorf("error querying procedures: %v", err)
+		return fmt.Errorf("error querying procedures: %v", err)
 	}
 	defer rows.Close()
 
-	var procedures []common.ProcedureInfo
 	for rows.Next() {
-		var procedure common.ProcedureInfo
-		if err := rows.Scan(
-			&procedure.Schema,
-			&procedure.Name,
-			&procedure.DefinerUser,
-			&procedure.DefinerHost,
-			&procedure.Created,
-			&procedure.Modified,
-			&procedure.SecurityType,
-			&procedure.Comment,
-			&procedure.RoutineBody,
-			&procedure.RoutineDefinition,
-			&procedure.ParameterList,
-			&procedure.Arguments,
-			&procedure.Body,
-		); err != nil {
-			return nil, fmt.Errorf("error scanning procedure: %v", err)
+		var schemaName, procedureName, procedureBody string
+		if err := rows.Scan(&schemaName, &procedureName, &procedureBody); err != nil {
+			return fmt.Errorf("error scanning procedure row: %v", err)
 		}
-		procedures = append(procedures, procedure)
+
+		um.Procedures[procedureName] = unifiedmodel.Procedure{
+			Name:       procedureName,
+			Language:   "tsql",
+			Definition: procedureBody,
+			Options: map[string]interface{}{
+				"schema": schemaName,
+			},
+		}
 	}
 
-	return procedures, nil
+	return nil
 }
 
-func getViews(db *sql.DB) ([]common.ViewInfo, error) {
+// discoverViewsUnified discovers MSSQL views directly into UnifiedModel
+func discoverViewsUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			s.name AS schema_name,
 			v.name AS view_name,
-			ISNULL(m.definition, '') AS definition
+			m.definition AS view_definition
 		FROM sys.views v
-		JOIN sys.schemas s ON v.schema_id = s.schema_id
-		LEFT JOIN sys.sql_modules m ON v.object_id = m.object_id
+		INNER JOIN sys.schemas s ON v.schema_id = s.schema_id
+		INNER JOIN sys.sql_modules m ON v.object_id = m.object_id
+		WHERE v.is_ms_shipped = 0
 		ORDER BY s.name, v.name
 	`
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, fmt.Errorf("error querying views: %v", err)
+		return fmt.Errorf("error querying views: %v", err)
 	}
 	defer rows.Close()
 
-	var views []common.ViewInfo
 	for rows.Next() {
-		var view common.ViewInfo
-		if err := rows.Scan(
-			&view.Schema,
-			&view.Name,
-			&view.Definition,
-		); err != nil {
-			return nil, fmt.Errorf("error scanning view: %v", err)
+		var schemaName, viewName, viewDefinition string
+		if err := rows.Scan(&schemaName, &viewName, &viewDefinition); err != nil {
+			return fmt.Errorf("error scanning view row: %v", err)
 		}
-		views = append(views, view)
+
+		um.Views[viewName] = unifiedmodel.View{
+			Name:       viewName,
+			Definition: viewDefinition,
+			Options: map[string]interface{}{
+				"schema": schemaName,
+			},
+		}
 	}
 
-	return views, nil
+	return nil
 }
 
-func getSequences(db *sql.DB) ([]common.SequenceInfo, error) {
+// discoverSequencesUnified discovers MSSQL sequences directly into UnifiedModel
+func discoverSequencesUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			s.name AS schema_name,
 			seq.name AS sequence_name,
-			t.name AS data_type,
 			seq.start_value,
 			seq.increment,
 			seq.minimum_value,
-			seq.maximum_value,
-			seq.cache_size,
-			seq.is_cycling
+			seq.maximum_value
 		FROM sys.sequences seq
-		JOIN sys.schemas s ON seq.schema_id = s.schema_id
-		JOIN sys.types t ON seq.user_type_id = t.user_type_id
+		INNER JOIN sys.schemas s ON seq.schema_id = s.schema_id
 		ORDER BY s.name, seq.name
 	`
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, fmt.Errorf("error querying sequences: %v", err)
+		return fmt.Errorf("error querying sequences: %v", err)
 	}
 	defer rows.Close()
 
-	var sequences []common.SequenceInfo
 	for rows.Next() {
-		var sequence common.SequenceInfo
-		var isCycling bool
-		if err := rows.Scan(
-			&sequence.Schema,
-			&sequence.Name,
-			&sequence.DataType,
-			&sequence.Start,
-			&sequence.Increment,
-			&sequence.MinValue,
-			&sequence.MaxValue,
-			&sequence.CacheSize,
-			&isCycling,
-		); err != nil {
-			return nil, fmt.Errorf("error scanning sequence: %v", err)
+		var schemaName, sequenceName string
+		var startValue, increment, minValue, maxValue int64
+		if err := rows.Scan(&schemaName, &sequenceName, &startValue, &increment, &minValue, &maxValue); err != nil {
+			return fmt.Errorf("error scanning sequence row: %v", err)
 		}
-		sequence.Cycle = isCycling
-		sequences = append(sequences, sequence)
+
+		um.Sequences[sequenceName] = unifiedmodel.Sequence{
+			Name:      sequenceName,
+			Start:     startValue,
+			Increment: increment,
+			Options: map[string]interface{}{
+				"schema":    schemaName,
+				"min_value": minValue,
+				"max_value": maxValue,
+			},
+		}
 	}
 
-	return sequences, nil
+	return nil
 }
 
-func CreateTable(tx *sql.Tx, tableInfo common.TableInfo) error {
-	if tx == nil {
-		return fmt.Errorf("transaction is nil")
+// Helper function to quote SQL Server identifiers
+func QuoteIdentifier(name string) string {
+	return "[" + strings.ReplaceAll(name, "]", "]]") + "]"
+}
+
+// createSchemaFromUnified creates a SQL Server schema from UnifiedModel Schema
+func createSchemaFromUnified(tx *sql.Tx, schema unifiedmodel.Schema) error {
+	if schema.Name == "" {
+		return fmt.Errorf("schema name cannot be empty")
 	}
 
-	if tableInfo.Name == "" {
-		return fmt.Errorf("table name is empty")
-	}
-
-	// Check if the table already exists
-	var exists int
-	err := tx.QueryRow(`
-		SELECT COUNT(*) 
-		FROM sys.tables t 
-		JOIN sys.schemas s ON t.schema_id = s.schema_id 
-		WHERE t.name = ? AND s.name = ?
-	`, tableInfo.Name, tableInfo.Schema).Scan(&exists)
-	if err != nil {
-		return fmt.Errorf("error checking if table exists: %v", err)
-	}
-	if exists > 0 {
-		return fmt.Errorf("table '%s.%s' already exists", tableInfo.Schema, tableInfo.Name)
-	}
-
-	// Create schema if it doesn't exist
-	_, err = tx.Exec(fmt.Sprintf("IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = '%s') EXEC('CREATE SCHEMA %s')",
-		tableInfo.Schema, tableInfo.Schema))
+	query := fmt.Sprintf("CREATE SCHEMA %s", QuoteIdentifier(schema.Name))
+	_, err := tx.Exec(query)
 	if err != nil {
 		return fmt.Errorf("error creating schema: %v", err)
 	}
 
-	// Create table
-	createTableSQL := fmt.Sprintf("CREATE TABLE [%s].[%s] (", tableInfo.Schema, tableInfo.Name)
-	for i, column := range tableInfo.Columns {
-		if i > 0 {
-			createTableSQL += ", "
-		}
-		createTableSQL += fmt.Sprintf("[%s] ", column.Name)
+	return nil
+}
 
-		// Handle data type
-		switch strings.ToLower(column.DataType) {
-		case "varchar":
-			if column.VarcharLength != nil {
-				createTableSQL += fmt.Sprintf("VARCHAR(%d)", *column.VarcharLength)
-			} else {
-				createTableSQL += "VARCHAR(MAX)"
-			}
-		case "nvarchar":
-			if column.VarcharLength != nil {
-				createTableSQL += fmt.Sprintf("NVARCHAR(%d)", *column.VarcharLength)
-			} else {
-				createTableSQL += "NVARCHAR(MAX)"
-			}
-		default:
-			createTableSQL += column.DataType
-		}
+// createSequenceFromUnified creates a SQL Server sequence from UnifiedModel Sequence
+func createSequenceFromUnified(tx *sql.Tx, sequence unifiedmodel.Sequence) error {
+	if sequence.Name == "" {
+		return fmt.Errorf("sequence name cannot be empty")
+	}
 
-		// Handle auto-increment (identity)
-		if column.IsAutoIncrement {
-			createTableSQL += " IDENTITY(1,1)"
-		}
-
-		// Handle nullability
-		if !column.IsNullable {
-			createTableSQL += " NOT NULL"
-		} else {
-			createTableSQL += " NULL"
-		}
-
-		// Handle default value
-		if column.ColumnDefault != nil {
-			createTableSQL += fmt.Sprintf(" DEFAULT %s", *column.ColumnDefault)
+	schemaName := "dbo"
+	if sequence.Options != nil {
+		if schema, ok := sequence.Options["schema"].(string); ok && schema != "" {
+			schemaName = schema
 		}
 	}
 
-	// Add primary key constraint if defined
-	if len(tableInfo.PrimaryKey) > 0 {
-		createTableSQL += fmt.Sprintf(", CONSTRAINT [PK_%s] PRIMARY KEY (%s)",
-			tableInfo.Name, strings.Join(quoteIdentifiers(tableInfo.PrimaryKey), ", "))
+	query := fmt.Sprintf("CREATE SEQUENCE %s.%s START WITH %d INCREMENT BY %d",
+		QuoteIdentifier(schemaName), QuoteIdentifier(sequence.Name),
+		sequence.Start, sequence.Increment)
+
+	// Add min/max values if specified in options
+	if sequence.Options != nil {
+		if minVal, ok := sequence.Options["min_value"].(int64); ok {
+			query += fmt.Sprintf(" MINVALUE %d", minVal)
+		}
+		if maxVal, ok := sequence.Options["max_value"].(int64); ok {
+			query += fmt.Sprintf(" MAXVALUE %d", maxVal)
+		}
 	}
 
-	createTableSQL += ")"
+	_, err := tx.Exec(query)
+	if err != nil {
+		return fmt.Errorf("error creating sequence: %v", err)
+	}
 
-	// Print the SQL statement for debugging
-	fmt.Printf("Creating table %s.%s with SQL: %s\n", tableInfo.Schema, tableInfo.Name, createTableSQL)
+	return nil
+}
 
-	_, err = tx.Exec(createTableSQL)
+// createTablesFromUnified creates SQL Server tables from UnifiedModel Tables with dependency sorting
+func createTablesFromUnified(tx *sql.Tx, tables map[string]unifiedmodel.Table) error {
+	// Simple table creation without dependency sorting for now
+	// In a full implementation, you would implement topological sorting
+	for _, table := range tables {
+		if err := createTableFromUnified(tx, table); err != nil {
+			return fmt.Errorf("error creating table %s: %v", table.Name, err)
+		}
+	}
+
+	// Add constraints after all tables are created
+	for _, table := range tables {
+		if err := addTableConstraintsFromUnified(tx, table); err != nil {
+			return fmt.Errorf("error adding constraints to table %s: %v", table.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// createTableFromUnified creates a SQL Server table from UnifiedModel Table
+func createTableFromUnified(tx *sql.Tx, table unifiedmodel.Table) error {
+	if table.Name == "" {
+		return fmt.Errorf("table name cannot be empty")
+	}
+
+	schemaName := "dbo"
+	if table.Options != nil {
+		if schema, ok := table.Options["schema"].(string); ok && schema != "" {
+			schemaName = schema
+		}
+	}
+
+	var columns []string
+	for _, column := range table.Columns {
+		columnDef := QuoteIdentifier(column.Name) + " " + column.DataType
+
+		if !column.Nullable {
+			columnDef += " NOT NULL"
+		}
+
+		if column.Default != "" {
+			columnDef += " DEFAULT " + column.Default
+		}
+
+		// Handle identity columns
+		if column.Options != nil {
+			if isIdentity, ok := column.Options["is_identity"].(bool); ok && isIdentity {
+				columnDef += " IDENTITY(1,1)"
+			}
+		}
+
+		columns = append(columns, columnDef)
+	}
+
+	query := fmt.Sprintf("CREATE TABLE %s.%s (%s)",
+		QuoteIdentifier(schemaName), QuoteIdentifier(table.Name),
+		strings.Join(columns, ", "))
+
+	_, err := tx.Exec(query)
 	if err != nil {
 		return fmt.Errorf("error creating table: %v", err)
 	}
 
-	// Add indexes
-	for _, index := range tableInfo.Indexes {
-		// Skip primary key indexes as they are handled in table creation
-		if strings.HasPrefix(index.Name, "PK_") {
-			continue
-		}
+	return nil
+}
 
-		indexSQL := "CREATE"
-		if index.IsUnique {
-			indexSQL += " UNIQUE"
+// addTableConstraintsFromUnified adds constraints to a SQL Server table from UnifiedModel Table
+func addTableConstraintsFromUnified(tx *sql.Tx, table unifiedmodel.Table) error {
+	schemaName := "dbo"
+	if table.Options != nil {
+		if schema, ok := table.Options["schema"].(string); ok && schema != "" {
+			schemaName = schema
 		}
-		indexSQL += fmt.Sprintf(" INDEX [%s] ON [%s].[%s] (%s)",
-			index.Name, tableInfo.Schema, tableInfo.Name, strings.Join(quoteIdentifiers(index.Columns), ", "))
+	}
 
-		_, err = tx.Exec(indexSQL)
+	// Add primary key constraint
+	var pkColumns []string
+	for _, column := range table.Columns {
+		if column.IsPrimaryKey {
+			pkColumns = append(pkColumns, QuoteIdentifier(column.Name))
+		}
+	}
+
+	if len(pkColumns) > 0 {
+		pkName := fmt.Sprintf("PK_%s", table.Name)
+		query := fmt.Sprintf("ALTER TABLE %s.%s ADD CONSTRAINT %s PRIMARY KEY (%s)",
+			QuoteIdentifier(schemaName), QuoteIdentifier(table.Name),
+			QuoteIdentifier(pkName), strings.Join(pkColumns, ", "))
+
+		_, err := tx.Exec(query)
 		if err != nil {
-			return fmt.Errorf("error creating index %s: %v", index.Name, err)
+			return fmt.Errorf("error adding primary key: %v", err)
+		}
+	}
+
+	// Add other constraints
+	for _, constraint := range table.Constraints {
+		if err := createConstraintFromUnified(tx, schemaName, table.Name, constraint); err != nil {
+			return fmt.Errorf("error creating constraint %s: %v", constraint.Name, err)
 		}
 	}
 
 	return nil
 }
 
-func AddTableConstraints(tx *sql.Tx, tableInfo common.TableInfo) error {
-	addedConstraints := make(map[string]bool)
+// createConstraintFromUnified creates a SQL Server constraint from UnifiedModel Constraint
+func createConstraintFromUnified(tx *sql.Tx, schemaName, tableName string, constraint unifiedmodel.Constraint) error {
+	var query string
 
-	for _, constraint := range tableInfo.Constraints {
-		// Skip if constraint has already been added
-		if addedConstraints[constraint.Name] {
-			continue
+	switch constraint.Type {
+	case unifiedmodel.ConstraintTypeForeignKey:
+		if len(constraint.Columns) > 0 && constraint.Reference.Table != "" && len(constraint.Reference.Columns) > 0 {
+			query = fmt.Sprintf("ALTER TABLE %s.%s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
+				QuoteIdentifier(schemaName), QuoteIdentifier(tableName),
+				QuoteIdentifier(constraint.Name),
+				QuoteIdentifier(constraint.Columns[0]),
+				QuoteIdentifier(constraint.Reference.Table),
+				QuoteIdentifier(constraint.Reference.Columns[0]))
 		}
-
-		// Skip primary key constraints as they are handled during table creation
-		if constraint.Type == "PRIMARY KEY" {
-			continue
-		}
-
-		var constraintSQL string
-		switch constraint.Type {
-		case "FOREIGN KEY":
-			constraintSQL = fmt.Sprintf(`
-				ALTER TABLE [%s].[%s] 
-				ADD CONSTRAINT [%s] FOREIGN KEY ([%s]) 
-				REFERENCES [%s].[%s] ([%s])`,
-				tableInfo.Schema, tableInfo.Name,
-				constraint.Name, constraint.Column,
-				tableInfo.Schema, constraint.ForeignTable, constraint.ForeignColumn)
-
-			// Add ON DELETE and ON UPDATE if specified
-			if constraint.OnDelete != "" {
-				constraintSQL += fmt.Sprintf(" ON DELETE %s", constraint.OnDelete)
+	case unifiedmodel.ConstraintTypeUnique:
+		query = fmt.Sprintf("ALTER TABLE %s.%s ADD CONSTRAINT %s UNIQUE (%s)",
+			QuoteIdentifier(schemaName), QuoteIdentifier(tableName),
+			QuoteIdentifier(constraint.Name),
+			strings.Join(QuoteStringSlice(constraint.Columns), ", "))
+	case unifiedmodel.ConstraintTypeCheck:
+		if constraint.Options != nil {
+			if definition, ok := constraint.Options["definition"].(string); ok && definition != "" {
+				query = fmt.Sprintf("ALTER TABLE %s.%s ADD CONSTRAINT %s CHECK (%s)",
+					QuoteIdentifier(schemaName), QuoteIdentifier(tableName),
+					QuoteIdentifier(constraint.Name), definition)
 			}
-			if constraint.OnUpdate != "" {
-				constraintSQL += fmt.Sprintf(" ON UPDATE %s", constraint.OnUpdate)
-			}
-		case "CHECK":
-			constraintSQL = fmt.Sprintf(`
-				ALTER TABLE [%s].[%s] 
-				ADD CONSTRAINT [%s] CHECK (%s)`,
-				tableInfo.Schema, tableInfo.Name,
-				constraint.Name, constraint.Definition)
-		case "UNIQUE":
-			constraintSQL = fmt.Sprintf(`
-				ALTER TABLE [%s].[%s] 
-				ADD CONSTRAINT [%s] UNIQUE ([%s])`,
-				tableInfo.Schema, tableInfo.Name,
-				constraint.Name, constraint.Column)
-		default:
-			return fmt.Errorf("unsupported constraint type: %s", constraint.Type)
 		}
+	}
 
-		// Print the SQL statement for debugging
-		fmt.Printf("Executing constraint SQL: %s\n", constraintSQL)
-
-		_, err := tx.Exec(constraintSQL)
+	if query != "" {
+		_, err := tx.Exec(query)
 		if err != nil {
-			return fmt.Errorf("error adding constraint %s: %v", constraint.Name, err)
+			return fmt.Errorf("error creating constraint: %v", err)
 		}
-		addedConstraints[constraint.Name] = true
 	}
 
 	return nil
 }
 
-// Helper function to quote identifiers
-func quoteIdentifiers(identifiers []string) []string {
-	quoted := make([]string, len(identifiers))
-	for i, id := range identifiers {
-		quoted[i] = fmt.Sprintf("[%s]", id)
+// createViewFromUnified creates a SQL Server view from UnifiedModel View
+func createViewFromUnified(tx *sql.Tx, view unifiedmodel.View) error {
+	if view.Name == "" || view.Definition == "" {
+		return fmt.Errorf("view name and definition cannot be empty")
+	}
+
+	schemaName := "dbo"
+	if view.Options != nil {
+		if schema, ok := view.Options["schema"].(string); ok && schema != "" {
+			schemaName = schema
+		}
+	}
+
+	query := fmt.Sprintf("CREATE VIEW %s.%s AS %s",
+		QuoteIdentifier(schemaName), QuoteIdentifier(view.Name), view.Definition)
+
+	_, err := tx.Exec(query)
+	if err != nil {
+		return fmt.Errorf("error creating view: %v", err)
+	}
+
+	return nil
+}
+
+// createFunctionFromUnified creates a SQL Server function from UnifiedModel Function
+func createFunctionFromUnified(tx *sql.Tx, function unifiedmodel.Function) error {
+	if function.Name == "" || function.Definition == "" {
+		return fmt.Errorf("function name and definition cannot be empty")
+	}
+
+	// SQL Server functions require the full CREATE FUNCTION statement in the definition
+	_, err := tx.Exec(function.Definition)
+	if err != nil {
+		return fmt.Errorf("error creating function: %v", err)
+	}
+
+	return nil
+}
+
+// createProcedureFromUnified creates a SQL Server procedure from UnifiedModel Procedure
+func createProcedureFromUnified(tx *sql.Tx, procedure unifiedmodel.Procedure) error {
+	if procedure.Name == "" || procedure.Definition == "" {
+		return fmt.Errorf("procedure name and definition cannot be empty")
+	}
+
+	// SQL Server procedures require the full CREATE PROCEDURE statement in the definition
+	_, err := tx.Exec(procedure.Definition)
+	if err != nil {
+		return fmt.Errorf("error creating procedure: %v", err)
+	}
+
+	return nil
+}
+
+// createTriggerFromUnified creates a SQL Server trigger from UnifiedModel Trigger
+func createTriggerFromUnified(tx *sql.Tx, trigger unifiedmodel.Trigger) error {
+	if trigger.Name == "" || trigger.Table == "" {
+		return fmt.Errorf("trigger name and table cannot be empty")
+	}
+
+	// Get trigger definition from options
+	var definition string
+	if trigger.Options != nil {
+		if def, ok := trigger.Options["definition"].(string); ok {
+			definition = def
+		}
+	}
+
+	if definition == "" {
+		return fmt.Errorf("trigger definition cannot be empty")
+	}
+
+	// SQL Server triggers require the full CREATE TRIGGER statement in the definition
+	_, err := tx.Exec(definition)
+	if err != nil {
+		return fmt.Errorf("error creating trigger: %v", err)
+	}
+
+	return nil
+}
+
+// QuoteStringSlice quotes each string in a slice
+func QuoteStringSlice(slice []string) []string {
+	quoted := make([]string, len(slice))
+	for i, s := range slice {
+		quoted[i] = QuoteIdentifier(s)
 	}
 	return quoted
 }

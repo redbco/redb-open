@@ -12,11 +12,11 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a Redis database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var decryptedPassword string
 	if config.Password == "" {
 		decryptedPassword = ""
@@ -84,7 +84,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error connecting to Redis: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "redis",
 		DatabaseID:   config.DatabaseID,
@@ -94,7 +94,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Redis instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var decryptedPassword string
 	if config.Password == "" {
 		decryptedPassword = ""
@@ -162,7 +162,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error connecting to Redis: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           client,
 		InstanceType: "redis",
 		InstanceID:   config.InstanceID,
@@ -172,16 +172,15 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of a Redis database
-func DiscoverDetails(db interface{}) (*RedisDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	client, ok := db.(*redis.Client)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
 	ctx := context.Background()
-	details := RedisDetails{
-		DatabaseType: "redis",
-	}
+	details := make(map[string]interface{})
+	details["databaseType"] = "redis"
 
 	// Get server info
 	info, err := client.Info(ctx).Result()
@@ -194,39 +193,39 @@ func DiscoverDetails(db interface{}) (*RedisDetails, error) {
 
 	// Get Redis version
 	if version, ok := infoMap["redis_version"]; ok {
-		details.Version = version
+		details["version"] = version
 	}
 
 	// Get database size (total keys)
 	if dbSize, err := client.DBSize(ctx).Result(); err == nil {
-		details.KeyCount = dbSize
+		details["keyCount"] = dbSize
 	}
 
 	// Get memory usage
 	if usedMemory, ok := infoMap["used_memory"]; ok {
 		if memoryBytes, err := strconv.ParseInt(usedMemory, 10, 64); err == nil {
-			details.MemoryUsage = memoryBytes
-			details.DatabaseSize = memoryBytes // Use memory usage as database size
+			details["memoryUsage"] = memoryBytes
+			details["databaseSize"] = memoryBytes // Use memory usage as database size
 		}
 	}
 
 	// Determine Redis edition (enterprise or open source)
 	if _, ok := infoMap["redis_mode"]; ok && infoMap["redis_mode"] == "cluster" {
-		details.DatabaseEdition = "enterprise"
+		details["databaseEdition"] = "enterprise"
 	} else if _, ok := infoMap["redis_build_id"]; ok && strings.Contains(strings.ToLower(infoMap["redis_build_id"]), "enterprise") {
-		details.DatabaseEdition = "enterprise"
+		details["databaseEdition"] = "enterprise"
 	} else {
-		details.DatabaseEdition = "open-source"
+		details["databaseEdition"] = "open-source"
 	}
 
 	// Generate a unique identifier
 	if runID, ok := infoMap["run_id"]; ok {
-		details.UniqueIdentifier = runID
+		details["uniqueIdentifier"] = runID
 	} else {
-		details.UniqueIdentifier = "unknown"
+		details["uniqueIdentifier"] = "unknown"
 	}
 
-	return &details, nil
+	return details, nil
 }
 
 // parseRedisInfo parses the Redis INFO command output into a map

@@ -20,6 +20,7 @@ import (
 	"github.com/redbco/redb-open/services/anchor/internal/database/dynamodb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/edgedb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
+	"github.com/redbco/redb-open/services/anchor/internal/database/iceberg"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mariadb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/milvus"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mongodb"
@@ -151,6 +152,8 @@ func (dm *DatabaseManager) GetDataFromDatabase(databaseID string, tableName stri
 			return nil, fmt.Errorf("invalid neo4j connection type")
 		}
 		return neo4j.FetchData(driver, tableName, false, limit)
+	case string(dbcapabilities.Iceberg):
+		return iceberg.FetchData(client.DB, tableName, limit)
 	case string(dbcapabilities.DynamoDB):
 		dynamoClient, ok := client.DB.(*awsdynamodb.Client)
 		if !ok {
@@ -284,6 +287,8 @@ func (dm *DatabaseManager) InsertDataToDatabase(databaseID string, tableName str
 			return 0, fmt.Errorf("invalid neo4j connection type")
 		}
 		return neo4j.InsertData(driver, tableName, false, data)
+	case string(dbcapabilities.Iceberg):
+		return iceberg.InsertData(client.DB, tableName, data)
 	case string(dbcapabilities.DynamoDB):
 		dynamoClient, ok := client.DB.(*awsdynamodb.Client)
 		if !ok {
@@ -623,6 +628,9 @@ func (dm *DatabaseManager) WipeDatabase(databaseID string) error {
 			return fmt.Errorf("invalid neo4j connection type")
 		}
 		return neo4j.WipeDatabase(driver)
+	case string(dbcapabilities.Iceberg):
+		// Iceberg doesn't support wiping entire databases
+		return fmt.Errorf("database wiping not supported for Iceberg - use DROP DATABASE instead")
 	default:
 		return fmt.Errorf("wiping not supported for database type: %s", client.DatabaseType)
 	}

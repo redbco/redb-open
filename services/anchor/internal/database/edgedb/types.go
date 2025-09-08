@@ -1,33 +1,49 @@
 package edgedb
 
-import "github.com/redbco/redb-open/services/anchor/internal/database/common"
+import (
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
+)
 
-// EdgeDBDetails contains information about an EdgeDB database
-type EdgeDBDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
+// ConvertEdgeDBScalar converts EdgeDBScalarInfo to unifiedmodel.Type
+func ConvertEdgeDBScalar(scalarInfo EdgeDBScalarInfo) unifiedmodel.Type {
+	return unifiedmodel.Type{
+		Name:     scalarInfo.Name,
+		Category: "scalar",
+		Definition: map[string]any{
+			"module":      scalarInfo.Module,
+			"baseType":    scalarInfo.BaseType,
+			"constraints": scalarInfo.Constraints,
+		},
+	}
 }
 
-// EdgeDBSchema represents the schema of an EdgeDB database
-type EdgeDBSchema struct {
-	Types       []common.TypeInfo      `json:"types"`
-	Modules     []common.ModuleInfo    `json:"modules"`
-	Functions   []common.FunctionInfo  `json:"functions"`
-	Extensions  []common.ExtensionInfo `json:"extensions"`
-	Scalars     []EdgeDBScalarInfo     `json:"scalars"`
-	Aliases     []EdgeDBAliasInfo      `json:"aliases"`
-	Constraints []EdgeDBConstraintInfo `json:"constraints"`
+// ConvertEdgeDBAlias converts EdgeDBAliasInfo to unifiedmodel.Type
+func ConvertEdgeDBAlias(aliasInfo EdgeDBAliasInfo) unifiedmodel.Type {
+	return unifiedmodel.Type{
+		Name:     aliasInfo.Name,
+		Category: "alias",
+		Definition: map[string]any{
+			"module":     aliasInfo.Module,
+			"targetType": aliasInfo.Type,
+		},
+	}
+}
+
+// ConvertEdgeDBConstraint converts EdgeDBConstraintInfo to unifiedmodel.Constraint
+func ConvertEdgeDBConstraint(constraintInfo EdgeDBConstraintInfo) unifiedmodel.Constraint {
+	return unifiedmodel.Constraint{
+		Name:    constraintInfo.Name,
+		Type:    unifiedmodel.ConstraintTypeCheck, // EdgeDB constraints are typically check constraints
+		Columns: []string{},                       // EdgeDB constraints are more complex and don't map directly to columns
+	}
 }
 
 // EdgeDBScalarInfo represents a scalar type in EdgeDB
 type EdgeDBScalarInfo struct {
-	Module      string                        `json:"module"`
-	Name        string                        `json:"name"`
-	BaseType    string                        `json:"baseType"`
-	Constraints []common.EdgeDBConstraintInfo `json:"constraints"`
+	Module      string                 `json:"module"`
+	Name        string                 `json:"name"`
+	BaseType    string                 `json:"baseType"`
+	Constraints []EdgeDBConstraintInfo `json:"constraints"`
 }
 
 // EdgeDBAliasInfo represents an alias type in EdgeDB

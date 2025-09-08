@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // PineconeReplicationSourceDetails contains information about a replication source
@@ -72,7 +72,7 @@ func CreateReplicationSource(client *PineconeClient, indexName string, namespace
 	}
 
 	// Generate a unique ID for this replication source
-	replicationID := fmt.Sprintf("pinecone_repl_%s_%s", databaseID, common.GenerateUniqueID())
+	replicationID := fmt.Sprintf("pinecone_repl_%s_%s", databaseID, dbclient.GenerateUniqueID())
 
 	details := &PineconeReplicationSourceDetails{
 		ReplicationID: replicationID,

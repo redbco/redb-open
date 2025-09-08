@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -296,8 +295,16 @@ func WipeDatabase(db *mongo.Database) error {
 	return nil
 }
 
+// FindOptions represents options for finding documents
+type FindOptions struct {
+	Limit      int                    `json:"limit,omitempty"`
+	Skip       int                    `json:"skip,omitempty"`
+	Sort       map[string]string      `json:"sort,omitempty"`
+	Projection map[string]interface{} `json:"projection,omitempty"`
+}
+
 // FindDocuments finds documents in a collection based on a filter
-func FindDocuments(db *mongo.Database, collectionName string, filter map[string]interface{}, findOpts *common.FindOptions) ([]map[string]interface{}, error) {
+func FindDocuments(db *mongo.Database, collectionName string, filter map[string]interface{}, findOpts *FindOptions) ([]map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

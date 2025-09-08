@@ -165,7 +165,7 @@ func nodeToMap(node interface{}) map[string]interface{} {
 	switch v := node.(type) {
 	case neo4j.Node:
 		// Add node ID
-		result["_id"] = v.Id
+		result["_id"] = v.ElementId
 
 		// Add labels
 		labels := v.Labels
@@ -180,12 +180,12 @@ func nodeToMap(node interface{}) map[string]interface{} {
 
 	case neo4j.Relationship:
 		// Add relationship ID and type
-		result["_id"] = v.Id
+		result["_id"] = v.ElementId
 		result["_type"] = v.Type
 
 		// Add start and end node IDs
-		result["_startNodeId"] = v.StartId
-		result["_endNodeId"] = v.EndId
+		result["_startNodeId"] = v.StartElementId
+		result["_endNodeId"] = v.EndElementId
 
 		// Add properties
 		for key, value := range v.Props {

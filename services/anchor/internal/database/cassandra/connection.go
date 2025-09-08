@@ -9,11 +9,11 @@ import (
 
 	"github.com/gocql/gocql"
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a Cassandra database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var decryptedPassword string
 	if config.Password == "" {
 		decryptedPassword = ""
@@ -64,7 +64,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error testing Cassandra connection: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           session,
 		DatabaseType: "cassandra",
 		DatabaseID:   config.DatabaseID,
@@ -74,7 +74,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Cassandra instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var decryptedPassword string
 	if config.Password == "" {
 		decryptedPassword = ""
@@ -125,7 +125,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error testing Cassandra connection: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           session,
 		InstanceType: "cassandra",
 		InstanceID:   config.InstanceID,
@@ -135,35 +135,35 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of a Cassandra database
-func DiscoverDetails(db interface{}) (*CassandraDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	session, ok := db.(*gocql.Session)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details CassandraDetails
-	details.DatabaseType = "cassandra"
+	details := make(map[string]interface{})
+	details["databaseType"] = "cassandra"
 
 	// Get server version
 	var version string
 	if err := session.Query("SELECT release_version FROM system.local").Scan(&version); err != nil {
 		return nil, fmt.Errorf("error fetching version: %v", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Get cluster name
 	var clusterName string
 	if err := session.Query("SELECT cluster_name FROM system.local").Scan(&clusterName); err != nil {
 		return nil, fmt.Errorf("error fetching cluster name: %v", err)
 	}
-	details.ClusterName = clusterName
+	details["clusterName"] = clusterName
 
 	// Get datacenter
 	var datacenter string
 	if err := session.Query("SELECT data_center FROM system.local").Scan(&datacenter); err != nil {
 		return nil, fmt.Errorf("error fetching datacenter: %v", err)
 	}
-	details.Datacenter = datacenter
+	details["datacenter"] = datacenter
 
 	// Count keyspaces
 	var keyspaceCount int
@@ -174,16 +174,16 @@ func DiscoverDetails(db interface{}) (*CassandraDetails, error) {
 	if err := iter.Close(); err != nil {
 		return nil, fmt.Errorf("error counting keyspaces: %v", err)
 	}
-	details.Keyspaces = keyspaceCount
+	details["keyspaces"] = keyspaceCount
 
 	// Generate a unique identifier based on cluster name and datacenter
-	details.UniqueIdentifier = fmt.Sprintf("%s-%s", clusterName, datacenter)
+	details["uniqueIdentifier"] = fmt.Sprintf("%s-%s", clusterName, datacenter)
 
 	// Determine edition (Community or Enterprise)
 	if strings.Contains(strings.ToLower(version), "dse") {
-		details.DatabaseEdition = "enterprise"
+		details["databaseEdition"] = "enterprise"
 	} else {
-		details.DatabaseEdition = "community"
+		details["databaseEdition"] = "community"
 	}
 
 	// Estimate database size (this is approximate as Cassandra doesn't provide direct size metrics)
@@ -203,12 +203,12 @@ func DiscoverDetails(db interface{}) (*CassandraDetails, error) {
 			return nil, fmt.Errorf("error estimating database size: %v", err)
 		}
 	}
-	details.DatabaseSize = databaseSize
+	details["databaseSize"] = databaseSize
 
-	return &details, nil
+	return details, nil
 }
 
-func createTLSConfig(config common.DatabaseConfig) (*gocql.SslOptions, error) {
+func createTLSConfig(config dbclient.DatabaseConfig) (*gocql.SslOptions, error) {
 	sslOpts := &gocql.SslOptions{
 		EnableHostVerification: true,
 	}
@@ -229,7 +229,7 @@ func createTLSConfig(config common.DatabaseConfig) (*gocql.SslOptions, error) {
 	return sslOpts, nil
 }
 
-func createInstanceTLSConfig(config common.InstanceConfig) (*gocql.SslOptions, error) {
+func createInstanceTLSConfig(config dbclient.InstanceConfig) (*gocql.SslOptions, error) {
 	sslOpts := &gocql.SslOptions{
 		EnableHostVerification: true,
 	}

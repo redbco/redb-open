@@ -2,418 +2,438 @@ package mysql
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 )
 
-// DiscoverSchema discovers the schema of a MySQL database
-func DiscoverSchema(db interface{}) (*MySQLSchema, error) {
+// DiscoverSchema discovers the schema of a MySQL database and returns a UnifiedModel
+func DiscoverSchema(db interface{}) (*unifiedmodel.UnifiedModel, error) {
 	sqlDB, ok := db.(*sql.DB)
 	if !ok {
 		return nil, fmt.Errorf("invalid MySQL connection type")
 	}
 
-	schema := &MySQLSchema{}
-
-	// Get tables
-	tables, err := getTables(sqlDB)
-	if err != nil {
-		return nil, fmt.Errorf("error getting tables: %w", err)
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.MySQL,
+		Tables:       make(map[string]unifiedmodel.Table),
+		Schemas:      make(map[string]unifiedmodel.Schema),
+		Types:        make(map[string]unifiedmodel.Type),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Triggers:     make(map[string]unifiedmodel.Trigger),
+		Sequences:    make(map[string]unifiedmodel.Sequence),
+		Extensions:   make(map[string]unifiedmodel.Extension),
 	}
-	schema.Tables = tables
 
-	// Get enum types
-	enumTypes, err := getEnumTypes(sqlDB)
+	var err error
+
+	// Get tables and their columns directly as UnifiedModel types
+	err = discoverTablesAndColumnsUnified(sqlDB, um)
 	if err != nil {
-		return nil, fmt.Errorf("error getting enum types: %w", err)
+		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
-	schema.EnumTypes = enumTypes
 
-	// Get schemas
-	schemas, err := getSchemas(sqlDB)
+	// Get enum types directly as UnifiedModel types
+	err = discoverEnumTypesUnified(sqlDB, um)
 	if err != nil {
-		return nil, fmt.Errorf("error getting schemas: %w", err)
+		return nil, fmt.Errorf("error discovering enum types: %v", err)
 	}
-	schema.Schemas = schemas
 
-	// Get functions
-	functions, err := getFunctions(sqlDB)
+	// Get schemas directly as UnifiedModel types
+	err = getSchemasUnified(sqlDB, um)
 	if err != nil {
-		return nil, fmt.Errorf("error getting functions: %w", err)
+		return nil, fmt.Errorf("error getting schemas: %v", err)
 	}
-	schema.Functions = functions
 
-	// Get triggers
-	triggers, err := getTriggers(sqlDB)
+	// Get functions directly as UnifiedModel types
+	err = getFunctionsUnified(sqlDB, um)
 	if err != nil {
-		return nil, fmt.Errorf("error getting triggers: %w", err)
+		return nil, fmt.Errorf("error getting functions: %v", err)
 	}
-	schema.Triggers = triggers
 
-	// MySQL doesn't have sequences like PostgreSQL, but we can use AUTO_INCREMENT columns
-	// as a similar concept
-	sequences, err := getSequences(sqlDB)
+	// Get triggers directly as UnifiedModel types
+	err = getTriggersUnified(sqlDB, um)
 	if err != nil {
-		return nil, fmt.Errorf("error getting sequences: %w", err)
+		return nil, fmt.Errorf("error getting triggers: %v", err)
 	}
-	schema.Sequences = sequences
 
-	// Get extensions (plugins in MySQL)
-	extensions, err := getExtensions(sqlDB)
+	// Get sequences directly as UnifiedModel types
+	err = getSequencesUnified(sqlDB, um)
 	if err != nil {
-		return nil, fmt.Errorf("error getting extensions: %w", err)
+		return nil, fmt.Errorf("error getting sequences: %v", err)
 	}
-	schema.Extensions = extensions
 
-	return schema, nil
+	// Get extensions directly as UnifiedModel types
+	err = getExtensionsUnified(sqlDB, um)
+	if err != nil {
+		return nil, fmt.Errorf("error getting extensions: %v", err)
+	}
+
+	return um, nil
 }
 
-// CreateStructure creates database structure based on provided parameters
-func CreateStructure(db *sql.DB, params common.StructureParams) error {
+// CreateStructure creates database objects from a UnifiedModel
+func CreateStructure(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
+	if um == nil {
+		return fmt.Errorf("unified model cannot be nil")
+	}
+
 	// Start a transaction
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("error starting transaction: %w", err)
+		return fmt.Errorf("error starting transaction: %v", err)
 	}
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		}
-	}()
+	defer tx.Rollback()
 
-	// Sort tables based on dependencies
-	sortedTables, err := common.TopologicalSort(params.Tables)
+	// Create enum types first
+	for _, umType := range um.Types {
+		if umType.Category == "enum" {
+			values := []string{}
+			if definition, ok := umType.Definition["values"].([]string); ok {
+				values = definition
+			} else if definition, ok := umType.Definition["values"].([]interface{}); ok {
+				for _, v := range definition {
+					if str, ok := v.(string); ok {
+						values = append(values, str)
+					}
+				}
+			}
+			if len(values) > 0 {
+				if err := createEnumType(tx, umType.Name, values); err != nil {
+					return fmt.Errorf("error creating enum type %s: %v", umType.Name, err)
+				}
+			}
+		}
+	}
+
+	// Create schemas first
+	for _, schema := range um.Schemas {
+		if schema.Name != "mysql" && schema.Name != "information_schema" && schema.Name != "performance_schema" && schema.Name != "sys" {
+			if err := createSchema(tx, schema.Name); err != nil {
+				return fmt.Errorf("error creating schema %s: %v", schema.Name, err)
+			}
+		}
+	}
+
+	// Sort tables based on dependencies (we'll need to implement this for UnifiedModel)
+	sortedTables, err := sortTablesByDependencies(um.Tables)
 	if err != nil {
 		return fmt.Errorf("error sorting tables: %v", err)
 	}
 
 	// Create tables
-	for _, tableInfo := range sortedTables {
-		err = CreateTable(tx, tableInfo)
-		if err != nil {
-			return fmt.Errorf("error creating table %s: %v", tableInfo.Name, err)
+	for _, table := range sortedTables {
+		if err := CreateTableFromUnified(tx, table, um.Types); err != nil {
+			return fmt.Errorf("error creating table %s: %v", table.Name, err)
+		}
+	}
+
+	// Add table constraints
+	for _, table := range sortedTables {
+		if err := AddTableConstraintsFromUnified(tx, table); err != nil {
+			return fmt.Errorf("error adding constraints to table %s: %v", table.Name, err)
+		}
+	}
+
+	// Create views
+	for _, view := range um.Views {
+		if err := createView(tx, view); err != nil {
+			return fmt.Errorf("error creating view %s: %v", view.Name, err)
+		}
+	}
+
+	// Create functions
+	for _, function := range um.Functions {
+		if err := createFunction(tx, function); err != nil {
+			return fmt.Errorf("error creating function %s: %v", function.Name, err)
+		}
+	}
+
+	// Create triggers
+	for _, trigger := range um.Triggers {
+		if err := createTrigger(tx, trigger); err != nil {
+			return fmt.Errorf("error creating trigger %s: %v", trigger.Name, err)
+		}
+	}
+
+	// Create sequences (AUTO_INCREMENT in MySQL)
+	for _, sequence := range um.Sequences {
+		if err := createSequence(tx, sequence); err != nil {
+			return fmt.Errorf("error creating sequence %s: %v", sequence.Name, err)
 		}
 	}
 
 	// Commit the transaction
-	if err = tx.Commit(); err != nil {
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("error committing transaction: %v", err)
 	}
 
 	return nil
 }
 
-// getTables retrieves tables from the database
-func getTables(db *sql.DB) ([]common.TableInfo, error) {
+// discoverTablesAndColumnsUnified discovers tables and columns directly into UnifiedModel
+func discoverTablesAndColumnsUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
-		SELECT 
-			TABLE_SCHEMA,
-			TABLE_NAME
-		FROM information_schema.tables 
-		WHERE table_schema = DATABASE()
-		AND TABLE_TYPE = 'BASE TABLE'
-		ORDER BY TABLE_NAME`
+        SELECT 
+            t.table_schema,
+            t.table_name,
+            c.column_name,
+            c.data_type,
+            c.is_nullable,
+            c.column_default,
+            c.column_comment,
+            c.character_maximum_length,
+            c.extra
+        FROM information_schema.tables t
+        JOIN information_schema.columns c ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+        WHERE t.table_schema = DATABASE()
+        AND t.table_type = 'BASE TABLE'
+        ORDER BY t.table_name, c.ordinal_position`
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error fetching table and column information: %v", err)
 	}
 	defer rows.Close()
 
-	var tables []common.TableInfo
 	for rows.Next() {
-		var table common.TableInfo
-		err := rows.Scan(&table.Schema, &table.Name)
-		if err != nil {
-			return nil, err
+		var schemaName, tableName, columnName, dataType, isNullable string
+		var columnDefault, columnComment sql.NullString
+		var varcharLength sql.NullInt64
+		var extra string
+
+		if err := rows.Scan(
+			&schemaName, &tableName, &columnName, &dataType, &isNullable, &columnDefault, &columnComment,
+			&varcharLength, &extra,
+		); err != nil {
+			return fmt.Errorf("error scanning table and column row: %v", err)
 		}
 
-		// Get columns for this table
-		columns, err := getTableColumns(db, table.Schema, table.Name)
-		if err != nil {
-			return nil, fmt.Errorf("error getting columns for table %s: %w", table.Name, err)
-		}
-		table.Columns = columns
-
-		// Get constraints for this table
-		constraints, err := getConstraints(db, table.Schema, table.Name)
-		if err != nil {
-			return nil, fmt.Errorf("error getting constraints for table %s: %w", table.Name, err)
-		}
-		table.Constraints = constraints
-
-		// Get indexes for this table
-		indexes, err := getIndexes(db, table.Schema, table.Name)
-		if err != nil {
-			return nil, fmt.Errorf("error getting indexes for table %s: %w", table.Name, err)
-		}
-		table.Indexes = indexes
-
-		// Set primary key
-		for _, col := range table.Columns {
-			if col.IsPrimaryKey {
-				table.PrimaryKey = append(table.PrimaryKey, col.Name)
+		// Get or create table
+		table, exists := um.Tables[tableName]
+		if !exists {
+			table = unifiedmodel.Table{
+				Name:        tableName,
+				Columns:     make(map[string]unifiedmodel.Column),
+				Indexes:     make(map[string]unifiedmodel.Index),
+				Constraints: make(map[string]unifiedmodel.Constraint),
 			}
 		}
 
-		tables = append(tables, table)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return tables, nil
-}
-
-// getTableColumns retrieves columns for a specific table
-func getTableColumns(db *sql.DB, schema, table string) ([]common.ColumnInfo, error) {
-	query := `
-		SELECT 
-			COLUMN_NAME,
-			DATA_TYPE,
-			IS_NULLABLE,
-			COLUMN_DEFAULT,
-			COLUMN_COMMENT,
-			CHARACTER_MAXIMUM_LENGTH,
-			EXTRA
-		FROM information_schema.columns 
-		WHERE table_schema = ? 
-		AND table_name = ?
-		ORDER BY ORDINAL_POSITION`
-
-	rows, err := db.Query(query, schema, table)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var columns []common.ColumnInfo
-	for rows.Next() {
-		var col common.ColumnInfo
-		var columnDefault sql.NullString
-		var description sql.NullString
-		var varcharLength sql.NullInt64
-		var extra string
-		var isNullable string
-
-		err := rows.Scan(
-			&col.Name,
-			&col.DataType,
-			&isNullable,
-			&columnDefault,
-			&description,
-			&varcharLength,
-			&extra,
-		)
-		if err != nil {
-			return nil, err
+		// Create column
+		column := unifiedmodel.Column{
+			Name:     columnName,
+			DataType: dataType,
+			Nullable: isNullable == "YES",
 		}
 
-		// Set nullable flag
-		col.IsNullable = isNullable == "YES"
-
-		// Set default value if present
 		if columnDefault.Valid {
-			defaultVal := columnDefault.String
-			col.ColumnDefault = &defaultVal
+			column.Default = columnDefault.String
 		}
 
 		// Check for auto increment
-		col.IsAutoIncrement = strings.Contains(extra, "auto_increment")
+		column.AutoIncrement = strings.Contains(extra, "auto_increment")
 
 		// Check for generated columns
 		if strings.Contains(extra, "GENERATED") {
-			col.IsGenerated = true
-			// Extract generation expression if available
 			genExpr := extractGenerationExpression(extra)
 			if genExpr != "" {
-				col.GenerationExpression = &genExpr
+				column.GeneratedExpression = genExpr
 			}
 		}
 
 		// Set varchar length if applicable
-		if varcharLength.Valid && (col.DataType == "varchar" || col.DataType == "char") {
+		if varcharLength.Valid && (dataType == "varchar" || dataType == "char") {
 			length := int(varcharLength.Int64)
-			col.VarcharLength = &length
+			column.DataType = fmt.Sprintf("%s(%d)", dataType, length)
 		}
 
-		// Check if column is part of primary key (will be updated later with constraints)
-		// This is just a placeholder, will be properly set when processing constraints
-
-		columns = append(columns, col)
+		table.Columns[columnName] = column
+		um.Tables[tableName] = table
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
+	// Get primary keys for all tables
+	err = discoverPrimaryKeysUnified(db, um)
+	if err != nil {
+		return fmt.Errorf("error discovering primary keys: %v", err)
 	}
 
-	// Get primary key information
-	pkQuery := `
-		SELECT k.COLUMN_NAME
+	// Get indexes for all tables
+	err = discoverIndexesUnified(db, um)
+	if err != nil {
+		return fmt.Errorf("error discovering indexes: %v", err)
+	}
+
+	// Get constraints for all tables
+	err = discoverConstraintsUnified(db, um)
+	if err != nil {
+		return fmt.Errorf("error discovering constraints: %v", err)
+	}
+
+	return nil
+}
+
+// discoverPrimaryKeysUnified discovers primary keys directly into UnifiedModel
+func discoverPrimaryKeysUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
+	query := `
+		SELECT 
+			t.table_name,
+			k.column_name
 		FROM information_schema.table_constraints t
 		JOIN information_schema.key_column_usage k
 		USING(constraint_name,table_schema,table_name)
 		WHERE t.constraint_type='PRIMARY KEY'
-		AND t.table_schema=?
-		AND t.table_name=?`
+		AND t.table_schema = DATABASE()
+		ORDER BY t.table_name, k.ordinal_position`
 
-	pkRows, err := db.Query(pkQuery, schema, table)
+	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
-	}
-	defer pkRows.Close()
-
-	// Mark primary key columns
-	pkColumns := make(map[string]bool)
-	for pkRows.Next() {
-		var colName string
-		if err := pkRows.Scan(&colName); err != nil {
-			return nil, err
-		}
-		pkColumns[colName] = true
-	}
-
-	// Update primary key flag
-	for i := range columns {
-		if pkColumns[columns[i].Name] {
-			columns[i].IsPrimaryKey = true
-		}
-	}
-
-	return columns, nil
-}
-
-// getConstraints retrieves constraints for a specific table
-func getConstraints(db *sql.DB, schema, table string) ([]common.Constraint, error) {
-	query := `
-		SELECT
-			CONSTRAINT_NAME,
-			CONSTRAINT_TYPE,
-			COLUMN_NAME,
-			REFERENCED_TABLE_NAME,
-			REFERENCED_COLUMN_NAME
-		FROM information_schema.key_column_usage k
-		JOIN information_schema.table_constraints t
-		USING (CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME)
-		WHERE k.TABLE_SCHEMA = ?
-		AND k.TABLE_NAME = ?
-		AND k.REFERENCED_TABLE_SCHEMA IS NOT NULL`
-
-	rows, err := db.Query(query, schema, table)
-	if err != nil {
-		return nil, err
+		return fmt.Errorf("error querying primary keys: %v", err)
 	}
 	defer rows.Close()
 
-	var constraints []common.Constraint
 	for rows.Next() {
-		var c common.Constraint
-		var refTable, refColumn sql.NullString
-
-		err := rows.Scan(
-			&c.Name,
-			&c.Type,
-			&c.Column,
-			&refTable,
-			&refColumn,
-		)
-		if err != nil {
-			return nil, err
+		var tableName, columnName string
+		if err := rows.Scan(&tableName, &columnName); err != nil {
+			return fmt.Errorf("error scanning primary key row: %v", err)
 		}
 
-		c.Table = table
-
-		if refTable.Valid && refColumn.Valid {
-			c.ForeignKey = &common.ForeignKeyInfo{
-				Table:  refTable.String,
-				Column: refColumn.String,
-			}
-
-			// Get ON DELETE and ON UPDATE actions
-			actionsQuery := `
-				SELECT
-					DELETE_RULE,
-					UPDATE_RULE
-				FROM information_schema.referential_constraints
-				WHERE CONSTRAINT_SCHEMA = ?
-				AND CONSTRAINT_NAME = ?`
-
-			var deleteRule, updateRule string
-			err := db.QueryRow(actionsQuery, schema, c.Name).Scan(&deleteRule, &updateRule)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, err
-			}
-
-			if err == nil {
-				c.ForeignKey.OnDelete = deleteRule
-				c.ForeignKey.OnUpdate = updateRule
+		if table, exists := um.Tables[tableName]; exists {
+			if column, colExists := table.Columns[columnName]; colExists {
+				column.IsPrimaryKey = true
+				table.Columns[columnName] = column
+				um.Tables[tableName] = table
 			}
 		}
-
-		constraints = append(constraints, c)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return constraints, nil
+	return nil
 }
 
-// getIndexes retrieves indexes for a specific table
-func getIndexes(db *sql.DB, schema, table string) ([]common.IndexInfo, error) {
+// discoverConstraintsUnified discovers constraints directly into UnifiedModel
+func discoverConstraintsUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
-			INDEX_NAME,
-			GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX),
-			MAX(NON_UNIQUE)
-		FROM information_schema.statistics
-		WHERE TABLE_SCHEMA = ?
-		AND TABLE_NAME = ?
-		AND INDEX_NAME != 'PRIMARY'
-		GROUP BY INDEX_NAME`
+			tc.table_name,
+			tc.constraint_name,
+			tc.constraint_type,
+			kcu.column_name,
+			kcu.referenced_table_name,
+			kcu.referenced_column_name,
+			rc.delete_rule,
+			rc.update_rule
+		FROM information_schema.table_constraints tc
+		LEFT JOIN information_schema.key_column_usage kcu
+			ON tc.constraint_name = kcu.constraint_name 
+			AND tc.table_schema = kcu.table_schema
+			AND tc.table_name = kcu.table_name
+		LEFT JOIN information_schema.referential_constraints rc
+			ON tc.constraint_name = rc.constraint_name
+			AND tc.table_schema = rc.constraint_schema
+		WHERE tc.table_schema = DATABASE()
+		AND tc.constraint_type IN ('FOREIGN KEY', 'CHECK', 'UNIQUE')
+		ORDER BY tc.table_name, tc.constraint_name`
 
-	rows, err := db.Query(query, schema, table)
+	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error querying constraints: %v", err)
 	}
 	defer rows.Close()
 
-	var indexes []common.IndexInfo
 	for rows.Next() {
-		var idx common.IndexInfo
-		var columnsStr string
-		var nonUnique int
-
-		err := rows.Scan(
-			&idx.Name,
-			&columnsStr,
-			&nonUnique,
-		)
-		if err != nil {
-			return nil, err
+		var tableName, constraintName, constraintType, columnName string
+		var refTable, refColumn, deleteRule, updateRule sql.NullString
+		if err := rows.Scan(&tableName, &constraintName, &constraintType, &columnName, &refTable, &refColumn, &deleteRule, &updateRule); err != nil {
+			return fmt.Errorf("error scanning constraint row: %v", err)
 		}
 
-		idx.Columns = strings.Split(columnsStr, ",")
-		idx.IsUnique = nonUnique == 0
+		if table, exists := um.Tables[tableName]; exists {
+			var umConstraintType unifiedmodel.ConstraintType
+			switch constraintType {
+			case "FOREIGN KEY":
+				umConstraintType = unifiedmodel.ConstraintTypeForeignKey
+			case "CHECK":
+				umConstraintType = unifiedmodel.ConstraintTypeCheck
+			case "UNIQUE":
+				umConstraintType = unifiedmodel.ConstraintTypeUnique
+			default:
+				continue // Skip unknown constraint types
+			}
 
-		indexes = append(indexes, idx)
+			constraint := unifiedmodel.Constraint{
+				Name:    constraintName,
+				Type:    umConstraintType,
+				Columns: []string{columnName},
+			}
+
+			if refTable.Valid && refColumn.Valid {
+				constraint.Reference = unifiedmodel.Reference{
+					Table:   refTable.String,
+					Columns: []string{refColumn.String},
+				}
+				if deleteRule.Valid {
+					constraint.Reference.OnDelete = deleteRule.String
+				}
+				if updateRule.Valid {
+					constraint.Reference.OnUpdate = updateRule.String
+				}
+			}
+
+			table.Constraints[constraintName] = constraint
+			um.Tables[tableName] = table
+		}
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return indexes, nil
+	return nil
 }
 
-// getEnumTypes retrieves enum types from the database
-func getEnumTypes(db *sql.DB) ([]common.EnumInfo, error) {
+// discoverIndexesUnified discovers indexes directly into UnifiedModel
+func discoverIndexesUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
+	query := `
+		SELECT 
+			table_name,
+			index_name,
+			GROUP_CONCAT(column_name ORDER BY seq_in_index),
+			MAX(non_unique)
+		FROM information_schema.statistics
+		WHERE table_schema = DATABASE()
+		AND index_name != 'PRIMARY'
+		GROUP BY table_name, index_name`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return fmt.Errorf("error querying indexes: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var tableName, indexName, columnsStr string
+		var nonUnique int
+		if err := rows.Scan(&tableName, &indexName, &columnsStr, &nonUnique); err != nil {
+			return fmt.Errorf("error scanning index row: %v", err)
+		}
+
+		if table, exists := um.Tables[tableName]; exists {
+			index := unifiedmodel.Index{
+				Name:    indexName,
+				Columns: strings.Split(columnsStr, ","),
+				Unique:  nonUnique == 0,
+			}
+
+			table.Indexes[indexName] = index
+			um.Tables[tableName] = table
+		}
+	}
+
+	return nil
+}
+
+// discoverEnumTypesUnified discovers enum types directly into UnifiedModel
+func discoverEnumTypesUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			COLUMN_NAME,
@@ -424,7 +444,7 @@ func getEnumTypes(db *sql.DB) ([]common.EnumInfo, error) {
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error fetching enum types: %v", err)
 	}
 	defer rows.Close()
 
@@ -436,7 +456,7 @@ func getEnumTypes(db *sql.DB) ([]common.EnumInfo, error) {
 		var columnType string
 
 		if err := rows.Scan(&name, &columnType); err != nil {
-			return nil, err
+			return fmt.Errorf("error scanning enum row: %v", err)
 		}
 
 		// Extract enum values from column type
@@ -454,19 +474,21 @@ func getEnumTypes(db *sql.DB) ([]common.EnumInfo, error) {
 		enumMap[name] = values
 	}
 
-	var enums []common.EnumInfo
 	for name, values := range enumMap {
-		enums = append(enums, common.EnumInfo{
-			Name:   name,
-			Values: values,
-		})
+		um.Types[name] = unifiedmodel.Type{
+			Name:     name,
+			Category: "enum",
+			Definition: map[string]any{
+				"values": values,
+			},
+		}
 	}
 
-	return enums, nil
+	return rows.Err()
 }
 
-// getSchemas retrieves schemas from the database
-func getSchemas(db *sql.DB) ([]common.DatabaseSchemaInfo, error) {
+// getSchemasUnified gets schemas directly into UnifiedModel
+func getSchemasUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT SCHEMA_NAME 
 		FROM information_schema.SCHEMATA 
@@ -474,29 +496,27 @@ func getSchemas(db *sql.DB) ([]common.DatabaseSchemaInfo, error) {
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error querying schemas: %v", err)
 	}
 	defer rows.Close()
 
-	var schemas []common.DatabaseSchemaInfo
 	for rows.Next() {
-		var schema common.DatabaseSchemaInfo
-		err := rows.Scan(&schema.Name)
-		if err != nil {
-			return nil, err
+		var schemaName string
+		if err := rows.Scan(&schemaName); err != nil {
+			return fmt.Errorf("error scanning schema: %v", err)
 		}
-		schemas = append(schemas, schema)
+
+		schema := unifiedmodel.Schema{
+			Name: schemaName,
+		}
+		um.Schemas[schemaName] = schema
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return schemas, nil
+	return nil
 }
 
-// getFunctions retrieves functions from the database
-func getFunctions(db *sql.DB) ([]common.FunctionInfo, error) {
+// getFunctionsUnified gets functions directly into UnifiedModel
+func getFunctionsUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			ROUTINE_SCHEMA,
@@ -510,23 +530,14 @@ func getFunctions(db *sql.DB) ([]common.FunctionInfo, error) {
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error querying functions: %v", err)
 	}
 	defer rows.Close()
 
-	var functions []common.FunctionInfo
 	for rows.Next() {
-		var function common.FunctionInfo
-		var paramStyle string
-		err := rows.Scan(
-			&function.Schema,
-			&function.Name,
-			&paramStyle,
-			&function.ReturnType,
-			&function.Body,
-		)
-		if err != nil {
-			return nil, err
+		var schemaName, functionName, paramStyle, returnType, body string
+		if err := rows.Scan(&schemaName, &functionName, &paramStyle, &returnType, &body); err != nil {
+			return fmt.Errorf("error scanning function: %v", err)
 		}
 
 		// Get function arguments
@@ -540,35 +551,39 @@ func getFunctions(db *sql.DB) ([]common.FunctionInfo, error) {
 			AND PARAMETER_MODE IS NOT NULL
 			ORDER BY ORDINAL_POSITION`
 
-		argsRows, err := db.Query(argsQuery, function.Schema, function.Name)
+		argsRows, err := db.Query(argsQuery, schemaName, functionName)
 		if err != nil {
-			return nil, err
+			return fmt.Errorf("error querying function arguments: %v", err)
 		}
 
-		var args []string
+		var args []unifiedmodel.Argument
 		for argsRows.Next() {
 			var name, dataType string
 			if err := argsRows.Scan(&name, &dataType); err != nil {
 				argsRows.Close()
-				return nil, err
+				return fmt.Errorf("error scanning function argument: %v", err)
 			}
-			args = append(args, fmt.Sprintf("%s %s", name, dataType))
+			args = append(args, unifiedmodel.Argument{
+				Name: name,
+				Type: dataType,
+			})
 		}
 		argsRows.Close()
 
-		function.Arguments = strings.Join(args, ", ")
-		functions = append(functions, function)
+		um.Functions[functionName] = unifiedmodel.Function{
+			Name:       functionName,
+			Language:   "sql", // Default for MySQL
+			Returns:    returnType,
+			Arguments:  args,
+			Definition: body,
+		}
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return functions, nil
+	return nil
 }
 
-// getTriggers retrieves triggers from the database
-func getTriggers(db *sql.DB) ([]common.TriggerInfo, error) {
+// getTriggersUnified gets triggers directly into UnifiedModel
+func getTriggersUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			TRIGGER_SCHEMA,
@@ -582,36 +597,30 @@ func getTriggers(db *sql.DB) ([]common.TriggerInfo, error) {
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error querying triggers: %v", err)
 	}
 	defer rows.Close()
 
-	var triggers []common.TriggerInfo
 	for rows.Next() {
-		var trigger common.TriggerInfo
-		err := rows.Scan(
-			&trigger.Schema,
-			&trigger.Name,
-			&trigger.Table,
-			&trigger.Timing,
-			&trigger.Event,
-			&trigger.Statement,
-		)
-		if err != nil {
-			return nil, err
+		var schemaName, triggerName, tableName, timing, event, statement string
+		if err := rows.Scan(&schemaName, &triggerName, &tableName, &timing, &event, &statement); err != nil {
+			return fmt.Errorf("error scanning trigger: %v", err)
 		}
-		triggers = append(triggers, trigger)
+
+		um.Triggers[triggerName] = unifiedmodel.Trigger{
+			Name:      triggerName,
+			Table:     tableName,
+			Timing:    timing,
+			Events:    []string{event},
+			Procedure: statement,
+		}
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return triggers, nil
+	return nil
 }
 
-// getSequences retrieves auto-increment columns as sequences
-func getSequences(db *sql.DB) ([]common.SequenceInfo, error) {
+// getSequencesUnified gets sequences directly into UnifiedModel
+func getSequencesUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			c.TABLE_SCHEMA,
@@ -628,49 +637,39 @@ func getSequences(db *sql.DB) ([]common.SequenceInfo, error) {
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error querying sequences: %v", err)
 	}
 	defer rows.Close()
 
-	var sequences []common.SequenceInfo
 	for rows.Next() {
-		var seq common.SequenceInfo
 		var schema, table, column, dataType string
 		var startValue int64
 
-		err := rows.Scan(
-			&schema,
-			&table,
-			&column,
-			&dataType,
-			&startValue,
-		)
-		if err != nil {
-			return nil, err
+		if err := rows.Scan(&schema, &table, &column, &dataType, &startValue); err != nil {
+			return fmt.Errorf("error scanning sequence: %v", err)
 		}
 
-		seq.Schema = schema
-		seq.Name = fmt.Sprintf("%s_%s_seq", table, column)
-		seq.DataType = dataType
-		seq.Start = startValue
-		seq.Increment = 1
-		seq.MinValue = 1
-		seq.MaxValue = 9223372036854775807 // Default max value for BIGINT
-		seq.CacheSize = 1
-		seq.Cycle = false
+		seqName := fmt.Sprintf("%s_%s_seq", table, column)
+		maxValue := int64(9223372036854775807) // Default max value for BIGINT
+		minValue := int64(1)
+		cacheSize := int64(1)
 
-		sequences = append(sequences, seq)
+		um.Sequences[seqName] = unifiedmodel.Sequence{
+			Name:      seqName,
+			Start:     startValue,
+			Increment: 1,
+			Min:       &minValue,
+			Max:       &maxValue,
+			Cache:     &cacheSize,
+			Cycle:     false,
+		}
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return sequences, nil
+	return nil
 }
 
-// getExtensions retrieves installed plugins as extensions
-func getExtensions(db *sql.DB) ([]common.ExtensionInfo, error) {
+// getExtensionsUnified gets extensions directly into UnifiedModel
+func getExtensionsUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			PLUGIN_NAME,
@@ -683,142 +682,308 @@ func getExtensions(db *sql.DB) ([]common.ExtensionInfo, error) {
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error querying extensions: %v", err)
 	}
 	defer rows.Close()
 
-	var extensions []common.ExtensionInfo
 	for rows.Next() {
-		var ext common.ExtensionInfo
-		var status, pluginType string
+		var name, version, status, pluginType, description string
 
-		err := rows.Scan(
-			&ext.Name,
-			&ext.Version,
-			&status,
-			&pluginType,
-			&ext.Description,
-		)
-		if err != nil {
-			return nil, err
+		if err := rows.Scan(&name, &version, &status, &pluginType, &description); err != nil {
+			return fmt.Errorf("error scanning extension: %v", err)
 		}
 
-		ext.Schema = "mysql"
-		extensions = append(extensions, ext)
+		extension := unifiedmodel.Extension{
+			Name:    name,
+			Version: version,
+		}
+
+		// Store description in Options if needed
+		if description != "" {
+			if extension.Options == nil {
+				extension.Options = make(map[string]any)
+			}
+			extension.Options["description"] = description
+			extension.Options["type"] = pluginType
+		}
+
+		um.Extensions[name] = extension
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return extensions, nil
+	return nil
 }
 
-// CreateTable creates a new table in the database
-func CreateTable(tx *sql.Tx, tableInfo common.TableInfo) error {
-	if tableInfo.Name == "" {
+// CreateTableFromUnified creates a table from UnifiedModel Table
+func CreateTableFromUnified(tx *sql.Tx, table unifiedmodel.Table, types map[string]unifiedmodel.Type) error {
+	if tx == nil {
+		return fmt.Errorf("transaction is nil")
+	}
+
+	if table.Name == "" {
 		return fmt.Errorf("table name is empty")
 	}
 
-	// Start building the CREATE TABLE statement
-	var query strings.Builder
-	fmt.Fprintf(&query, "CREATE TABLE %s (\n", QuoteIdentifier(tableInfo.Name))
-
-	// Add columns
-	for i, col := range tableInfo.Columns {
-		fmt.Fprintf(&query, "  %s %s", QuoteIdentifier(col.Name), col.DataType)
-
-		// Add varchar length if specified
-		if col.VarcharLength != nil && (strings.Contains(col.DataType, "varchar") || strings.Contains(col.DataType, "char")) {
-			fmt.Fprintf(&query, "(%d)", *col.VarcharLength)
-		}
-
-		// Add NOT NULL constraint if needed
-		if !col.IsNullable {
-			fmt.Fprint(&query, " NOT NULL")
-		}
-
-		// Add DEFAULT if specified
-		if col.ColumnDefault != nil {
-			fmt.Fprintf(&query, " DEFAULT %s", *col.ColumnDefault)
-		}
-
-		// Add AUTO_INCREMENT if needed
-		if col.IsAutoIncrement {
-			fmt.Fprint(&query, " AUTO_INCREMENT")
-		}
-
-		// Add comma if not the last column
-		if i < len(tableInfo.Columns)-1 {
-			fmt.Fprint(&query, ",\n")
-		}
-	}
-
-	// Add primary key if specified
-	if len(tableInfo.PrimaryKey) > 0 {
-		if len(tableInfo.Columns) > 0 {
-			fmt.Fprint(&query, ",\n")
-		}
-		fmt.Fprintf(&query, "  PRIMARY KEY (%s)", strings.Join(common.QuoteStringSlice(tableInfo.PrimaryKey), ", "))
-	}
-
-	// Close the CREATE TABLE statement
-	fmt.Fprint(&query, "\n)")
-
-	// Execute the CREATE TABLE statement
-	_, err := tx.Exec(query.String())
+	// Check if the table already exists
+	var exists bool
+	err := tx.QueryRow("SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table.Name).Scan(&exists)
 	if err != nil {
-		return fmt.Errorf("error creating table: %w", err)
+		return fmt.Errorf("error checking if table exists: %v", err)
+	}
+	if exists {
+		return fmt.Errorf("table '%s' already exists", table.Name)
 	}
 
-	// Add indexes
-	for _, index := range tableInfo.Indexes {
-		var indexQuery strings.Builder
-		if index.IsUnique {
-			fmt.Fprintf(&indexQuery, "CREATE UNIQUE INDEX %s ON %s (%s)",
-				QuoteIdentifier(index.Name),
-				QuoteIdentifier(tableInfo.Name),
-				strings.Join(common.QuoteStringSlice(index.Columns), ", "))
-		} else {
-			fmt.Fprintf(&indexQuery, "CREATE INDEX %s ON %s (%s)",
-				QuoteIdentifier(index.Name),
-				QuoteIdentifier(tableInfo.Name),
-				strings.Join(common.QuoteStringSlice(index.Columns), ", "))
+	// Create table
+	createTableSQL := fmt.Sprintf("CREATE TABLE %s (", QuoteIdentifier(table.Name))
+	columnCount := 0
+	primaryKeys := []string{}
+
+	for _, column := range table.Columns {
+		if columnCount > 0 {
+			createTableSQL += ", "
+		}
+		createTableSQL += fmt.Sprintf("%s ", QuoteIdentifier(column.Name))
+
+		// Handle data type
+		createTableSQL += mapUnifiedDataTypeToMySQL(column.DataType)
+
+		if !column.Nullable {
+			createTableSQL += " NOT NULL"
+		}
+		if column.Default != "" {
+			createTableSQL += fmt.Sprintf(" DEFAULT %s", column.Default)
+		}
+		if column.AutoIncrement {
+			createTableSQL += " AUTO_INCREMENT"
 		}
 
-		_, err := tx.Exec(indexQuery.String())
+		if column.IsPrimaryKey {
+			primaryKeys = append(primaryKeys, column.Name)
+		}
+
+		columnCount++
+	}
+
+	// Add primary key constraint
+	if len(primaryKeys) > 0 {
+		createTableSQL += fmt.Sprintf(", PRIMARY KEY (%s)", strings.Join(quoteStringSlice(primaryKeys), ", "))
+	}
+
+	createTableSQL += ")"
+
+	// Print the SQL statement for debugging
+	fmt.Printf("Creating table %s with SQL: %s\n", table.Name, createTableSQL)
+
+	_, err = tx.Exec(createTableSQL)
+	if err != nil {
+		return fmt.Errorf("error creating table: %v", err)
+	}
+
+	// Create indexes
+	for _, index := range table.Indexes {
+		indexSQL := "CREATE"
+		if index.Unique {
+			indexSQL += " UNIQUE"
+		}
+		indexSQL += fmt.Sprintf(" INDEX %s ON %s (%s)",
+			QuoteIdentifier(index.Name), QuoteIdentifier(table.Name), strings.Join(quoteStringSlice(index.Columns), ", "))
+		_, err = tx.Exec(indexSQL)
 		if err != nil {
 			return fmt.Errorf("error creating index %s: %v", index.Name, err)
 		}
 	}
 
-	// Add foreign key constraints
-	for _, constraint := range tableInfo.Constraints {
-		if constraint.ForeignKey != nil {
-			var constraintQuery strings.Builder
-			fmt.Fprintf(&constraintQuery, "ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
-				QuoteIdentifier(tableInfo.Name),
-				QuoteIdentifier(constraint.Name),
-				QuoteIdentifier(constraint.Column),
-				QuoteIdentifier(constraint.ForeignKey.Table),
-				QuoteIdentifier(constraint.ForeignKey.Column))
+	return nil
+}
 
-			if constraint.ForeignKey.OnDelete != "" {
-				fmt.Fprintf(&constraintQuery, " ON DELETE %s", constraint.ForeignKey.OnDelete)
-			}
-
-			if constraint.ForeignKey.OnUpdate != "" {
-				fmt.Fprintf(&constraintQuery, " ON UPDATE %s", constraint.ForeignKey.OnUpdate)
-			}
-
-			_, err := tx.Exec(constraintQuery.String())
-			if err != nil {
-				return fmt.Errorf("error creating foreign key constraint %s: %v", constraint.Name, err)
-			}
+// AddTableConstraintsFromUnified adds constraints from UnifiedModel Table
+func AddTableConstraintsFromUnified(tx *sql.Tx, table unifiedmodel.Table) error {
+	addedConstraints := make(map[string]bool)
+	for _, constraint := range table.Constraints {
+		// Skip if constraint has already been added
+		if addedConstraints[constraint.Name] {
+			continue
 		}
+
+		var constraintSQL string
+		switch constraint.Type {
+		case unifiedmodel.ConstraintTypeForeignKey:
+			if len(constraint.Reference.Table) == 0 || len(constraint.Reference.Columns) == 0 {
+				fmt.Printf("Warning: Skipping incomplete foreign key constraint definition %s for table %s\n", constraint.Name, table.Name)
+				continue
+			}
+			constraintSQL = fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
+				QuoteIdentifier(table.Name), QuoteIdentifier(constraint.Name),
+				strings.Join(quoteStringSlice(constraint.Columns), ", "),
+				QuoteIdentifier(constraint.Reference.Table),
+				strings.Join(quoteStringSlice(constraint.Reference.Columns), ", "))
+
+			if constraint.Reference.OnDelete != "" {
+				constraintSQL += fmt.Sprintf(" ON DELETE %s", constraint.Reference.OnDelete)
+			}
+			if constraint.Reference.OnUpdate != "" {
+				constraintSQL += fmt.Sprintf(" ON UPDATE %s", constraint.Reference.OnUpdate)
+			}
+		case unifiedmodel.ConstraintTypeCheck:
+			constraintSQL = fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)",
+				QuoteIdentifier(table.Name), QuoteIdentifier(constraint.Name), constraint.Expression)
+		case unifiedmodel.ConstraintTypeUnique:
+			constraintSQL = fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s UNIQUE (%s)",
+				QuoteIdentifier(table.Name), QuoteIdentifier(constraint.Name), strings.Join(quoteStringSlice(constraint.Columns), ", "))
+		case unifiedmodel.ConstraintTypePrimaryKey:
+			// Skip primary key constraints as they are handled during table creation
+			continue
+		default:
+			return fmt.Errorf("unsupported constraint type: %s", constraint.Type)
+		}
+
+		// Print the SQL statement for debugging
+		fmt.Printf("Executing constraint SQL: %s\n", constraintSQL)
+
+		_, err := tx.Exec(constraintSQL)
+		if err != nil {
+			// If an error occurs, print the error message and full SQL statement
+			fmt.Printf("Error adding constraint %s: %v\n", constraint.Name, err)
+			fmt.Printf("Full SQL statement: %s\n", constraintSQL)
+			return fmt.Errorf("error adding constraint %s: %v", constraint.Name, err)
+		}
+		addedConstraints[constraint.Name] = true
 	}
 
 	return nil
+}
+
+// sortTablesByDependencies sorts tables based on foreign key dependencies
+// Note: This is a simplified implementation that returns tables in map iteration order.
+// MySQL allows creating tables in any order since we create constraints separately,
+// so dependency sorting is not strictly required for this implementation.
+func sortTablesByDependencies(tables map[string]unifiedmodel.Table) ([]unifiedmodel.Table, error) {
+	var sortedTables []unifiedmodel.Table
+	for _, table := range tables {
+		sortedTables = append(sortedTables, table)
+	}
+	return sortedTables, nil
+}
+
+// createEnumType creates an enum type (MySQL uses ENUM column type)
+func createEnumType(tx *sql.Tx, enumName string, enumValues []string) error {
+	// MySQL doesn't have standalone enum types like PostgreSQL
+	// Enums are defined at the column level in MySQL
+	// This function is a placeholder for compatibility
+	return nil
+}
+
+// createSchema creates a database schema (MySQL uses databases instead of schemas)
+func createSchema(tx *sql.Tx, schemaName string) error {
+	schemaSQL := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", QuoteIdentifier(schemaName))
+	_, err := tx.Exec(schemaSQL)
+	if err != nil {
+		return fmt.Errorf("error creating schema %s: %v", schemaName, err)
+	}
+	return nil
+}
+
+// createView creates a view from UnifiedModel View
+func createView(tx *sql.Tx, view unifiedmodel.View) error {
+	viewSQL := fmt.Sprintf("CREATE VIEW %s AS %s", QuoteIdentifier(view.Name), view.Definition)
+	_, err := tx.Exec(viewSQL)
+	if err != nil {
+		return fmt.Errorf("error creating view %s: %v", view.Name, err)
+	}
+	return nil
+}
+
+// createFunction creates a function from UnifiedModel Function
+func createFunction(tx *sql.Tx, function unifiedmodel.Function) error {
+	// This is a simplified implementation - real implementation would need to handle parameters, etc.
+	var args []string
+	for _, arg := range function.Arguments {
+		args = append(args, fmt.Sprintf("%s %s", arg.Name, arg.Type))
+	}
+	argsStr := strings.Join(args, ", ")
+
+	functionSQL := fmt.Sprintf("CREATE FUNCTION %s(%s) RETURNS %s DETERMINISTIC %s",
+		QuoteIdentifier(function.Name), argsStr, function.Returns, function.Definition)
+	_, err := tx.Exec(functionSQL)
+	if err != nil {
+		return fmt.Errorf("error creating function %s: %v", function.Name, err)
+	}
+	return nil
+}
+
+// createTrigger creates a trigger from UnifiedModel Trigger
+func createTrigger(tx *sql.Tx, trigger unifiedmodel.Trigger) error {
+	// This is a simplified implementation
+	events := strings.Join(trigger.Events, " OR ")
+	triggerSQL := fmt.Sprintf("CREATE TRIGGER %s %s %s ON %s FOR EACH ROW %s",
+		QuoteIdentifier(trigger.Name), trigger.Timing, events, QuoteIdentifier(trigger.Table), trigger.Procedure)
+	_, err := tx.Exec(triggerSQL)
+	if err != nil {
+		return fmt.Errorf("error creating trigger %s: %v", trigger.Name, err)
+	}
+	return nil
+}
+
+// createSequence creates a sequence from UnifiedModel Sequence (MySQL uses AUTO_INCREMENT)
+func createSequence(tx *sql.Tx, sequence unifiedmodel.Sequence) error {
+	// MySQL doesn't have standalone sequences like PostgreSQL
+	// AUTO_INCREMENT is handled at the column level
+	// This function is a placeholder for compatibility
+	return nil
+}
+
+// mapUnifiedDataTypeToMySQL maps UnifiedModel data types to MySQL types
+func mapUnifiedDataTypeToMySQL(dataType string) string {
+	switch strings.ToLower(dataType) {
+	case "integer", "int32":
+		return "INT"
+	case "bigint", "int64":
+		return "BIGINT"
+	case "smallint", "int16":
+		return "SMALLINT"
+	case "tinyint", "int8":
+		return "TINYINT"
+	case "boolean", "bool":
+		return "BOOLEAN"
+	case "varchar", "string":
+		return "VARCHAR(255)"
+	case "text":
+		return "TEXT"
+	case "timestamp":
+		return "TIMESTAMP"
+	case "datetime":
+		return "DATETIME"
+	case "date":
+		return "DATE"
+	case "time":
+		return "TIME"
+	case "decimal", "numeric":
+		return "DECIMAL"
+	case "float", "float32":
+		return "FLOAT"
+	case "double", "float64":
+		return "DOUBLE"
+	case "binary":
+		return "BINARY"
+	case "varbinary":
+		return "VARBINARY(255)"
+	case "blob":
+		return "BLOB"
+	case "json":
+		return "JSON"
+	default:
+		// Return as-is for custom types or unrecognized types
+		return strings.ToUpper(dataType)
+	}
+}
+
+// quoteStringSlice quotes each string in a slice for safe SQL usage
+func quoteStringSlice(slice []string) []string {
+	quoted := make([]string, len(slice))
+	for i, s := range slice {
+		quoted[i] = QuoteIdentifier(s)
+	}
+	return quoted
 }
 
 // extractGenerationExpression extracts the generation expression from the EXTRA column

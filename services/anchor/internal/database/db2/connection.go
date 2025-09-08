@@ -11,11 +11,11 @@ import (
 	_ "github.com/ibmdb/go_ibm_db" // Db2 driver
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to an IBM Db2 database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -64,7 +64,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           db,
 		DatabaseType: "db2",
 		DatabaseID:   config.DatabaseID,
@@ -74,7 +74,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to an IBM Db2 instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -123,7 +123,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           db,
 		InstanceType: "db2",
 		InstanceID:   config.InstanceID,
@@ -133,14 +133,14 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of an IBM Db2 database
-func DiscoverDetails(db interface{}) (*Db2Details, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	sqlDB, ok := db.(*sql.DB)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details Db2Details
-	details.DatabaseType = "db2"
+	details := make(map[string]interface{})
+	details["databaseType"] = "db2"
 
 	// Get server version
 	var version string
@@ -148,7 +148,7 @@ func DiscoverDetails(db interface{}) (*Db2Details, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching version: %v", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Get database size (in bytes)
 	var size int64
@@ -158,7 +158,7 @@ func DiscoverDetails(db interface{}) (*Db2Details, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database size: %v", err)
 	}
-	details.DatabaseSize = size
+	details["databaseSize"] = size
 
 	// Get unique identifier (database name + instance name)
 	var dbName, instanceName string
@@ -166,7 +166,7 @@ func DiscoverDetails(db interface{}) (*Db2Details, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database identifier: %v", err)
 	}
-	details.UniqueIdentifier = fmt.Sprintf("%s_%s", instanceName, dbName)
+	details["uniqueIdentifier"] = fmt.Sprintf("%s_%s", instanceName, dbName)
 
 	// Get database edition
 	var productName string
@@ -176,19 +176,19 @@ func DiscoverDetails(db interface{}) (*Db2Details, error) {
 	}
 
 	if strings.Contains(strings.ToLower(productName), "enterprise") {
-		details.DatabaseEdition = "enterprise"
+		details["databaseEdition"] = "enterprise"
 	} else if strings.Contains(strings.ToLower(productName), "advanced") {
-		details.DatabaseEdition = "advanced"
+		details["databaseEdition"] = "advanced"
 	} else if strings.Contains(strings.ToLower(productName), "standard") {
-		details.DatabaseEdition = "standard"
+		details["databaseEdition"] = "standard"
 	} else {
-		details.DatabaseEdition = "community"
+		details["databaseEdition"] = "community"
 	}
 
-	return &details, nil
+	return details, nil
 }
 
-func getSslMode(config common.DatabaseConfig) string {
+func getSslMode(config dbclient.DatabaseConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}
@@ -198,7 +198,7 @@ func getSslMode(config common.DatabaseConfig) string {
 	return "SSL_VERIFY_SERVER_CERTIFICATE"
 }
 
-func getInstanceSslMode(config common.InstanceConfig) string {
+func getInstanceSslMode(config dbclient.InstanceConfig) string {
 	if config.SSLMode != "" {
 		return config.SSLMode
 	}

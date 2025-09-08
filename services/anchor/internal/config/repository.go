@@ -9,7 +9,7 @@ import (
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/syslog"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 	"google.golang.org/grpc"
 )
 
@@ -45,7 +45,7 @@ func NewDatabaseOnlyRepository(db *database.PostgreSQL) *Repository {
 }
 
 // GetAllDatabaseConfigs retrieves all enabled database configurations from internal database
-func (r *Repository) GetAllDatabaseConfigs(ctx context.Context, nodeID string) ([]common.UnifiedDatabaseConfig, error) {
+func (r *Repository) GetAllDatabaseConfigs(ctx context.Context, nodeID string) ([]dbclient.UnifiedDatabaseConfig, error) {
 	syslog.Info("anchor", "Getting all database configurations from internal database")
 
 	query := `
@@ -89,9 +89,9 @@ func (r *Repository) GetAllDatabaseConfigs(ctx context.Context, nodeID string) (
 	}
 	defer rows.Close()
 
-	var configs []common.UnifiedDatabaseConfig
+	var configs []dbclient.UnifiedDatabaseConfig
 	for rows.Next() {
-		var config common.UnifiedDatabaseConfig
+		var config dbclient.UnifiedDatabaseConfig
 		var policyIDs []string // pgx can scan PostgreSQL arrays directly into Go slices
 
 		err := rows.Scan(
@@ -147,7 +147,7 @@ func (r *Repository) GetAllDatabaseConfigs(ctx context.Context, nodeID string) (
 }
 
 // GetAllInstanceConfigs retrieves all enabled instance configurations from internal database
-func (r *Repository) GetAllInstanceConfigs(ctx context.Context, nodeID string) ([]common.UnifiedInstanceConfig, error) {
+func (r *Repository) GetAllInstanceConfigs(ctx context.Context, nodeID string) ([]dbclient.UnifiedInstanceConfig, error) {
 	syslog.Info("anchor", "Getting all instance configurations from internal database")
 
 	query := `
@@ -190,9 +190,9 @@ func (r *Repository) GetAllInstanceConfigs(ctx context.Context, nodeID string) (
 	}
 	defer rows.Close()
 
-	var configs []common.UnifiedInstanceConfig
+	var configs []dbclient.UnifiedInstanceConfig
 	for rows.Next() {
-		var config common.UnifiedInstanceConfig
+		var config dbclient.UnifiedInstanceConfig
 		var policyIDs []string // pgx can scan PostgreSQL arrays directly into Go slices
 
 		err := rows.Scan(
@@ -382,7 +382,7 @@ func (r *Repository) UpdateInstanceMetadata(ctx context.Context, metadata *Insta
 }
 
 // GetDatabaseConfigByID retrieves a database configuration by its ID
-func (r *Repository) GetDatabaseConfigByID(ctx context.Context, databaseID string) (*common.UnifiedDatabaseConfig, error) {
+func (r *Repository) GetDatabaseConfigByID(ctx context.Context, databaseID string) (*dbclient.UnifiedDatabaseConfig, error) {
 	syslog.Info("anchor", "Getting database configuration by ID %s", databaseID)
 
 	query := `
@@ -430,7 +430,7 @@ func (r *Repository) GetDatabaseConfigByID(ctx context.Context, databaseID strin
 		return nil, fmt.Errorf("database configuration with ID %s not found", databaseID)
 	}
 
-	var config common.UnifiedDatabaseConfig
+	var config dbclient.UnifiedDatabaseConfig
 	var policyIDs []string // pgx can scan PostgreSQL arrays directly into Go slices
 
 	err = rows.Scan(
@@ -479,7 +479,7 @@ func (r *Repository) GetDatabaseConfigByID(ctx context.Context, databaseID strin
 }
 
 // GetInstanceConfigByID retrieves an instance configuration by its ID
-func (r *Repository) GetInstanceConfigByID(ctx context.Context, instanceID string) (*common.UnifiedInstanceConfig, error) {
+func (r *Repository) GetInstanceConfigByID(ctx context.Context, instanceID string) (*dbclient.UnifiedInstanceConfig, error) {
 	syslog.Info("anchor", "Getting instance configuration by ID %s", instanceID)
 
 	query := `
@@ -526,7 +526,7 @@ func (r *Repository) GetInstanceConfigByID(ctx context.Context, instanceID strin
 		return nil, fmt.Errorf("instance configuration with ID %s not found", instanceID)
 	}
 
-	var config common.UnifiedInstanceConfig
+	var config dbclient.UnifiedInstanceConfig
 	var policyIDs []string // pgx can scan PostgreSQL arrays directly into Go slices
 
 	err = rows.Scan(

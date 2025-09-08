@@ -12,11 +12,11 @@ import (
 	gelcfg "github.com/geldata/gel-go/gelcfg"
 	"github.com/geldata/gel-go/geltypes"
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to an EdgeDB database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 
 	var decryptedPassword string
 	if config.Password == "" {
@@ -87,7 +87,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("unexpected response from EdgeDB connection test")
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "edgedb",
 		DatabaseID:   config.DatabaseID,
@@ -97,7 +97,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to an EdgeDB instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 
 	var decryptedPassword string
 	if config.Password == "" {
@@ -168,7 +168,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("unexpected response from EdgeDB connection test")
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           client,
 		InstanceType: "edgedb",
 		InstanceID:   config.InstanceID,
@@ -178,14 +178,14 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of an EdgeDB database
-func DiscoverDetails(db interface{}) (*EdgeDBDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	client, ok := db.(*gel.Client)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details EdgeDBDetails
-	details.DatabaseType = "edgedb"
+	details := make(map[string]interface{})
+	details["databaseType"] = "edgedb"
 
 	ctx := context.Background()
 
@@ -195,7 +195,7 @@ func DiscoverDetails(db interface{}) (*EdgeDBDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching version: %v", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Get database size (approximate)
 	var sizeStr string
@@ -210,13 +210,13 @@ func DiscoverDetails(db interface{}) (*EdgeDBDetails, error) {
 		)`, &sizeStr)
 	if err != nil {
 		// If we can't get the exact size, use a placeholder
-		details.DatabaseSize = 0
+		details["databaseSize"] = int64(0)
 	} else {
 		size, err := strconv.ParseInt(sizeStr, 10, 64)
 		if err != nil {
-			details.DatabaseSize = 0
+			details["databaseSize"] = int64(0)
 		} else {
-			details.DatabaseSize = size
+			details["databaseSize"] = size
 		}
 	}
 
@@ -226,16 +226,16 @@ func DiscoverDetails(db interface{}) (*EdgeDBDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database ID: %v", err)
 	}
-	details.UniqueIdentifier = dbid
+	details["uniqueIdentifier"] = dbid
 
 	// Determine edition
 	if strings.Contains(strings.ToLower(version), "enterprise") {
-		details.DatabaseEdition = "enterprise"
+		details["databaseEdition"] = "enterprise"
 	} else {
-		details.DatabaseEdition = "community"
+		details["databaseEdition"] = "community"
 	}
 
-	return &details, nil
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from an EdgeDB database

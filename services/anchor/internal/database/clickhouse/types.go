@@ -1,23 +1,16 @@
 package clickhouse
 
-import "github.com/redbco/redb-open/services/anchor/internal/database/common"
+import (
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
+)
 
-// ClickhouseDetails contains information about a Clickhouse database
-type ClickhouseDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-}
-
-// ClickhouseSchema represents the schema of a Clickhouse database
-type ClickhouseSchema struct {
-	Tables       []common.TableInfo          `json:"tables"`
-	Schemas      []common.DatabaseSchemaInfo `json:"schemas"`
-	Functions    []common.FunctionInfo       `json:"functions"`
-	Views        []common.ViewInfo           `json:"views"`
-	Dictionaries []ClickhouseDictionaryInfo  `json:"dictionaries"`
+// ConvertClickHouseDictionary converts ClickhouseDictionaryInfo to unifiedmodel.View (as dictionaries are similar to materialized views)
+func ConvertClickHouseDictionary(dictInfo ClickhouseDictionaryInfo) unifiedmodel.View {
+	return unifiedmodel.View{
+		Name:       dictInfo.Name,
+		Definition: dictInfo.Definition,
+		Comment:    dictInfo.Description,
+	}
 }
 
 // ClickhouseDictionaryInfo represents a Clickhouse dictionary

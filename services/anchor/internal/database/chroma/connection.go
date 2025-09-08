@@ -9,7 +9,7 @@ import (
 
 	chromav2 "github.com/amikos-tech/chroma-go/pkg/api/v2"
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 const (
@@ -18,7 +18,7 @@ const (
 )
 
 // Connect establishes a connection to a Chroma database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	// Accept either vendor or type to identify provider; prefer type when set
 	provider := config.ConnectionType
 	if provider == "" {
@@ -108,7 +108,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		}
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "chroma",
 		DatabaseID:   config.DatabaseID,
@@ -118,7 +118,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Chroma instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	// Accept either vendor or type to identify provider; prefer type when set
 	provider := config.ConnectionType
 	if provider == "" {
@@ -204,7 +204,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		}
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           client,
 		InstanceType: "chroma",
 		InstanceID:   config.InstanceID,
@@ -214,7 +214,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches database details
-func DiscoverDetails(client *ChromaClient) (*ChromaDetails, error) {
+func DiscoverDetails(client *ChromaClient) (map[string]interface{}, error) {
 	// Get collections to determine database size
 	collections, err := listCollections(client)
 	if err != nil {
@@ -233,17 +233,18 @@ func DiscoverDetails(client *ChromaClient) (*ChromaDetails, error) {
 		totalCount += details.Count
 	}
 
-	return &ChromaDetails{
-		UniqueIdentifier: fmt.Sprintf("chroma_%s_%d", client.Host, client.Port),
-		DatabaseType:     "chroma",
-		DatabaseEdition:  "community",
-		Version:          "1.0.0", // Chroma doesn't expose version via API
-		DatabaseSize:     totalSize,
-		Host:             client.Host,
-		Port:             client.Port,
-		CollectionCount:  int64(len(collections)),
-		TotalVectors:     totalCount,
-	}, nil
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = fmt.Sprintf("chroma_%s_%d", client.Host, client.Port)
+	details["databaseType"] = "chroma"
+	details["databaseEdition"] = "community"
+	details["version"] = "1.0.0" // Chroma doesn't expose version via API
+	details["databaseSize"] = totalSize
+	details["host"] = client.Host
+	details["port"] = client.Port
+	details["collectionCount"] = int64(len(collections))
+	details["totalVectors"] = totalCount
+
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Chroma database

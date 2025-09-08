@@ -11,11 +11,11 @@ import (
 	_ "github.com/denisenkom/go-mssqldb"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a Microsoft SQL Server database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -60,7 +60,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           db,
 		DatabaseType: "mssql",
 		DatabaseID:   config.DatabaseID,
@@ -70,7 +70,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Microsoft SQL Server instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var connString strings.Builder
 
 	var decryptedPassword string
@@ -115,7 +115,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           db,
 		InstanceType: "mssql",
 		InstanceID:   config.InstanceID,
@@ -125,14 +125,14 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of a Microsoft SQL Server database
-func DiscoverDetails(db interface{}) (*MSSQLDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	sqlDB, ok := db.(*sql.DB)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details MSSQLDetails
-	details.DatabaseType = "mssql"
+	details := make(map[string]interface{})
+	details["databaseType"] = "mssql"
 
 	// Get server version and edition
 	var version, edition string
@@ -144,8 +144,8 @@ func DiscoverDetails(db interface{}) (*MSSQLDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching version and edition: %v", err)
 	}
-	details.Version = version
-	details.DatabaseEdition = edition
+	details["version"] = version
+	details["databaseEdition"] = edition
 
 	// Get database size
 	var size int64
@@ -157,7 +157,7 @@ func DiscoverDetails(db interface{}) (*MSSQLDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database size: %v", err)
 	}
-	details.DatabaseSize = size
+	details["databaseSize"] = size
 
 	// Get unique identifier (database_id)
 	var dbID string
@@ -167,9 +167,9 @@ func DiscoverDetails(db interface{}) (*MSSQLDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database ID: %v", err)
 	}
-	details.UniqueIdentifier = dbID
+	details["uniqueIdentifier"] = dbID
 
-	return &details, nil
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Microsoft SQL Server database
