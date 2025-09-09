@@ -481,238 +481,67 @@ func readPassword() (string, error) {
 
 func CreateDatabase(args []string) error {
 	reader := bufio.NewReader(os.Stdin)
+	argsMap := scanArgs(args)
 
 	// Get database name
-	var databaseName string
-	if len(args) > 0 && strings.HasPrefix(args[0], "--name=") {
-		databaseName = strings.TrimPrefix(args[0], "--name=")
-	} else {
-		fmt.Print("Database Name: ")
-		databaseName, _ = reader.ReadString('\n')
-		databaseName = strings.TrimSpace(databaseName)
-	}
+	databaseName := getArgOrPrompt(reader, argsMap, nameKey, "Database Name: ", true)
 
 	if databaseName == "" {
 		return fmt.Errorf("database name is required")
 	}
 
 	// Get database description
-	var databaseDescription string
-	if len(args) > 1 && strings.HasPrefix(args[1], "--description=") {
-		databaseDescription = strings.TrimPrefix(args[1], "--description=")
-	} else {
-		fmt.Print("Database Description (optional): ")
-		databaseDescription, _ = reader.ReadString('\n')
-		databaseDescription = strings.TrimSpace(databaseDescription)
-	}
+	databaseDescription := descriptionParam(reader, argsMap)
 
 	// Get database type
-	var databaseType string
-	if len(args) > 2 && strings.HasPrefix(args[2], "--type=") {
-		databaseType = strings.TrimPrefix(args[2], "--type=")
-	} else {
-		fmt.Print("Database Type (e.g., postgres, mysql, mongodb): ")
-		databaseType, _ = reader.ReadString('\n')
-		databaseType = strings.TrimSpace(databaseType)
-	}
-
-	if databaseType == "" {
-		return fmt.Errorf("database type is required")
-	}
-
-	// Get database vendor
-	var databaseVendor string
-	if len(args) > 3 && strings.HasPrefix(args[3], "--vendor=") {
-		databaseVendor = strings.TrimPrefix(args[3], "--vendor=")
-	} else {
-		fmt.Print("Database Vendor: ")
-		databaseVendor, _ = reader.ReadString('\n')
-		databaseVendor = strings.TrimSpace(databaseVendor)
-	}
-
-	if databaseVendor == "" {
-		return fmt.Errorf("database vendor is required")
-	}
-
-	// Get host
-	var host string
-	if len(args) > 4 && strings.HasPrefix(args[4], "--host=") {
-		host = strings.TrimPrefix(args[4], "--host=")
-	} else {
-		fmt.Print("Host: ")
-		host, _ = reader.ReadString('\n')
-		host = strings.TrimSpace(host)
-	}
-
-	if host == "" {
-		return fmt.Errorf("host is required")
-	}
-
-	// Get port
-	var portStr string
-	if len(args) > 5 && strings.HasPrefix(args[5], "--port=") {
-		portStr = strings.TrimPrefix(args[5], "--port=")
-	} else {
-		fmt.Print("Port: ")
-		portStr, _ = reader.ReadString('\n')
-		portStr = strings.TrimSpace(portStr)
-	}
-
-	if portStr == "" {
-		return fmt.Errorf("port is required")
-	}
-
-	port, err := strconv.Atoi(portStr)
+	databaseType, err := dbTypeParam(reader, argsMap)
 	if err != nil {
-		return fmt.Errorf("invalid port. Must be an integer")
+		return err
 	}
 
-	// Get username
-	var username string
-	if len(args) > 6 && strings.HasPrefix(args[6], "--username=") {
-		username = strings.TrimPrefix(args[6], "--username=")
-	} else {
-		fmt.Print("Username: ")
-		username, _ = reader.ReadString('\n')
-		username = strings.TrimSpace(username)
+	// Database vendor is metadata only; optional. Default to "custom" if not provided via flag.
+	databaseVendor := dbVendorParam(reader, argsMap)
+
+	host, err := hostParam(reader, argsMap)
+	if err != nil {
+		return err
 	}
 
-	if username == "" {
-		return fmt.Errorf("username is required")
+	port, err := portParam(reader, argsMap)
+	if err != nil {
+		return err
 	}
 
-	// Get password with masking
-	var password string
-	if len(args) > 7 && strings.HasPrefix(args[7], "--password=") {
-		password = strings.TrimPrefix(args[7], "--password=")
-	} else {
-		fmt.Print("Password: ")
-		password, err = readPassword()
-		if err != nil {
-			return fmt.Errorf("failed to read password: %v", err)
-		}
+	dbLogin, dbPassword, err := usernameAndPassword(reader, argsMap)
+	if err != nil {
+		return err
 	}
 
-	if password == "" {
-		return fmt.Errorf("password is required")
+	dbName, err := dbNameParam(reader, argsMap)
+	if err != nil {
+		return err
 	}
 
-	// Get database name (DB Name)
-	var dbName string
-	if len(args) > 8 && strings.HasPrefix(args[8], "--db-name=") {
-		dbName = strings.TrimPrefix(args[8], "--db-name=")
-	} else {
-		fmt.Print("Database Name (DB Name): ")
-		dbName, _ = reader.ReadString('\n')
-		dbName = strings.TrimSpace(dbName)
+	nodeID := getArgOrPrompt(reader, argsMap, nodeIdKey, "", false)
+
+	enabled, err := enabledParam(reader, argsMap)
+	if err != nil {
+		return err
 	}
 
-	if dbName == "" {
-		return fmt.Errorf("database name (DB Name) is required")
+	ssl, sslMode, err := sslSetup(reader, argsMap)
+	if err != nil {
+		return err
 	}
 
-	// Get node ID (optional)
-	var nodeID string
-	if len(args) > 9 && strings.HasPrefix(args[9], "--node-id=") {
-		nodeID = strings.TrimPrefix(args[9], "--node-id=")
-	}
-
-	// Get enabled status
-	var enabledStr string
-	if len(args) > 10 && strings.HasPrefix(args[10], "--enabled=") {
-		enabledStr = strings.TrimPrefix(args[10], "--enabled=")
-	} else {
-		fmt.Print("Enabled (true/false): ")
-		enabledStr, _ = reader.ReadString('\n')
-		enabledStr = strings.TrimSpace(enabledStr)
-	}
-
-	if enabledStr == "" {
-		return fmt.Errorf("enabled status is required")
-	}
-
-	if enabledStr != "true" && enabledStr != "false" {
-		return fmt.Errorf("invalid enabled status. Must be one of: true, false")
-	}
-
-	enabled := enabledStr == "true"
-
-	// Get SSL status
-	var sslStr string
-	if len(args) > 11 && strings.HasPrefix(args[11], "--ssl=") {
-		sslStr = strings.TrimPrefix(args[11], "--ssl=")
-	} else {
-		fmt.Print("SSL (true/false): ")
-		sslStr, _ = reader.ReadString('\n')
-		sslStr = strings.TrimSpace(sslStr)
-	}
-
-	if sslStr == "" {
-		return fmt.Errorf("SSL status is required")
-	}
-
-	if sslStr != "true" && sslStr != "false" {
-		return fmt.Errorf("invalid SSL status. Must be one of: true, false")
-	}
-
-	ssl := sslStr == "true"
-
-	// Get SSL mode
-	var sslMode string
-	if len(args) > 12 && strings.HasPrefix(args[12], "--ssl-mode=") {
-		sslMode = strings.TrimPrefix(args[12], "--ssl-mode=")
-	} else {
-		if ssl {
-			fmt.Print("SSL Mode (require, prefer, disable): ")
-			sslMode, _ = reader.ReadString('\n')
-			sslMode = strings.TrimSpace(sslMode)
-		} else {
-			// Automatically set SSL mode to disable when SSL is false
-			sslMode = "disable"
-		}
-	}
-
-	if sslMode == "" {
-		return fmt.Errorf("SSL mode is required")
-	}
-
-	if sslMode != "require" && sslMode != "prefer" && sslMode != "disable" {
-		return fmt.Errorf("invalid SSL mode. Must be one of: require, prefer, disable")
-	}
-
-	// Get SSL certificates if SSL mode is not disable
-	var sslCert, sslKey, sslRootCert string
+	var sslCert, sslStrKey, sslRootCert string
 	if sslMode != "disable" {
-		if len(args) > 13 && strings.HasPrefix(args[13], "--ssl-cert=") {
-			sslCert = strings.TrimPrefix(args[13], "--ssl-cert=")
-		} else {
-			fmt.Print("SSL Certificate (optional): ")
-			sslCert, _ = reader.ReadString('\n')
-			sslCert = strings.TrimSpace(sslCert)
-		}
-
-		if len(args) > 14 && strings.HasPrefix(args[14], "--ssl-key=") {
-			sslKey = strings.TrimPrefix(args[14], "--ssl-key=")
-		} else {
-			fmt.Print("SSL Private Key (optional): ")
-			sslKey, _ = reader.ReadString('\n')
-			sslKey = strings.TrimSpace(sslKey)
-		}
-
-		if len(args) > 15 && strings.HasPrefix(args[15], "--ssl-root-cert=") {
-			sslRootCert = strings.TrimPrefix(args[15], "--ssl-root-cert=")
-		} else {
-			fmt.Print("SSL Root Certificate (optional): ")
-			sslRootCert, _ = reader.ReadString('\n')
-			sslRootCert = strings.TrimSpace(sslRootCert)
-		}
+		sslCert = getArgOrPrompt(reader, argsMap, sslCertPathKey, "SSL Certificate (optional): ", true)
+		sslStrKey = getArgOrPrompt(reader, argsMap, sslKeyPathKey, "SSL Private Key (optional): ", true)
+		sslRootCert = getArgOrPrompt(reader, argsMap, sslRootCertPathKey, "SSL Root Certificate (optional): ", true)
 	}
 
-	// Get environment ID (optional)
-	var environmentID string
-	if len(args) > 16 && strings.HasPrefix(args[16], "--environment-id=") {
-		environmentID = strings.TrimPrefix(args[16], "--environment-id=")
-	}
+	environmentID := getArgOrPrompt(reader, argsMap, environmentIdKey, "", false)
 
 	// Create the database connection request
 	connectReq := struct {
@@ -740,15 +569,15 @@ func CreateDatabase(args []string) error {
 		DatabaseVendor:      databaseVendor,
 		Host:                host,
 		Port:                port,
-		Username:            username,
-		Password:            password,
+		Username:            dbLogin,
+		Password:            dbPassword,
 		DBName:              dbName,
 		NodeID:              nodeID,
 		Enabled:             enabled,
 		SSL:                 ssl,
 		SSLMode:             sslMode,
 		SSLCert:             sslCert,
-		SSLKey:              sslKey,
+		SSLKey:              sslStrKey,
 		SSLRootCert:         sslRootCert,
 		EnvironmentID:       environmentID,
 	}
@@ -758,7 +587,7 @@ func CreateDatabase(args []string) error {
 		return err
 	}
 
-	username, err = config.GetUsername()
+	username, err := config.GetUsername()
 	if err != nil {
 		fmt.Println("Authentication Status: Not logged in")
 		fmt.Println("No user credentials found in keyring")
@@ -1164,115 +993,34 @@ func DeleteDatabase(databaseName string, args []string) error {
 	return nil
 }
 
-func ConnectDatabase(databaseName string, args []string) error {
-	databaseName = strings.TrimSpace(databaseName)
-	if databaseName == "" {
-		return fmt.Errorf("database name is required")
-	}
-
-	reader := bufio.NewReader(os.Stdin)
-
-	// Get instance name
-	var instanceName string
-	if len(args) > 0 && strings.HasPrefix(args[0], "--instance=") {
-		instanceName = strings.TrimPrefix(args[0], "--instance=")
-	} else {
-		fmt.Print("Instance Name: ")
-		instanceName, _ = reader.ReadString('\n')
-		instanceName = strings.TrimSpace(instanceName)
-	}
-
-	if instanceName == "" {
-		return fmt.Errorf("instance name is required")
-	}
-
-	// Get database description
-	var databaseDescription string
-	if len(args) > 1 && strings.HasPrefix(args[1], "--description=") {
-		databaseDescription = strings.TrimPrefix(args[1], "--description=")
-	} else {
-		fmt.Print("Database Description (optional): ")
-		databaseDescription, _ = reader.ReadString('\n')
-		databaseDescription = strings.TrimSpace(databaseDescription)
-	}
-
-	// Get database name (DB Name)
-	var dbName string
-	if len(args) > 2 && strings.HasPrefix(args[2], "--db-name=") {
-		dbName = strings.TrimPrefix(args[2], "--db-name=")
-	} else {
-		fmt.Print("Database Name (DB Name): ")
-		dbName, _ = reader.ReadString('\n')
-		dbName = strings.TrimSpace(dbName)
-	}
-
-	if dbName == "" {
-		return fmt.Errorf("database name (DB Name) is required")
-	}
-
+func withInstanceName(reader *bufio.Reader, argsMap map[argKey]string,
+	instanceName, databaseName, databaseDescription, dbName string) error {
+	// Existing instance path
 	// Get username (optional)
-	var username string
-	if len(args) > 3 && strings.HasPrefix(args[3], "--username=") {
-		username = strings.TrimPrefix(args[3], "--username=")
-	} else {
-		fmt.Print("Username (optional): ")
-		username, _ = reader.ReadString('\n')
-		username = strings.TrimSpace(username)
-	}
-
-	// Get password (optional)
-	var password string
-	if len(args) > 4 && strings.HasPrefix(args[4], "--password=") {
-		password = strings.TrimPrefix(args[4], "--password=")
-	} else if username != "" {
-		fmt.Print("Password: ")
-		pw, pwErr := readPassword()
-		if pwErr != nil {
-			return fmt.Errorf("failed to read password: %v", pwErr)
-		}
-		password = pw
+	dbLogin, dbPassword, err := usernameAndPassword(reader, argsMap)
+	if err != nil {
+		return err
 	}
 
 	// Get node ID (optional)
-	var nodeID string
-	if len(args) > 5 && strings.HasPrefix(args[5], "--node-id=") {
-		nodeID = strings.TrimPrefix(args[5], "--node-id=")
-	}
+	nodeID := getArgOrPrompt(reader, argsMap, nodeIdKey, "", false)
 
 	// Get enabled status
-	var enabledStr string
-	if len(args) > 6 && strings.HasPrefix(args[6], "--enabled=") {
-		enabledStr = strings.TrimPrefix(args[6], "--enabled=")
-	} else {
-		fmt.Print("Enabled (true/false): ")
-		enabledStr, _ = reader.ReadString('\n')
-		enabledStr = strings.TrimSpace(enabledStr)
+	enabled, err := enabledParam(reader, argsMap)
+	if err != nil {
+		return err
 	}
-
-	if enabledStr == "" {
-		return fmt.Errorf("enabled status is required")
-	}
-
-	if enabledStr != "true" && enabledStr != "false" {
-		return fmt.Errorf("invalid enabled status. Must be one of: true, false")
-	}
-
-	enabled := enabledStr == "true"
 
 	// Get environment ID (optional)
-	var environmentID string
-	if len(args) > 7 && strings.HasPrefix(args[7], "--environment-id=") {
-		environmentID = strings.TrimPrefix(args[7], "--environment-id=")
-	}
+	environmentID := getArgOrPrompt(reader, argsMap, environmentIdKey, "", false)
 
-	// Create the database connection request
 	connectReq := map[string]interface{}{
 		"instance_name":        instanceName,
 		"database_name":        databaseName,
 		"database_description": databaseDescription,
 		"db_name":              dbName,
-		"username":             username,
-		"password":             password,
+		"username":             dbLogin,
+		"password":             dbPassword,
 		"node_id":              nodeID,
 		"enabled":              enabled,
 		"environment_id":       environmentID,
@@ -1282,14 +1030,12 @@ func ConnectDatabase(databaseName string, args []string) error {
 	if err != nil {
 		return err
 	}
-
-	username, err = config.GetUsername()
+	username, err := config.GetUsername()
 	if err != nil {
 		fmt.Println("Authentication Status: Not logged in")
 		fmt.Println("No user credentials found in keyring")
 		return nil
 	}
-
 	workspaceName, err := config.GetWorkspaceWithError(username)
 	if err != nil {
 		return err
@@ -1305,10 +1051,152 @@ func ConnectDatabase(databaseName string, args []string) error {
 		Status   string   `json:"status"`
 	}
 	if err := client.Post(url, connectReq, &connectResponse, true); err != nil {
-		return fmt.Errorf("failed to connect database: %v", err)
+		return fmt.Errorf("failed to connect database: %w", err)
 	}
 
 	fmt.Printf("Successfully connected database '%s' to instance '%s' (ID: %s)\n", connectResponse.Database.DatabaseName, instanceName, connectResponse.Database.DatabaseID)
+	return nil
+}
+
+func ConnectDatabase(databaseName string, args []string) error {
+	databaseName = strings.TrimSpace(databaseName)
+	if databaseName == "" {
+		return fmt.Errorf("database name is required")
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	argsMap := scanArgs(args)
+
+	// Get instance name (optional). If empty, we'll create a new instance implicitly.
+	instanceName := instanceParam(reader, argsMap)
+
+	// Get database description
+	databaseDescription := descriptionParam(reader, argsMap)
+
+	// Get database name (DB Name)
+	dbName, err := dbNameParam(reader, argsMap)
+	if err != nil {
+		return err
+	}
+
+	// Branch based on whether user provided an instance
+	if instanceName != "" {
+		return withInstanceName(reader, argsMap, instanceName, databaseName, databaseDescription, dbName)
+	}
+
+	// No instance provided: create instance connection implicitly and connect database
+	// Collect detailed connection info (or parse from flags)
+	databaseType, err := dbTypeParam(reader, argsMap)
+	if err != nil {
+		return err
+	}
+
+	// Database vendor is metadata only; optional. Default to "custom" if not provided via flag.
+	databaseVendor := dbVendorParam(reader, argsMap)
+
+	host, err := hostParam(reader, argsMap)
+	if err != nil {
+		return err
+	}
+
+	port, err := portParam(reader, argsMap)
+	if err != nil {
+		return err
+	}
+
+	dbLogin, dbPassword, err := usernameAndPassword(reader, argsMap)
+	if err != nil {
+		return err
+	}
+
+	nodeID := getArgOrPrompt(reader, argsMap, nodeIdKey, "", false)
+
+	enabled, err := enabledParam(reader, argsMap)
+	if err != nil {
+		return err
+	}
+
+	ssl, sslMode, err := sslSetup(reader, argsMap)
+	if err != nil {
+		return err
+	}
+
+	var sslCert, sslStrKey, sslRootCert string
+	if sslMode != "disable" {
+		sslCert = getArgOrPrompt(reader, argsMap, sslCertPathKey, "SSL Certificate (optional): ", true)
+		sslStrKey = getArgOrPrompt(reader, argsMap, sslKeyPathKey, "SSL Private Key (optional): ", true)
+		sslRootCert = getArgOrPrompt(reader, argsMap, sslRootCertPathKey, "SSL Root Certificate (optional): ", true)
+	}
+
+	environmentID := getArgOrPrompt(reader, argsMap, environmentIdKey, "", false)
+
+	connectReq := struct {
+		DatabaseName        string `json:"database_name"`
+		DatabaseDescription string `json:"database_description,omitempty"`
+		DatabaseType        string `json:"database_type"`
+		DatabaseVendor      string `json:"database_vendor"`
+		Host                string `json:"host"`
+		Port                int    `json:"port"`
+		Username            string `json:"username"`
+		Password            string `json:"password"`
+		DBName              string `json:"db_name"`
+		NodeID              string `json:"node_id,omitempty"`
+		Enabled             bool   `json:"enabled"`
+		SSL                 bool   `json:"ssl"`
+		SSLMode             string `json:"ssl_mode,omitempty"`
+		SSLCert             string `json:"ssl_cert,omitempty"`
+		SSLKey              string `json:"ssl_key,omitempty"`
+		SSLRootCert         string `json:"ssl_root_cert,omitempty"`
+		EnvironmentID       string `json:"environment_id,omitempty"`
+	}{
+		DatabaseName:        databaseName,
+		DatabaseDescription: databaseDescription,
+		DatabaseType:        databaseType,
+		DatabaseVendor:      databaseVendor,
+		Host:                host,
+		Port:                port,
+		Username:            dbLogin,
+		Password:            dbPassword,
+		DBName:              dbName,
+		NodeID:              nodeID,
+		Enabled:             enabled,
+		SSL:                 ssl,
+		SSLMode:             sslMode,
+		SSLCert:             sslCert,
+		SSLKey:              sslStrKey,
+		SSLRootCert:         sslRootCert,
+		EnvironmentID:       environmentID,
+	}
+
+	tenantURL, err := config.GetTenantURL()
+	if err != nil {
+		return err
+	}
+	username, err := config.GetUsername()
+	if err != nil {
+		fmt.Println("Authentication Status: Not logged in")
+		fmt.Println("No user credentials found in keyring")
+		return nil
+	}
+	workspaceName, err := config.GetWorkspaceWithError(username)
+	if err != nil {
+		return err
+	}
+
+	client := httpclient.GetClient()
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/connect", tenantURL, workspaceName)
+
+	var connectResponse struct {
+		Message  string   `json:"message"`
+		Success  bool     `json:"success"`
+		Database Database `json:"database"`
+		Status   string   `json:"status"`
+	}
+	if err := client.Post(url, connectReq, &connectResponse, true); err != nil {
+		return fmt.Errorf("failed to connect database: %v", err)
+	}
+
+	fmt.Printf("Successfully connected database '%s' (ID: %s)\n", connectResponse.Database.DatabaseName, connectResponse.Database.DatabaseID)
 	return nil
 }
 

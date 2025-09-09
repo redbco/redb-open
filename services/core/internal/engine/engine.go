@@ -130,7 +130,8 @@ func (e *Engine) Start(ctx context.Context) error {
 	// Initialize unified model client
 	umAddr := e.config.Get("services.unifiedmodel.grpc_address")
 	if umAddr == "" {
-		umAddr = "localhost:50053" // default unifiedmodel service port
+		// TODO: make this dynamic
+		umAddr = "localhost:50052" // default unifiedmodel service port
 	}
 
 	umConn, err := grpc.Dial(umAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -143,7 +144,8 @@ func (e *Engine) Start(ctx context.Context) error {
 	// Initialize anchor client
 	anchorAddr := e.config.Get("services.anchor.grpc_address")
 	if anchorAddr == "" {
-		anchorAddr = "localhost:50055" // default anchor service port
+		// TODO: make this dynamic
+		anchorAddr = "localhost:50057" // default anchor service port
 	}
 
 	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -156,6 +158,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	// Initialize mesh client
 	meshAddr := e.config.Get("services.mesh.grpc_address")
 	if meshAddr == "" {
+		// TODO: make this dynamic
 		meshAddr = "localhost:50056" // default mesh service port
 	}
 

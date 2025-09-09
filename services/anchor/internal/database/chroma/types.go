@@ -1,21 +1,26 @@
 package chroma
 
-// ChromaDetails contains information about a Chroma vector database
-type ChromaDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	Host             string `json:"host"`
-	Port             int    `json:"port"`
-	CollectionCount  int64  `json:"collectionCount"`
-	TotalVectors     int64  `json:"totalVectors"`
+import (
+	chromav2 "github.com/amikos-tech/chroma-go/pkg/api/v2"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
+)
+
+// ConvertChromaCollection converts ChromaCollectionInfo to unifiedmodel.VectorIndex for Chroma
+func ConvertChromaCollection(collectionInfo ChromaCollectionInfo) unifiedmodel.VectorIndex {
+	return unifiedmodel.VectorIndex{
+		Name:      collectionInfo.Name,
+		Dimension: collectionInfo.Dimension,
+		Metric:    collectionInfo.DistanceFunction,
+	}
 }
 
-// ChromaSchema represents the schema of a Chroma vector database
-type ChromaSchema struct {
-	Collections []ChromaCollectionInfo `json:"collections"`
+// ConvertChromaVector converts ChromaVector to unifiedmodel.Vector for Chroma
+func ConvertChromaVector(vectorInfo ChromaVector) unifiedmodel.Vector {
+	return unifiedmodel.Vector{
+		Name:      vectorInfo.ID,
+		Dimension: len(vectorInfo.Embedding),
+		Metric:    "cosine", // Default metric for Chroma
+	}
 }
 
 // ChromaCollectionInfo represents information about a Chroma collection
@@ -59,11 +64,15 @@ type ChromaQueryResult struct {
 
 // ChromaClient represents a client for interacting with Chroma
 type ChromaClient struct {
+	// API is the underlying chroma-go v2 client
+	API chromav2.Client
+
+	// Retain connection params for metadata and fallbacks
 	BaseURL     string
 	Host        string
 	Port        int
 	Username    string
 	Password    string
 	SSL         bool
-	IsConnected int32 // Add this field for health checks
+	IsConnected int32
 }

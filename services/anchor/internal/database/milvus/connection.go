@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 const (
@@ -19,9 +19,13 @@ const (
 )
 
 // Connect establishes a connection to a Milvus database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
-	if config.DatabaseVendor != "milvus" {
-		return nil, fmt.Errorf("invalid database provider: %s, expected 'milvus'", config.DatabaseVendor)
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
+	provider := config.ConnectionType
+	if provider == "" {
+		provider = config.DatabaseVendor
+	}
+	if provider != "milvus" {
+		return nil, fmt.Errorf("invalid database provider: %s, expected 'milvus'", provider)
 	}
 
 	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
@@ -60,7 +64,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error connecting to Milvus: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "milvus",
 		DatabaseID:   config.DatabaseID,
@@ -70,9 +74,13 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Milvus instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
-	if config.DatabaseVendor != "milvus" {
-		return nil, fmt.Errorf("invalid database provider: %s, expected 'milvus'", config.DatabaseVendor)
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
+	provider := config.ConnectionType
+	if provider == "" {
+		provider = config.DatabaseVendor
+	}
+	if provider != "milvus" {
+		return nil, fmt.Errorf("invalid database provider: %s, expected 'milvus'", provider)
 	}
 
 	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
@@ -111,7 +119,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error connecting to Milvus instance: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:          client,
 		InstanceID:  config.InstanceID,
 		Config:      config,
@@ -120,7 +128,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches database details
-func DiscoverDetails(client *MilvusClient) (*MilvusDetails, error) {
+func DiscoverDetails(client *MilvusClient) (map[string]interface{}, error) {
 	// Get collections to determine database size
 	collections, err := listCollections(client)
 	if err != nil {
@@ -139,17 +147,18 @@ func DiscoverDetails(client *MilvusClient) (*MilvusDetails, error) {
 		totalCount += details.RowCount
 	}
 
-	return &MilvusDetails{
-		UniqueIdentifier: fmt.Sprintf("milvus_%s_%d", client.Host, client.Port),
-		DatabaseType:     "milvus",
-		DatabaseEdition:  "community",
-		Version:          "2.0.0", // Milvus doesn't expose version via API
-		DatabaseSize:     totalSize,
-		Host:             client.Host,
-		Port:             client.Port,
-		CollectionCount:  int64(len(collections)),
-		TotalVectors:     totalCount,
-	}, nil
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = fmt.Sprintf("milvus_%s_%d", client.Host, client.Port)
+	details["databaseType"] = "milvus"
+	details["databaseEdition"] = "community"
+	details["version"] = "2.0.0" // Milvus doesn't expose version via API
+	details["databaseSize"] = totalSize
+	details["host"] = client.Host
+	details["port"] = client.Port
+	details["collectionCount"] = int64(len(collections))
+	details["totalVectors"] = totalCount
+
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Milvus database

@@ -2,31 +2,39 @@ package chroma
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
+	chromav2 "github.com/amikos-tech/chroma-go/pkg/api/v2"
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 const (
 	chromaDefaultPort = 8000
-	chromaAPIVersion  = "v1"
+	chromaAPIVersion  = "v2"
 )
 
 // Connect establishes a connection to a Chroma database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
-	if config.DatabaseVendor != "chroma" {
-		return nil, fmt.Errorf("invalid database provider: %s, expected 'chroma'", config.DatabaseVendor)
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
+	// Accept either vendor or type to identify provider; prefer type when set
+	provider := config.ConnectionType
+	if provider == "" {
+		provider = config.DatabaseVendor
+	}
+	if provider != "chroma" {
+		return nil, fmt.Errorf("invalid database provider: %s, expected 'chroma'", provider)
 	}
 
 	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
 	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+		if config.Password == "" {
+			decryptedPassword = ""
+		} else {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
 	}
 
 	// Extract Chroma-specific configuration
@@ -43,8 +51,21 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 	}
 	baseURL := fmt.Sprintf("%s://%s:%d/api/%s", protocol, host, port, chromaAPIVersion)
 
-	// Create Chroma client
+	// Build chroma-go client options
+	var opts []chromav2.ClientOption
+	opts = append(opts, chromav2.WithBaseURL(baseURL))
+	if config.Username != "" && decryptedPassword != "" {
+		opts = append(opts, chromav2.WithAuth(chromav2.NewBasicAuthCredentialsProvider(config.Username, decryptedPassword)))
+	}
+	opts = append(opts, chromav2.WithTimeout(30*time.Second))
+
+	apiClient, err := chromav2.NewHTTPClient(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create chroma client: %w", err)
+	}
+
 	client := &ChromaClient{
+		API:         apiClient,
 		BaseURL:     baseURL,
 		Host:        host,
 		Port:        port,
@@ -54,13 +75,40 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		IsConnected: 1,
 	}
 
-	// Test the connection
-	_, err = listCollections(client)
-	if err != nil {
-		return nil, fmt.Errorf("error connecting to Chroma: %v", err)
+	// Test the connection (ListCollections). If 404-like error and non-default port, retry default port
+	if _, err = listCollections(client); err != nil {
+		if strings.Contains(err.Error(), "404") && port != chromaDefaultPort {
+			fallbackBase := fmt.Sprintf("%s://%s:%d/api/%s", protocol, host, chromaDefaultPort, chromaAPIVersion)
+			fallbackOpts := []chromav2.ClientOption{chromav2.WithBaseURL(fallbackBase), chromav2.WithTimeout(30 * time.Second)}
+			if config.Username != "" && decryptedPassword != "" {
+				fallbackOpts = append(fallbackOpts, chromav2.WithAuth(chromav2.NewBasicAuthCredentialsProvider(config.Username, decryptedPassword)))
+			}
+			fallbackAPI, err2 := chromav2.NewHTTPClient(fallbackOpts...)
+			if err2 == nil {
+				fallback := &ChromaClient{
+					API:         fallbackAPI,
+					BaseURL:     fallbackBase,
+					Host:        host,
+					Port:        chromaDefaultPort,
+					Username:    config.Username,
+					Password:    decryptedPassword,
+					SSL:         config.SSL,
+					IsConnected: 1,
+				}
+				if _, err3 := listCollections(fallback); err3 == nil {
+					client = fallback
+				} else {
+					return nil, fmt.Errorf("error connecting to Chroma: %v", err)
+				}
+			} else {
+				return nil, fmt.Errorf("error creating fallback Chroma client: %v", err2)
+			}
+		} else {
+			return nil, fmt.Errorf("error connecting to Chroma: %v", err)
+		}
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "chroma",
 		DatabaseID:   config.DatabaseID,
@@ -70,14 +118,23 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Chroma instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
-	if config.DatabaseVendor != "chroma" {
-		return nil, fmt.Errorf("invalid database provider: %s, expected 'chroma'", config.DatabaseVendor)
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
+	// Accept either vendor or type to identify provider; prefer type when set
+	provider := config.ConnectionType
+	if provider == "" {
+		provider = config.DatabaseVendor
+	}
+	if provider != "chroma" {
+		return nil, fmt.Errorf("invalid database provider: %s, expected 'chroma'", provider)
 	}
 
 	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
 	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+		if config.Password == "" {
+			decryptedPassword = ""
+		} else {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
 	}
 
 	// Extract Chroma-specific configuration
@@ -94,8 +151,18 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 	}
 	baseURL := fmt.Sprintf("%s://%s:%d/api/%s", protocol, host, port, chromaAPIVersion)
 
-	// Create Chroma client
+	var opts []chromav2.ClientOption
+	opts = append(opts, chromav2.WithBaseURL(baseURL), chromav2.WithTimeout(30*time.Second))
+	if config.Username != "" && decryptedPassword != "" {
+		opts = append(opts, chromav2.WithAuth(chromav2.NewBasicAuthCredentialsProvider(config.Username, decryptedPassword)))
+	}
+	apiClient, err := chromav2.NewHTTPClient(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create chroma client: %w", err)
+	}
+
 	client := &ChromaClient{
+		API:         apiClient,
 		BaseURL:     baseURL,
 		Host:        host,
 		Port:        port,
@@ -105,22 +172,49 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		IsConnected: 1,
 	}
 
-	// Test the connection
-	_, err = listCollections(client)
-	if err != nil {
-		return nil, fmt.Errorf("error connecting to Chroma instance: %v", err)
+	if _, err = listCollections(client); err != nil {
+		if strings.Contains(err.Error(), "404") && port != chromaDefaultPort {
+			fallbackBase := fmt.Sprintf("%s://%s:%d/api/%s", protocol, host, chromaDefaultPort, chromaAPIVersion)
+			fallbackOpts := []chromav2.ClientOption{chromav2.WithBaseURL(fallbackBase), chromav2.WithTimeout(30 * time.Second)}
+			if config.Username != "" && decryptedPassword != "" {
+				fallbackOpts = append(fallbackOpts, chromav2.WithAuth(chromav2.NewBasicAuthCredentialsProvider(config.Username, decryptedPassword)))
+			}
+			fallbackAPI, err2 := chromav2.NewHTTPClient(fallbackOpts...)
+			if err2 == nil {
+				fallback := &ChromaClient{
+					API:         fallbackAPI,
+					BaseURL:     fallbackBase,
+					Host:        host,
+					Port:        chromaDefaultPort,
+					Username:    config.Username,
+					Password:    decryptedPassword,
+					SSL:         config.SSL,
+					IsConnected: 1,
+				}
+				if _, err3 := listCollections(fallback); err3 == nil {
+					client = fallback
+				} else {
+					return nil, fmt.Errorf("error connecting to Chroma instance: %v", err)
+				}
+			} else {
+				return nil, fmt.Errorf("error creating fallback Chroma client: %v", err2)
+			}
+		} else {
+			return nil, fmt.Errorf("error connecting to Chroma instance: %v", err)
+		}
 	}
 
-	return &common.InstanceClient{
-		DB:          client,
-		InstanceID:  config.InstanceID,
-		Config:      config,
-		IsConnected: 1,
+	return &dbclient.InstanceClient{
+		DB:           client,
+		InstanceType: "chroma",
+		InstanceID:   config.InstanceID,
+		Config:       config,
+		IsConnected:  1,
 	}, nil
 }
 
 // DiscoverDetails fetches database details
-func DiscoverDetails(client *ChromaClient) (*ChromaDetails, error) {
+func DiscoverDetails(client *ChromaClient) (map[string]interface{}, error) {
 	// Get collections to determine database size
 	collections, err := listCollections(client)
 	if err != nil {
@@ -139,17 +233,18 @@ func DiscoverDetails(client *ChromaClient) (*ChromaDetails, error) {
 		totalCount += details.Count
 	}
 
-	return &ChromaDetails{
-		UniqueIdentifier: fmt.Sprintf("chroma_%s_%d", client.Host, client.Port),
-		DatabaseType:     "chroma",
-		DatabaseEdition:  "community",
-		Version:          "1.0.0", // Chroma doesn't expose version via API
-		DatabaseSize:     totalSize,
-		Host:             client.Host,
-		Port:             client.Port,
-		CollectionCount:  int64(len(collections)),
-		TotalVectors:     totalCount,
-	}, nil
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = fmt.Sprintf("chroma_%s_%d", client.Host, client.Port)
+	details["databaseType"] = "chroma"
+	details["databaseEdition"] = "community"
+	details["version"] = "1.0.0" // Chroma doesn't expose version via API
+	details["databaseSize"] = totalSize
+	details["host"] = client.Host
+	details["port"] = client.Port
+	details["collectionCount"] = int64(len(collections))
+	details["totalVectors"] = totalCount
+
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Chroma database
@@ -218,123 +313,81 @@ func CollectInstanceMetadata(ctx context.Context, client *ChromaClient) (map[str
 
 // listCollections lists all collections in the Chroma database
 func listCollections(client *ChromaClient) ([]string, error) {
-	url := fmt.Sprintf("%s/collections", client.BaseURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	req, err := http.NewRequest("GET", url, nil)
+	cols, err := client.API.ListCollections(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error creating request: %v", err)
+		return nil, err
 	}
-
-	// Add authentication if provided
-	if client.Username != "" && client.Password != "" {
-		req.SetBasicAuth(client.Username, client.Password)
+	names := make([]string, 0, len(cols))
+	for _, c := range cols {
+		if c.Name() != "" {
+			names = append(names, c.Name())
+		}
 	}
-
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var response struct {
-		Collections []struct {
-			Name string `json:"name"`
-		} `json:"collections"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("error decoding response: %v", err)
-	}
-
-	collections := make([]string, 0, len(response.Collections))
-	for _, collection := range response.Collections {
-		collections = append(collections, collection.Name)
-	}
-
-	return collections, nil
+	return names, nil
 }
 
 // describeCollection gets detailed information about a collection
 func describeCollection(client *ChromaClient, collectionName string) (*ChromaCollectionInfo, error) {
-	url := fmt.Sprintf("%s/collections/%s", client.BaseURL, collectionName)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	req, err := http.NewRequest("GET", url, nil)
+	col, err := client.API.GetCollection(ctx, collectionName)
 	if err != nil {
-		return nil, fmt.Errorf("error creating request: %v", err)
+		return nil, err
 	}
 
-	// Add authentication if provided
-	if client.Username != "" && client.Password != "" {
-		req.SetBasicAuth(client.Username, client.Password)
+	var info ChromaCollectionInfo
+	info.Name = col.Name()
+	info.ID = col.ID()
+	if md := col.Metadata(); md != nil {
+		// Convert collection metadata to map[string]interface{}
+		keys := md.Keys()
+		info.Metadata = make(map[string]interface{}, len(keys))
+		for _, k := range keys {
+			if s, ok := md.GetString(k); ok {
+				info.Metadata[k] = s
+				continue
+			}
+			if i, ok := md.GetInt(k); ok {
+				info.Metadata[k] = i
+				continue
+			}
+			if f, ok := md.GetFloat(k); ok {
+				info.Metadata[k] = f
+				continue
+			}
+			if b, ok := md.GetBool(k); ok {
+				info.Metadata[k] = b
+				continue
+			}
+		}
 	}
 
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var collection ChromaCollectionInfo
-	if err := json.NewDecoder(resp.Body).Decode(&collection); err != nil {
-		return nil, fmt.Errorf("error decoding response: %v", err)
-	}
-
-	// Get collection count
+	// Count vectors in collection
 	count, err := getCollectionCount(client, collectionName)
 	if err == nil {
-		collection.Count = count
+		info.Count = count
 	}
-
-	return &collection, nil
+	return &info, nil
 }
 
 // getCollectionCount gets the count of vectors in a collection
 func getCollectionCount(client *ChromaClient, collectionName string) (int64, error) {
-	url := fmt.Sprintf("%s/collections/%s/count", client.BaseURL, collectionName)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	req, err := http.NewRequest("GET", url, nil)
+	col, err := client.API.GetCollection(ctx, collectionName)
 	if err != nil {
-		return 0, fmt.Errorf("error creating request: %v", err)
+		return 0, err
 	}
-
-	// Add authentication if provided
-	if client.Username != "" && client.Password != "" {
-		req.SetBasicAuth(client.Username, client.Password)
-	}
-
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
+	count, err := col.Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("error executing request: %v", err)
+		return 0, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var response struct {
-		Count int64 `json:"count"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return 0, fmt.Errorf("error decoding response: %v", err)
-	}
-
-	return response.Count, nil
+	return int64(count), nil
 }
 
 // ExecuteCommand executes a command on a Chroma database
@@ -360,5 +413,8 @@ func DropDatabase(ctx context.Context, client *ChromaClient, databaseName string
 
 // Close closes the Chroma client connection
 func (client *ChromaClient) Close() {
+	if client.API != nil {
+		_ = client.API.Close()
+	}
 	atomic.StoreInt32(&client.IsConnected, 0)
 }

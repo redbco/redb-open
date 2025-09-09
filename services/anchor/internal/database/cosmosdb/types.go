@@ -1,32 +1,5 @@
 package cosmosdb
 
-import (
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
-)
-
-// CosmosDBDetails contains information about a CosmosDB database
-type CosmosDBDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	AccountName      string `json:"accountName"`
-	Region           string `json:"region"`
-	ConsistencyLevel string `json:"consistencyLevel"`
-	API              string `json:"api"`
-}
-
-// DatabaseSchema represents the schema of a CosmosDB database
-type DatabaseSchema struct {
-	Containers []common.TableInfo          `json:"containers"` // CosmosDB containers are similar to tables
-	EnumTypes  []common.EnumInfo           `json:"enumTypes"`
-	Schemas    []common.DatabaseSchemaInfo `json:"schemas"`
-	Functions  []common.FunctionInfo       `json:"functions"`
-	Triggers   []common.TriggerInfo        `json:"triggers"`
-	Procedures []common.ProcedureInfo      `json:"procedures"`
-}
-
 // CosmosDBReplicationSourceDetails contains information about CosmosDB change feed (limited support)
 type CosmosDBReplicationSourceDetails struct {
 	ContainerName string `json:"container_name"`

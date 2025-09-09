@@ -1,31 +1,5 @@
 package dynamodb
 
-import (
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
-)
-
-// DynamoDBDetails contains information about a DynamoDB database
-type DynamoDBDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	Region           string `json:"region"`
-	BillingMode      string `json:"billingMode"`
-}
-
-// DatabaseSchema represents the schema of a DynamoDB database
-type DatabaseSchema struct {
-	Tables     []common.TableInfo          `json:"tables"`
-	EnumTypes  []common.EnumInfo           `json:"enumTypes"`
-	Schemas    []common.DatabaseSchemaInfo `json:"schemas"`
-	Functions  []common.FunctionInfo       `json:"functions"`
-	Triggers   []common.TriggerInfo        `json:"triggers"`
-	Sequences  []common.SequenceInfo       `json:"sequences"`
-	Extensions []common.ExtensionInfo      `json:"extensions"`
-}
-
 // DynamoDBReplicationSourceDetails contains information about DynamoDB change streams (not supported)
 type DynamoDBReplicationSourceDetails struct {
 	TableName  string `json:"table_name"`

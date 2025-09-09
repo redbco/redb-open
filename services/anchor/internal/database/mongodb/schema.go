@@ -5,55 +5,63 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
-// DiscoverSchema fetches the current schema of a MongoDB database
-func DiscoverSchema(db *mongo.Database) (*MongoDBSchema, error) {
-	schema := &MongoDBSchema{}
+// DiscoverSchema fetches the current schema of a MongoDB database and returns a UnifiedModel
+func DiscoverSchema(db *mongo.Database) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.MongoDB,
+		Collections:  make(map[string]unifiedmodel.Collection),
+		Indexes:      make(map[string]unifiedmodel.Index),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Databases:    make(map[string]unifiedmodel.Database),
+	}
+
 	var err error
 
-	// Get collections
-	schema.Collections, err = discoverCollections(db)
+	// Get collections directly as UnifiedModel types
+	err = discoverCollectionsUnified(db, um)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering collections: %v", err)
 	}
 
-	// Get indexes
-	schema.Indexes, err = discoverIndexes(db)
+	// Get indexes directly as UnifiedModel types
+	err = discoverIndexesUnified(db, um)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering indexes: %v", err)
 	}
 
-	// Get functions (stored JavaScript)
-	schema.Functions, err = discoverFunctions(db)
+	// Get functions directly as UnifiedModel types
+	err = discoverFunctionsUnified(db, um)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering functions: %v", err)
 	}
 
-	// MongoDB doesn't have traditional schemas, but we can include database info
-	schema.Schemas, err = getSchemas(db)
+	// Get database info directly as UnifiedModel types
+	err = getSchemasUnified(db, um)
 	if err != nil {
 		return nil, fmt.Errorf("error getting schemas: %v", err)
 	}
 
-	return schema, nil
+	return um, nil
 }
 
-// discoverCollections fetches all collections in the database with their details
-func discoverCollections(db *mongo.Database) ([]common.CollectionInfo, error) {
+// discoverCollectionsUnified discovers collections directly into UnifiedModel
+func discoverCollectionsUnified(db *mongo.Database, um *unifiedmodel.UnifiedModel) error {
 	ctx := context.Background()
 
 	// Get all collection names
 	collectionNames, err := db.ListCollectionNames(ctx, bson.D{})
 	if err != nil {
-		return nil, fmt.Errorf("error listing collections: %v", err)
+		return fmt.Errorf("error listing collections: %v", err)
 	}
 
-	var collections []common.CollectionInfo
 	for _, collName := range collectionNames {
 		// Get collection
 		coll := db.Collection(collName)
@@ -63,142 +71,133 @@ func discoverCollections(db *mongo.Database) ([]common.CollectionInfo, error) {
 		statsResult := db.RunCommand(ctx, statsCmd)
 		var statsDoc bson.M
 		if err := statsResult.Decode(&statsDoc); err != nil {
-			return nil, fmt.Errorf("error getting stats for collection %s: %v", collName, err)
+			return fmt.Errorf("error getting stats for collection %s: %v", collName, err)
+		}
+
+		// Create unified collection
+		unifiedCollection := unifiedmodel.Collection{
+			Name:    collName,
+			Fields:  make(map[string]unifiedmodel.Field),
+			Indexes: make(map[string]unifiedmodel.Index),
+			Options: make(map[string]any),
 		}
 
 		// Extract collection size and count
-		var size int64 = 0
-		var count int64 = 0
-
 		if sizeVal, ok := statsDoc["size"]; ok {
-			switch s := sizeVal.(type) {
-			case int64:
-				size = s
-			case int32:
-				size = int64(s)
-			case float64:
-				size = int64(s)
-			}
+			unifiedCollection.Options["size"] = sizeVal
 		}
-
 		if countVal, ok := statsDoc["count"]; ok {
-			switch c := countVal.(type) {
-			case int64:
-				count = c
-			case int32:
-				count = int64(c)
-			case float64:
-				count = int64(c)
-			}
+			unifiedCollection.Options["count"] = countVal
 		}
 
 		// Get collection options
-		collOptions := make(map[string]interface{})
 		if optionsVal, ok := statsDoc["options"].(bson.M); ok {
 			for k, v := range optionsVal {
-				collOptions[k] = v
+				unifiedCollection.Options[k] = v
 			}
 		}
 
-		// Get sample documents
+		// Get sample documents for field inference
 		findOptions := options.Find().SetLimit(5)
 		cursor, err := coll.Find(ctx, bson.D{}, findOptions)
 		if err != nil {
-			return nil, fmt.Errorf("error getting sample documents for collection %s: %v", collName, err)
+			return fmt.Errorf("error getting sample documents for collection %s: %v", collName, err)
 		}
 
 		var sampleDocs []map[string]interface{}
 		if err = cursor.All(ctx, &sampleDocs); err != nil {
 			cursor.Close(ctx)
-			return nil, fmt.Errorf("error decoding sample documents for collection %s: %v", collName, err)
+			return fmt.Errorf("error decoding sample documents for collection %s: %v", collName, err)
 		}
 
-		// Create collection info
-		collInfo := common.CollectionInfo{
-			Name:       collName,
-			Options:    collOptions,
-			SampleDocs: sampleDocs,
-			Count:      count,
-			Size:       size,
-		}
-
-		collections = append(collections, collInfo)
-	}
-
-	return collections, nil
-}
-
-// discoverIndexes fetches all indexes for all collections
-func discoverIndexes(db *mongo.Database) ([]common.IndexInfo, error) {
-	ctx := context.Background()
-
-	// Get all collection names
-	collectionNames, err := db.ListCollectionNames(ctx, bson.D{})
-	if err != nil {
-		return nil, fmt.Errorf("error listing collections: %v", err)
-	}
-
-	var allIndexes []common.IndexInfo
-
-	for _, collName := range collectionNames {
-		// Get collection
-		coll := db.Collection(collName)
-
-		// Get indexes
-		cursor, err := coll.Indexes().List(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("error listing indexes for collection %s: %v", collName, err)
-		}
-
-		var indexes []bson.M
-		if err = cursor.All(ctx, &indexes); err != nil {
-			cursor.Close(ctx)
-			return nil, fmt.Errorf("error decoding indexes for collection %s: %v", collName, err)
-		}
-
-		for _, idx := range indexes {
-			var indexInfo common.IndexInfo
-
-			// Get index name
-			if name, ok := idx["name"].(string); ok {
-				indexInfo.Name = name
-			} else {
-				continue // Skip if no name
-			}
-
-			// Get index keys
-			if key, ok := idx["key"].(bson.M); ok {
-				var columns []string
-				for field := range key {
-					columns = append(columns, field)
+		// Infer fields from sample documents
+		for _, sampleDoc := range sampleDocs {
+			for fieldName, fieldValue := range sampleDoc {
+				if fieldName == "_id" {
+					continue // Skip the MongoDB ObjectId field
 				}
-				indexInfo.Columns = columns
+
+				fieldType := inferFieldType(fieldValue)
+				unifiedCollection.Fields[fieldName] = unifiedmodel.Field{
+					Name: fieldName,
+					Type: fieldType,
+				}
 			}
-
-			// Check if unique
-			if unique, ok := idx["unique"].(bool); ok {
-				indexInfo.IsUnique = unique
-			}
-
-			// Add collection name to index info
-			indexInfo.Name = fmt.Sprintf("%s.%s", collName, indexInfo.Name)
-
-			allIndexes = append(allIndexes, indexInfo)
 		}
+
+		// Get indexes for this collection
+		indexCursor, err := coll.Indexes().List(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to list indexes for collection %s: %v", collName, err)
+		}
+
+		for indexCursor.Next(ctx) {
+			var indexDoc bson.M
+			if err := indexCursor.Decode(&indexDoc); err != nil {
+				continue
+			}
+
+			// Extract index information
+			indexName, ok := indexDoc["name"].(string)
+			if !ok {
+				continue
+			}
+
+			// Handle both bson.D and bson.M for the key field
+			var fields []string
+			switch keyValue := indexDoc["key"].(type) {
+			case bson.D:
+				for _, elem := range keyValue {
+					fields = append(fields, elem.Key)
+				}
+			case bson.M:
+				for field := range keyValue {
+					fields = append(fields, field)
+				}
+			default:
+				// Skip if we can't parse the key structure
+				continue
+			}
+
+			isUnique := false
+			if unique, exists := indexDoc["unique"]; exists {
+				isUnique = unique.(bool)
+			}
+
+			unifiedCollection.Indexes[indexName] = unifiedmodel.Index{
+				Name:   indexName,
+				Fields: fields,
+				Unique: isUnique,
+			}
+		}
+		indexCursor.Close(ctx)
+
+		um.Collections[collName] = unifiedCollection
 	}
 
-	return allIndexes, nil
+	return nil
 }
 
-// discoverFunctions fetches JavaScript functions stored in the system.js collection
-func discoverFunctions(db *mongo.Database) ([]common.FunctionInfo, error) {
+// discoverIndexesUnified discovers indexes directly into UnifiedModel (global indexes)
+func discoverIndexesUnified(db *mongo.Database, um *unifiedmodel.UnifiedModel) error {
+	// MongoDB indexes are typically collection-specific and are already handled
+	// in discoverCollectionsUnified. This function is for any global indexes
+	// that might exist at the database level.
+
+	// For now, MongoDB doesn't have database-level indexes separate from collections,
+	// so this is a placeholder for compatibility with the unified interface.
+	return nil
+}
+
+// discoverFunctionsUnified discovers functions directly into UnifiedModel
+func discoverFunctionsUnified(db *mongo.Database, um *unifiedmodel.UnifiedModel) error {
 	ctx := context.Background()
 
 	// Check if system.js collection exists
 	systemJSExists := false
 	collections, err := db.ListCollectionNames(ctx, bson.D{})
 	if err != nil {
-		return nil, fmt.Errorf("error listing collections: %v", err)
+		return fmt.Errorf("error listing collections: %v", err)
 	}
 
 	for _, coll := range collections {
@@ -210,71 +209,72 @@ func discoverFunctions(db *mongo.Database) ([]common.FunctionInfo, error) {
 
 	if !systemJSExists {
 		// No stored functions
-		return []common.FunctionInfo{}, nil
+		return nil
 	}
 
 	// Get all stored JavaScript functions
 	systemJS := db.Collection("system.js")
 	cursor, err := systemJS.Find(ctx, bson.D{})
 	if err != nil {
-		return nil, fmt.Errorf("error finding stored JavaScript functions: %v", err)
+		return fmt.Errorf("error finding stored JavaScript functions: %v", err)
 	}
 
-	var functions []common.FunctionInfo
 	var results []bson.M
-
 	if err = cursor.All(ctx, &results); err != nil {
 		cursor.Close(ctx)
-		return nil, fmt.Errorf("error decoding stored JavaScript functions: %v", err)
+		return fmt.Errorf("error decoding stored JavaScript functions: %v", err)
 	}
 
 	for _, result := range results {
-		var functionInfo common.FunctionInfo
-
 		// Get function name
-		if name, ok := result["_id"].(string); ok {
-			functionInfo.Name = name
-		} else {
+		name, ok := result["_id"].(string)
+		if !ok {
 			continue // Skip if no name
 		}
 
 		// Get function body
+		var body string
 		if value, ok := result["value"].(string); ok {
-			functionInfo.Body = value
+			body = value
 		} else if value, ok := result["value"].(bson.JavaScript); ok {
-			functionInfo.Body = string(value)
+			body = string(value)
 		}
 
-		functionInfo.Schema = "system.js"
-		functionInfo.ReturnType = "javascript"
-
-		functions = append(functions, functionInfo)
+		um.Functions[name] = unifiedmodel.Function{
+			Name:       name,
+			Language:   "javascript",
+			Returns:    "javascript",
+			Definition: body,
+		}
 	}
 
-	return functions, nil
+	return nil
 }
 
-// getSchemas returns database schema information (MongoDB doesn't have traditional schemas)
-func getSchemas(db *mongo.Database) ([]common.DatabaseSchemaInfo, error) {
+// getSchemasUnified gets schemas directly into UnifiedModel
+func getSchemasUnified(db *mongo.Database, um *unifiedmodel.UnifiedModel) error {
 	// In MongoDB, the database itself is the closest concept to a schema
 	dbName := db.Name()
 
-	schema := common.DatabaseSchemaInfo{
-		Name:        dbName,
-		Description: "MongoDB database",
+	um.Databases[dbName] = unifiedmodel.Database{
+		Name:    dbName,
+		Comment: "MongoDB database",
 	}
 
-	return []common.DatabaseSchemaInfo{schema}, nil
+	return nil
 }
 
-// CreateStructure creates database objects based on the provided parameters
-func CreateStructure(db *mongo.Database, params common.StructureParams) error {
+// CreateStructure creates database objects from a UnifiedModel
+func CreateStructure(db *mongo.Database, um *unifiedmodel.UnifiedModel) error {
+	if um == nil {
+		return fmt.Errorf("unified model cannot be nil")
+	}
+
 	ctx := context.Background()
 
 	// Create collections
-	for _, collInfo := range params.Tables {
-		// In MongoDB, tables are collections
-		collName := collInfo.Name
+	for _, collection := range um.Collections {
+		collName := collection.Name
 
 		// Check if collection already exists
 		collections, err := db.ListCollectionNames(ctx, bson.D{{Key: "name", Value: collName}})
@@ -290,14 +290,15 @@ func CreateStructure(db *mongo.Database, params common.StructureParams) error {
 		// Create the collection
 		createOpts := options.CreateCollection()
 
-		// Set options based on table info
-		if collInfo.TableType == "capped" {
-			// For capped collections
-			if size, ok := getOptionInt64(collInfo.Constraints, "size"); ok {
+		// Set options based on collection info
+		if collection.Options != nil {
+			if capped, ok := collection.Options["capped"].(bool); ok && capped {
 				createOpts.SetCapped(true)
-				createOpts.SetSizeInBytes(size)
 
-				if maxDocs, ok := getOptionInt64(collInfo.Constraints, "max"); ok {
+				if size, ok := collection.Options["size"].(int64); ok {
+					createOpts.SetSizeInBytes(size)
+				}
+				if maxDocs, ok := collection.Options["max"].(int64); ok {
 					createOpts.SetMaxDocuments(maxDocs)
 				}
 			}
@@ -309,21 +310,21 @@ func CreateStructure(db *mongo.Database, params common.StructureParams) error {
 		}
 
 		// Create indexes
-		if len(collInfo.Indexes) > 0 {
+		if len(collection.Indexes) > 0 {
 			coll := db.Collection(collName)
 			var indexModels []mongo.IndexModel
 
-			for _, idx := range collInfo.Indexes {
+			for _, idx := range collection.Indexes {
 				// Create index keys
 				keys := bson.D{}
-				for _, col := range idx.Columns {
+				for _, field := range idx.Fields {
 					// Default to ascending index
-					keys = append(keys, bson.E{Key: col, Value: 1})
+					keys = append(keys, bson.E{Key: field, Value: 1})
 				}
 
 				// Set index options
 				indexOpts := options.Index()
-				if idx.IsUnique {
+				if idx.Unique {
 					indexOpts.SetUnique(true)
 				}
 
@@ -351,42 +352,26 @@ func CreateStructure(db *mongo.Database, params common.StructureParams) error {
 	}
 
 	// Create stored JavaScript functions
-	if len(params.Functions) > 0 {
+	if len(um.Functions) > 0 {
 		systemJS := db.Collection("system.js")
 
-		for _, funcInfo := range params.Functions {
+		for _, function := range um.Functions {
 			// Create function document
 			funcDoc := bson.D{
-				{Key: "_id", Value: funcInfo.Name},
-				{Key: "value", Value: bson.JavaScript(funcInfo.Body)},
+				{Key: "_id", Value: function.Name},
+				{Key: "value", Value: bson.JavaScript(function.Definition)},
 			}
 
 			// Insert or update function
 			opts := options.Replace().SetUpsert(true)
-			_, err := systemJS.ReplaceOne(ctx, bson.D{{Key: "_id", Value: funcInfo.Name}}, funcDoc, opts)
+			_, err := systemJS.ReplaceOne(ctx, bson.D{{Key: "_id", Value: function.Name}}, funcDoc, opts)
 			if err != nil {
-				return fmt.Errorf("error creating function %s: %v", funcInfo.Name, err)
+				return fmt.Errorf("error creating function %s: %v", function.Name, err)
 			}
 		}
 	}
 
 	return nil
-}
-
-// Helper function to extract int64 options from constraints
-func getOptionInt64(constraints []common.Constraint, optionName string) (int64, bool) {
-	for _, constraint := range constraints {
-		if constraint.Type == "option" && constraint.Name == optionName {
-			if constraint.Definition != "" {
-				var value int64
-				_, err := fmt.Sscanf(constraint.Definition, "%d", &value)
-				if err == nil {
-					return value, true
-				}
-			}
-		}
-	}
-	return 0, false
 }
 
 // InferSchema analyzes sample documents to infer a schema for a collection
@@ -525,7 +510,10 @@ func createNestedField(fields map[string]interface{}, parts []string, fieldType 
 	}
 
 	// Get properties
-	currentField := fields[current].(map[string]interface{})
+	currentField, ok := fields[current].(map[string]interface{})
+	if !ok {
+		return
+	}
 	properties, ok := currentField["properties"].(map[string]interface{})
 	if !ok {
 		properties = make(map[string]interface{})

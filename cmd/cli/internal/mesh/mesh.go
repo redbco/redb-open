@@ -76,10 +76,8 @@ type JoinMeshRequest struct {
 
 // SeedMesh creates a new mesh network
 func SeedMesh(args []string) error {
-	serviceURL, err := config.GetServiceAPIURL()
-	if err != nil {
-		return err
-	}
+	// Use global API URL since mesh endpoints are now global in Client API
+	globalURL := config.GetGlobalAPIURLNoAuth()
 
 	reader := bufio.NewReader(os.Stdin)
 
@@ -123,7 +121,7 @@ func SeedMesh(args []string) error {
 	}
 
 	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/seed", serviceURL)
+	url := fmt.Sprintf("%s/api/v1/mesh/seed", globalURL)
 
 	var response SeedMeshResponse
 	if err := client.Post(url, seedReq, &response, false); err != nil {
@@ -148,10 +146,8 @@ func SeedMesh(args []string) error {
 
 // JoinMesh joins an existing mesh network
 func JoinMesh(meshID string) error {
-	serviceURL, err := config.GetServiceAPIURL()
-	if err != nil {
-		return err
-	}
+	// Use global API URL since mesh endpoints are now global in Client API
+	globalURL := config.GetGlobalAPIURLNoAuth()
 
 	reader := bufio.NewReader(os.Stdin)
 
@@ -192,7 +188,7 @@ func JoinMesh(meshID string) error {
 	}
 
 	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/join", serviceURL)
+	url := fmt.Sprintf("%s/api/v1/mesh/join", globalURL)
 
 	var response JoinMeshResponse
 	if err := client.Post(url, joinReq, &response, false); err != nil {
@@ -213,13 +209,11 @@ func JoinMesh(meshID string) error {
 
 // ShowMesh displays detailed information about a mesh
 func ShowMesh(meshID string) error {
-	serviceURL, err := config.GetServiceAPIURL()
-	if err != nil {
-		return err
-	}
+	// Use global API URL since mesh endpoints are now global in Client API
+	globalURL := config.GetGlobalAPIURLNoAuth()
 
 	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/%s", serviceURL, meshID)
+	url := fmt.Sprintf("%s/api/v1/mesh/%s", globalURL, meshID)
 
 	var response ShowMeshResponse
 	if err := client.Get(url, &response, false); err != nil {
@@ -241,13 +235,11 @@ func ShowMesh(meshID string) error {
 
 // ListNodes displays all nodes in a mesh
 func ListNodes(meshID string) error {
-	serviceURL, err := config.GetServiceAPIURL()
-	if err != nil {
-		return err
-	}
+	// Use global API URL since mesh endpoints are now global in Client API
+	globalURL := config.GetGlobalAPIURLNoAuth()
 
 	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/%s/nodes", serviceURL, meshID)
+	url := fmt.Sprintf("%s/api/v1/mesh/%s/nodes", globalURL, meshID)
 
 	var response ListNodesResponse
 	if err := client.Get(url, &response, false); err != nil {

@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -33,6 +34,17 @@ type PostgreSQLConfig struct {
 
 // New creates a new PostgreSQL instance
 func New(ctx context.Context, cfg PostgreSQLConfig) (*PostgreSQL, error) {
+	// Validate required configuration
+	if cfg.Database == "" {
+		return nil, fmt.Errorf("database name is required - must be provided in config or REDB_DATABASE_NAME environment variable")
+	}
+	if cfg.Host == "" {
+		return nil, fmt.Errorf("database host is required")
+	}
+	if cfg.User == "" {
+		return nil, fmt.Errorf("database user is required")
+	}
+
 	// Use pgxpool.ParseConfig to handle special characters in passwords
 	poolConfig, err := pgxpool.ParseConfig("")
 	if err != nil {
@@ -81,8 +93,33 @@ func New(ctx context.Context, cfg PostgreSQLConfig) (*PostgreSQL, error) {
 // If the node has been initialized, it will use keyring credentials
 func FromGlobalConfig(cfg *config.Config) PostgreSQLConfig {
 	// Try to get production credentials from keyring first
-	if prodConfig, err := FromProductionConfig(); err == nil {
+	var databaseName string
+	if cfg != nil {
+		databaseName = cfg.Get("database.name")
+	}
+	if prodConfig, err := FromProductionConfig(databaseName); err == nil {
 		return prodConfig
+	}
+
+	// Use provided database name from config, or try environment variable
+	dbName := databaseName
+	if dbName == "" {
+		// Try to get database name from environment variable
+		dbName = os.Getenv("REDB_DATABASE_NAME")
+	}
+
+	if dbName == "" {
+		// Return error configuration - caller should handle this
+		return PostgreSQLConfig{
+			User:              "",
+			Password:          "",
+			Host:              "",
+			Port:              0,
+			Database:          "",
+			SSLMode:           "",
+			MaxConnections:    0,
+			ConnectionTimeout: 0,
+		}
 	}
 
 	// Fallback to default configuration
@@ -91,7 +128,7 @@ func FromGlobalConfig(cfg *config.Config) PostgreSQLConfig {
 		Password:          "redb",
 		Host:              "localhost",
 		Port:              5432,
-		Database:          "redb",
+		Database:          dbName,
 		SSLMode:           "disable",
 		MaxConnections:    40,
 		ConnectionTimeout: 5 * time.Second,
@@ -128,7 +165,16 @@ func GetInstance() *PostgreSQL {
 }
 
 // CreateDatabase creates the database if it doesn't exist
-func CreateDatabase(ctx context.Context, cfg *config.Config) error {
+func CreateDatabase(ctx context.Context, cfg *config.Config, databaseName string) error {
+	// Use provided database name, or try environment variable, or return error
+	dbName := databaseName
+	if dbName == "" {
+		dbName = os.Getenv("REDB_DATABASE_NAME")
+	}
+	if dbName == "" {
+		return fmt.Errorf("database name is required - must be provided in config or REDB_DATABASE_NAME environment variable")
+	}
+
 	// Connect to default postgres database using pgxpool.ParseConfig to handle special characters
 	poolConfig, err := pgxpool.ParseConfig("")
 	if err != nil {
@@ -153,7 +199,7 @@ func CreateDatabase(ctx context.Context, cfg *config.Config) error {
 	defer defaultPool.Close()
 
 	// Create the database
-	_, err = defaultPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", "redb"))
+	_, err = defaultPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbName))
 	if err != nil {
 		return fmt.Errorf("failed to create database: %w", err)
 	}

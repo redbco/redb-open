@@ -29,6 +29,7 @@ type Server struct {
 	transformationHandler *TransformationHandlers
 	policyHandler         *PolicyHandlers
 	userHandler           *UserHandlers
+	tenantHandler         *TenantHandlers
 	middleware            *Middleware
 }
 
@@ -53,6 +54,7 @@ func NewServer(engine *Engine) *Server {
 		transformationHandler: NewTransformationHandlers(engine),
 		policyHandler:         NewPolicyHandlers(engine),
 		userHandler:           NewUserHandlers(engine),
+		tenantHandler:         NewTenantHandlers(engine),
 		middleware:            NewMiddleware(engine),
 	}
 	s.setupRoutes()
@@ -98,6 +100,41 @@ func (s *Server) setupMiddleware() {
 func (s *Server) setupRoutes() {
 	// Health check endpoint (global, no tenant)
 	s.router.HandleFunc("/health", s.handleHealth).Methods(http.MethodGet)
+
+	// Initial setup endpoint (no authentication required) - from API
+	s.router.HandleFunc("/api/v1/setup", s.handleInitialSetup).Methods(http.MethodPost)
+
+	// Global tenant management endpoints (no tenant_url prefix) - from API
+	globalApiV1 := s.router.PathPrefix("/api/v1").Subrouter()
+
+	// Global tenant endpoints
+	globalTenants := globalApiV1.PathPrefix("/tenants").Subrouter()
+	globalTenants.HandleFunc("", s.tenantHandler.ListTenants).Methods(http.MethodGet)
+	globalTenants.HandleFunc("", s.tenantHandler.AddTenant).Methods(http.MethodPost)
+	globalTenants.HandleFunc("/{tenant_id}", s.tenantHandler.ShowTenant).Methods(http.MethodGet)
+	globalTenants.HandleFunc("/{tenant_id}", s.tenantHandler.ModifyTenant).Methods(http.MethodPut)
+	globalTenants.HandleFunc("/{tenant_id}", s.tenantHandler.DeleteTenant).Methods(http.MethodDelete)
+
+	// Global mesh endpoints (no tenant_url prefix) - from API
+	globalMesh := globalApiV1.PathPrefix("/mesh").Subrouter()
+	globalMesh.HandleFunc("/seed", s.meshHandler.SeedMesh).Methods(http.MethodPost)
+	globalMesh.HandleFunc("/join", s.meshHandler.JoinMesh).Methods(http.MethodPost)
+	globalMesh.HandleFunc("/{mesh_id}", s.meshHandler.ShowMesh).Methods(http.MethodGet)
+	globalMesh.HandleFunc("/{mesh_id}/nodes", s.meshHandler.ListNodes).Methods(http.MethodGet)
+
+	// Global OPTIONS handler for CORS preflight requests
+	// This must be registered before other routes to catch all OPTIONS requests
+	s.router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			// CORS headers are already set by the CORS middleware
+			// Just return 200 OK for preflight requests
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// If not OPTIONS, this handler should not be reached due to more specific routes
+		// But if it is, return 404
+		http.NotFound(w, r)
+	}).Methods(http.MethodOptions)
 
 	// Tenant-specific routes with tenant_url in path
 	// Pattern: /{tenant_url}/api/v1/...
@@ -285,6 +322,46 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleInitialSetup(w http.ResponseWriter, r *http.Request) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+
+	// Parse request body
+	var req struct {
+		TenantName        string `json:"tenant_name"`
+		TenantURL         string `json:"tenant_url"`
+		TenantDescription string `json:"tenant_description"`
+		UserEmail         string `json:"user_email"`
+		UserPassword      string `json:"user_password"`
+		WorkspaceName     string `json:"workspace_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.TenantName == "" || req.TenantURL == "" || req.UserEmail == "" || req.UserPassword == "" || req.WorkspaceName == "" {
+		http.Error(w, "Missing required fields: tenant_name, tenant_url, user_email, user_password, workspace_name", http.StatusBadRequest)
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Call the engine to perform initial setup
+	response, err := s.engine.PerformInitialSetup(ctx, req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Send response
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 

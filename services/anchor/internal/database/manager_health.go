@@ -10,6 +10,7 @@ import (
 	"github.com/gocql/gocql"
 	"github.com/jackc/pgx/v5/pgxpool"
 	neo4jgo "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/services/anchor/internal/database/clickhouse"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
 	"github.com/redbco/redb-open/services/anchor/internal/database/pinecone"
@@ -36,7 +37,7 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 
 	// Perform database-specific health check
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return false
@@ -45,7 +46,7 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 		defer cancel()
 		return pool.Ping(ctx) == nil
 
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return false
@@ -54,7 +55,7 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 		defer cancel()
 		return db.PingContext(ctx) == nil
 
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return false
@@ -63,7 +64,7 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 		defer cancel()
 		return db.PingContext(ctx) == nil
 
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return false
@@ -72,7 +73,7 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 		defer cancel()
 		return pool.Ping(ctx) == nil
 
-	case "redis":
+	case string(dbcapabilities.Redis):
 		client, ok := client.DB.(*goredis.Client)
 		if !ok {
 			return false
@@ -81,7 +82,7 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 		defer cancel()
 		return client.Ping(ctx).Err() == nil
 
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		db, ok := client.DB.(*mongo.Client)
 		if !ok {
 			return false
@@ -90,7 +91,7 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 		defer cancel()
 		return db.Ping(ctx, readpref.Primary()) == nil
 
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return false
@@ -99,14 +100,14 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 		defer cancel()
 		return db.PingContext(ctx) == nil
 
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		session, ok := client.DB.(*gocql.Session)
 		if !ok {
 			return false
 		}
 		return !session.Closed()
 
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		gelClient, ok := client.DB.(*gel.Client)
 		if !ok {
 			return false
@@ -118,7 +119,7 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 		err := gelClient.QuerySingle(ctx, "SELECT 'ping'", &result)
 		return err == nil && result == "ping"
 
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return false
@@ -127,7 +128,7 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 		defer cancel()
 		return db.PingContext(ctx) == nil
 
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		conn, ok := client.DB.(clickhouse.ClickhouseConn)
 		if !ok {
 			return false
@@ -137,28 +138,28 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 		rows, err := conn.Query(ctx, "SELECT 1")
 		return err == nil && rows.Next()
 
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		client, ok := client.DB.(*pinecone.PineconeClient)
 		if !ok {
 			return false
 		}
 		return client.IsConnected == 1
 
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		client, ok := client.DB.(*elasticsearch.ElasticsearchClient)
 		if !ok {
 			return false
 		}
 		return client.IsConnected == 1
 
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		driver, ok := client.DB.(neo4jgo.DriverWithContext)
 		if !ok {
 			return false
 		}
 		return driver.VerifyConnectivity(context.Background()) == nil
 
-	//case "db2":
+	//case string(dbcapabilities.DB2):
 	//	db, ok := client.DB.(*sql.DB)
 	//	if !ok {
 	//		return false
@@ -167,7 +168,7 @@ func (dm *DatabaseManager) CheckDatabaseHealth(clientID string) bool {
 	//	defer cancel()
 	//	return db.PingContext(ctx) == nil
 
-	//case "oracle":
+	//case string(dbcapabilities.Oracle):
 	//	db, ok := client.DB.(*sql.DB)
 	//	if !ok {
 	//		return false
@@ -199,7 +200,7 @@ func (dm *DatabaseManager) CheckInstanceHealth(clientID string) bool {
 
 	// Perform database-specific health check
 	switch client.InstanceType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return false
@@ -208,7 +209,7 @@ func (dm *DatabaseManager) CheckInstanceHealth(clientID string) bool {
 		defer cancel()
 		return pool.Ping(ctx) == nil
 
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return false
@@ -217,7 +218,7 @@ func (dm *DatabaseManager) CheckInstanceHealth(clientID string) bool {
 		defer cancel()
 		return db.PingContext(ctx) == nil
 
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return false
@@ -226,7 +227,7 @@ func (dm *DatabaseManager) CheckInstanceHealth(clientID string) bool {
 		defer cancel()
 		return db.PingContext(ctx) == nil
 
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		pool, ok := client.DB.(*pgxpool.Pool)
 		if !ok {
 			return false
@@ -235,7 +236,7 @@ func (dm *DatabaseManager) CheckInstanceHealth(clientID string) bool {
 		defer cancel()
 		return pool.Ping(ctx) == nil
 
-	case "redis":
+	case string(dbcapabilities.Redis):
 		client, ok := client.DB.(*goredis.Client)
 		if !ok {
 			return false
@@ -244,7 +245,7 @@ func (dm *DatabaseManager) CheckInstanceHealth(clientID string) bool {
 		defer cancel()
 		return client.Ping(ctx).Err() == nil
 
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		db, ok := client.DB.(*mongo.Client)
 		if !ok {
 			return false
@@ -253,7 +254,7 @@ func (dm *DatabaseManager) CheckInstanceHealth(clientID string) bool {
 		defer cancel()
 		return db.Ping(ctx, readpref.Primary()) == nil
 
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return false
@@ -262,14 +263,14 @@ func (dm *DatabaseManager) CheckInstanceHealth(clientID string) bool {
 		defer cancel()
 		return db.PingContext(ctx) == nil
 
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		session, ok := client.DB.(*gocql.Session)
 		if !ok {
 			return false
 		}
 		return !session.Closed()
 
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		gelClient, ok := client.DB.(*gel.Client)
 		if !ok {
 			return false
@@ -281,7 +282,7 @@ func (dm *DatabaseManager) CheckInstanceHealth(clientID string) bool {
 		err := gelClient.QuerySingle(ctx, "SELECT 'ping'", &result)
 		return err == nil && result == "ping"
 
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		db, ok := client.DB.(*sql.DB)
 		if !ok {
 			return false
@@ -290,7 +291,7 @@ func (dm *DatabaseManager) CheckInstanceHealth(clientID string) bool {
 		defer cancel()
 		return db.PingContext(ctx) == nil
 
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		conn, ok := client.DB.(clickhouse.ClickhouseConn)
 		if !ok {
 			return false
@@ -300,21 +301,21 @@ func (dm *DatabaseManager) CheckInstanceHealth(clientID string) bool {
 		rows, err := conn.Query(ctx, "SELECT 1")
 		return err == nil && rows.Next()
 
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		client, ok := client.DB.(*pinecone.PineconeClient)
 		if !ok {
 			return false
 		}
 		return client.IsConnected == 1
 
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		client, ok := client.DB.(*elasticsearch.ElasticsearchClient)
 		if !ok {
 			return false
 		}
 		return client.IsConnected == 1
 
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		driver, ok := client.DB.(neo4jgo.DriverWithContext)
 		if !ok {
 			return false

@@ -10,23 +10,26 @@ func NewGeneratorFactory() *GeneratorFactory {
 		generators: make(map[string]StatementGenerator),
 	}
 
-	// Register default generators
+	// Register refactored generators (using shared UnifiedModel types)
 	factory.RegisterGenerator("postgres", &PostgresGenerator{})
 	factory.RegisterGenerator("mysql", &MySQLGenerator{})
+	factory.RegisterGenerator("mongodb", &MongoDBGenerator{})
 	factory.RegisterGenerator("mariadb", &MariaDBGenerator{})
-	factory.RegisterGenerator("oracle", &OracleGenerator{})
-	factory.RegisterGenerator("db2", &Db2Generator{})
-	factory.RegisterGenerator("mssql", &MSSQLGenerator{})
+
+	// TODO: The following generators need to be refactored to use pkg/unifiedmodel types
+	// They are temporarily disabled until refactoring is complete
+	// factory.RegisterGenerator("oracle", &OracleGenerator{})
+	// factory.RegisterGenerator("db2", &Db2Generator{})
+	// factory.RegisterGenerator("mssql", &MSSQLGenerator{})
 	factory.RegisterGenerator("cassandra", &CassandraGenerator{})
-	factory.RegisterGenerator("cockroach", &CockroachGenerator{})
-	factory.RegisterGenerator("clickhouse", &ClickhouseGenerator{})
-	factory.RegisterGenerator("elasticsearch", &ElasticsearchGenerator{})
+	// factory.RegisterGenerator("cockroach", &CockroachGenerator{})
+	// factory.RegisterGenerator("clickhouse", &ClickhouseGenerator{})
+	// factory.RegisterGenerator("elasticsearch", &ElasticsearchGenerator{})
 	factory.RegisterGenerator("edgedb", &EdgeDBGenerator{})
 	factory.RegisterGenerator("neo4j", &Neo4jGenerator{})
-	factory.RegisterGenerator("pinecone", &PineconeGenerator{})
-	factory.RegisterGenerator("snowflake", &SnowflakeGenerator{})
-	factory.RegisterGenerator("mongodb", &MongoDBGenerator{})
-	factory.RegisterGenerator("redis", &RedisGenerator{})
+	// factory.RegisterGenerator("pinecone", &PineconeGenerator{})
+	// factory.RegisterGenerator("snowflake", &SnowflakeGenerator{})
+	// factory.RegisterGenerator("redis", &RedisGenerator{})
 
 	return factory
 }

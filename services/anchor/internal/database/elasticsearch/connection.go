@@ -12,15 +12,21 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to an Elasticsearch cluster
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 
-	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+	var decryptedPassword string
+	if config.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	// Create Elasticsearch configuration
@@ -73,7 +79,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		IsConnected: 1,
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           client,
 		DatabaseType: "elasticsearch",
 		DatabaseID:   config.DatabaseID,
@@ -83,11 +89,17 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to an Elasticsearch instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 
-	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+	var decryptedPassword string
+	if config.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	// Create Elasticsearch configuration
@@ -140,7 +152,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		IsConnected: 1,
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           client,
 		InstanceType: "elasticsearch",
 		InstanceID:   config.InstanceID,
@@ -150,15 +162,15 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of an Elasticsearch cluster
-func DiscoverDetails(db interface{}) (*ElasticsearchDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	esClient, ok := db.(*ElasticsearchClient)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
 	client := esClient.Client
-	var details ElasticsearchDetails
-	details.DatabaseType = "elasticsearch"
+	details := make(map[string]interface{})
+	details["databaseType"] = "elasticsearch"
 
 	// Get cluster info
 	infoRes, err := client.Info()
@@ -180,7 +192,7 @@ func DiscoverDetails(db interface{}) (*ElasticsearchDetails, error) {
 	// Extract version
 	if version, ok := infoResp["version"].(map[string]interface{}); ok {
 		if number, ok := version["number"].(string); ok {
-			details.Version = number
+			details["version"] = number
 		}
 	}
 
@@ -203,13 +215,13 @@ func DiscoverDetails(db interface{}) (*ElasticsearchDetails, error) {
 
 	// Extract cluster details
 	if clusterName, ok := healthResp["cluster_name"].(string); ok {
-		details.ClusterName = clusterName
+		details["clusterName"] = clusterName
 	}
 	if status, ok := healthResp["status"].(string); ok {
-		details.ClusterHealth = status
+		details["clusterHealth"] = status
 	}
 	if numberOfNodes, ok := healthResp["number_of_nodes"].(float64); ok {
-		details.NumberOfNodes = int(numberOfNodes)
+		details["numberOfNodes"] = int(numberOfNodes)
 	}
 
 	// Get cluster stats for size
@@ -233,22 +245,26 @@ func DiscoverDetails(db interface{}) (*ElasticsearchDetails, error) {
 	if indices, ok := statsResp["indices"].(map[string]interface{}); ok {
 		if store, ok := indices["store"].(map[string]interface{}); ok {
 			if sizeInBytes, ok := store["size_in_bytes"].(float64); ok {
-				details.DatabaseSize = int64(sizeInBytes)
+				details["databaseSize"] = int64(sizeInBytes)
 			}
 		}
 	}
 
 	// Generate unique identifier
-	details.UniqueIdentifier = details.ClusterName
-
-	// Determine edition
-	if strings.Contains(strings.ToLower(details.Version), "x-pack") {
-		details.DatabaseEdition = "enterprise"
-	} else {
-		details.DatabaseEdition = "community"
+	if clusterName, ok := details["clusterName"].(string); ok {
+		details["uniqueIdentifier"] = clusterName
 	}
 
-	return &details, nil
+	// Determine edition
+	if version, ok := details["version"].(string); ok {
+		if strings.Contains(strings.ToLower(version), "x-pack") {
+			details["databaseEdition"] = "enterprise"
+		} else {
+			details["databaseEdition"] = "community"
+		}
+	}
+
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from an Elasticsearch cluster
@@ -402,7 +418,7 @@ func getProtocolSuffix(ssl bool) string {
 	return ""
 }
 
-func createTLSConfig(config common.DatabaseConfig) (*tls.Config, error) {
+func createTLSConfig(config dbclient.DatabaseConfig) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: config.SSLRejectUnauthorized != nil && !*config.SSLRejectUnauthorized,
 	}
@@ -430,7 +446,7 @@ func createTLSConfig(config common.DatabaseConfig) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-func createInstanceTLSConfig(config common.InstanceConfig) (*tls.Config, error) {
+func createInstanceTLSConfig(config dbclient.InstanceConfig) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: config.SSLRejectUnauthorized != nil && !*config.SSLRejectUnauthorized,
 	}

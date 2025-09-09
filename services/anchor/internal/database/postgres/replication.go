@@ -11,11 +11,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redbco/redb-open/pkg/logger"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // ConnectReplication creates a new replication client and connection for PostgreSQL
-func ConnectReplication(config common.ReplicationConfig) (*common.ReplicationClient, common.ReplicationSourceInterface, error) {
+func ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.ReplicationClient, dbclient.ReplicationSourceInterface, error) {
 	// Validate configuration
 	if config.DatabaseID == "" {
 		return nil, nil, fmt.Errorf("database ID is required")
@@ -64,20 +64,20 @@ func ConnectReplication(config common.ReplicationConfig) (*common.ReplicationCli
 	if sourceDetails.SlotName == "" {
 		sourceDetails.SlotName = fmt.Sprintf("slot_%s_%s",
 			sanitizeIdentifier(config.DatabaseID),
-			sanitizeIdentifier(common.GenerateUniqueID()))
+			sanitizeIdentifier(dbclient.GenerateUniqueID()))
 	}
 
 	if sourceDetails.PublicationName == "" {
 		sourceDetails.PublicationName = fmt.Sprintf("pub_%s_%s",
 			sanitizeIdentifier(config.DatabaseID),
-			sanitizeIdentifier(common.GenerateUniqueID()))
+			sanitizeIdentifier(dbclient.GenerateUniqueID()))
 	}
 
 	// TODO: Publication/slot management for multi-table (see CreateReplicationSource for details)
 	// This function should ensure the publication includes all tables in tableSet, and slot is created if needed.
 	// For now, this is a placeholder. Actual logic will be in CreateReplicationSource.
 
-	client := &common.ReplicationClient{
+	client := &dbclient.ReplicationClient{
 		ReplicationID:     config.ReplicationID,
 		DatabaseID:        config.DatabaseID,
 		DatabaseType:      "postgres",
@@ -97,7 +97,7 @@ func ConnectReplication(config common.ReplicationConfig) (*common.ReplicationCli
 }
 
 // CreateReplicationSourceWithClient creates a replication source using an existing database client
-func CreateReplicationSourceWithClient(pool *pgxpool.Pool, config common.ReplicationConfig) (common.ReplicationSourceInterface, error) {
+func CreateReplicationSourceWithClient(pool *pgxpool.Pool, config dbclient.ReplicationConfig) (dbclient.ReplicationSourceInterface, error) {
 	// Use the first table name for now
 	if len(config.TableNames) == 0 {
 		return nil, fmt.Errorf("at least one table name is required")
@@ -371,8 +371,8 @@ func CreateReplicationSource(pool *pgxpool.Pool, tableNames []string, databaseID
 	}
 
 	// Generate unique names for slot and publication
-	slotName := fmt.Sprintf("slot_%s_%s", sanitizeIdentifier(databaseID), sanitizeIdentifier(common.GenerateUniqueID()))
-	pubName := fmt.Sprintf("pub_%s_%s", sanitizeIdentifier(databaseID), sanitizeIdentifier(common.GenerateUniqueID()))
+	slotName := fmt.Sprintf("slot_%s_%s", sanitizeIdentifier(databaseID), sanitizeIdentifier(dbclient.GenerateUniqueID()))
+	pubName := fmt.Sprintf("pub_%s_%s", sanitizeIdentifier(databaseID), sanitizeIdentifier(dbclient.GenerateUniqueID()))
 
 	// Check if a slot with this name already exists and is active
 	slotExists, err := IsReplicationSlotActive(pool, slotName)
@@ -384,7 +384,7 @@ func CreateReplicationSource(pool *pgxpool.Pool, tableNames []string, databaseID
 			if logger != nil {
 				logger.Errorf("Failed to drop existing replication slot %s: %v", slotName, err)
 			}
-			slotName = fmt.Sprintf("slot_%s_%s", sanitizeIdentifier(databaseID), sanitizeIdentifier(common.GenerateUniqueID()))
+			slotName = fmt.Sprintf("slot_%s_%s", sanitizeIdentifier(databaseID), sanitizeIdentifier(dbclient.GenerateUniqueID()))
 			if logger != nil {
 				logger.Infof("Generated new slot name: %s", slotName)
 			}

@@ -13,6 +13,7 @@ import (
 	pb "github.com/redbco/redb-open/api/proto/unifiedmodel/v1"
 	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/logger"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/anchor/internal/state"
 	"google.golang.org/grpc"
 )
@@ -113,32 +114,40 @@ func (w *SchemaWatcher) ensureRepoBranchCommit(ctx context.Context, workspaceID,
 
 	// Request enriched analysis from the unified model service
 	w.logInfo("Requesting enriched analysis for database %s", databaseID)
-	enrichedResp, err := w.umClient.AnalyzeSchemaEnriched(ctx, &pb.AnalyzeSchemaEnrichedRequest{
-		SchemaType: schemaType,
-		Schema:     schemaStructure,
-	})
-	if err != nil {
-		w.logError("Failed to get enriched analysis: %v", err)
-		// Don't fail the entire operation if enriched analysis fails
-		// Just log the error and continue
-	} else {
-		// Marshal the enriched analysis results to JSON
-		enrichedBytes, err := json.Marshal(enrichedResp)
-		if err != nil {
-			w.logError("Failed to marshal enriched analysis: %v", err)
-		} else {
-			// Store the enriched analysis in the database_tables column
-			_, err = w.db.Pool().Exec(ctx, "UPDATE databases SET database_tables = $1 WHERE database_id = $2", string(enrichedBytes), databaseID)
-			if err != nil {
-				w.logError("Failed to store enriched analysis in database: %v", err)
-			} else {
-				w.logInfo("Successfully stored enriched analysis for database %s", databaseID)
-			}
-		}
 
-		// Log any warnings from the enriched analysis
-		for _, warning := range enrichedResp.Warnings {
-			w.logWarn("Enriched analysis warning for %s: %s", databaseID, warning)
+	// Convert JSON bytes back to UnifiedModel for the enriched analysis
+	var um unifiedmodel.UnifiedModel
+	err = json.Unmarshal(schemaStructure, &um)
+	if err != nil {
+		w.logError("Failed to unmarshal schema for enriched analysis: %v", err)
+	} else {
+		enrichedResp, err := w.umClient.AnalyzeSchemaEnriched(ctx, &pb.AnalyzeSchemaEnrichedRequest{
+			SchemaType:   schemaType,
+			UnifiedModel: um.ToProto(),
+		})
+		if err != nil {
+			w.logError("Failed to get enriched analysis: %v", err)
+			// Don't fail the entire operation if enriched analysis fails
+			// Just log the error and continue
+		} else {
+			// Marshal the enriched analysis results to JSON
+			enrichedBytes, err := json.Marshal(enrichedResp)
+			if err != nil {
+				w.logError("Failed to marshal enriched analysis: %v", err)
+			} else {
+				// Store the enriched analysis in the database_tables column
+				_, err = w.db.Pool().Exec(ctx, "UPDATE databases SET database_tables = $1 WHERE database_id = $2", string(enrichedBytes), databaseID)
+				if err != nil {
+					w.logError("Failed to store enriched analysis in database: %v", err)
+				} else {
+					w.logInfo("Successfully stored enriched analysis for database %s", databaseID)
+				}
+			}
+
+			// Log any warnings from the enriched analysis
+			for _, warning := range enrichedResp.Warnings {
+				w.logWarn("Enriched analysis warning for %s: %s", databaseID, warning)
+			}
 		}
 	}
 
@@ -361,15 +370,22 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 			continue
 		}
 
-		// Get current schema structure
+		// Get current schema structure as UnifiedModel
 		structure, err := dbManager.GetDatabaseStructure(clientID)
 		if err != nil {
 			w.logError("Failed to get schema for database %s: %v", clientID, err)
 			continue
 		}
 
-		// Marshal the current schema to JSON
-		currentBytes, err := json.Marshal(structure)
+		// Ensure we have a UnifiedModel
+		currentUM, ok := structure.(*unifiedmodel.UnifiedModel)
+		if !ok {
+			w.logError("Database structure is not a UnifiedModel for database %s", clientID)
+			continue
+		}
+
+		// Marshal the current schema to JSON for storage (still needed for database storage)
+		currentBytes, err := json.Marshal(currentUM)
 		if err != nil {
 			w.logError("Failed to marshal current schema: %v", err)
 			continue
@@ -377,19 +393,18 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 
 		// If we have a previous schema to compare against
 		if client.LastSchema != nil {
-			// Marshal previous schema to JSON
-			previousBytes, err := json.Marshal(client.LastSchema)
-			if err != nil {
-				w.logError("Failed to marshal previous schema: %v", err)
+			// Ensure previous schema is also a UnifiedModel
+			previousUM, ok := client.LastSchema.(*unifiedmodel.UnifiedModel)
+			if !ok {
+				w.logError("Previous schema is not a UnifiedModel for database %s", clientID)
 				continue
 			}
 
-			// Call UnifiedModel service to compare schemas
+			// Call UnifiedModel service to compare schemas using UnifiedModel objects
 			w.logInfo("Comparing schemas for database %s", clientID)
-			compareResp, err := w.umClient.CompareSchemas(ctx, &pb.CompareRequest{
-				SchemaType:     client.Config.ConnectionType,
-				PreviousSchema: previousBytes,
-				CurrentSchema:  currentBytes,
+			compareResp, err := w.umClient.CompareUnifiedModels(ctx, &pb.CompareUnifiedModelsRequest{
+				PreviousUnifiedModel: previousUM.ToProto(),
+				CurrentUnifiedModel:  currentUM.ToProto(),
 			})
 			if err != nil {
 				w.logError("Failed to compare schemas: %v", err)
@@ -443,18 +458,41 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 			} else {
 				w.logInfo("Found existing commit for database %s, comparing with current schema", clientID)
 
-				// Compare the current schema with the one from the latest commit
-				previousBytes, err := json.Marshal(latestCommit.Schema)
-				if err != nil {
-					w.logError("Failed to marshal previous schema: %v", err)
-					continue
+				// The stored schema might be JSON, so we need to handle conversion
+				var previousUM *unifiedmodel.UnifiedModel
+
+				// Try to convert stored schema to UnifiedModel
+				if storedUM, ok := latestCommit.Schema.(*unifiedmodel.UnifiedModel); ok {
+					// Already a UnifiedModel
+					previousUM = storedUM
+				} else {
+					// Stored as JSON, need to unmarshal
+					var jsonBytes []byte
+					if str, ok := latestCommit.Schema.(string); ok {
+						jsonBytes = []byte(str)
+					} else if bytes, ok := latestCommit.Schema.([]byte); ok {
+						jsonBytes = bytes
+					} else {
+						// Try to marshal it first (in case it's a map or other structure)
+						jsonBytes, err = json.Marshal(latestCommit.Schema)
+						if err != nil {
+							w.logError("Failed to marshal stored schema: %v", err)
+							continue
+						}
+					}
+
+					previousUM = &unifiedmodel.UnifiedModel{}
+					err = json.Unmarshal(jsonBytes, previousUM)
+					if err != nil {
+						w.logError("Failed to unmarshal stored schema: %v", err)
+						continue
+					}
 				}
 
-				// Call UnifiedModel service to compare schemas
-				compareResp, err := w.umClient.CompareSchemas(ctx, &pb.CompareRequest{
-					SchemaType:     client.Config.ConnectionType,
-					PreviousSchema: previousBytes,
-					CurrentSchema:  currentBytes,
+				// Call UnifiedModel service to compare schemas using UnifiedModel objects
+				compareResp, err := w.umClient.CompareUnifiedModels(ctx, &pb.CompareUnifiedModelsRequest{
+					PreviousUnifiedModel: previousUM.ToProto(),
+					CurrentUnifiedModel:  currentUM.ToProto(),
 				})
 				if err != nil {
 					w.logError("Failed to compare schemas: %v", err)
@@ -487,7 +525,7 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 		}
 
 		// Update last known schema
-		client.LastSchema = structure
+		client.LastSchema = currentUM
 	}
 
 	return nil

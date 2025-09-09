@@ -19,6 +19,7 @@ func New() *Config {
 		values: make(map[string]string),
 		restartKeys: []string{
 			"database.url",
+			"database.name",
 			"server.port",
 			"server.host",
 		},

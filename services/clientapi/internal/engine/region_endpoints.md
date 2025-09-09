@@ -276,5 +276,5 @@ curl -X PUT "https://api.example.com/mycompany/api/v1/regions/region_123" \
 
 - Global regions (managed at the system level) are not accessible through this client API
 - Only tenant-specific regions can be managed through these endpoints
-- Global region management will be available through the service API
+- Global region management will be available through the API
 - Deleting a region with active nodes, instances, or databases may be prevented by the system 

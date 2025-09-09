@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
 
 // FetchData retrieves data from a specified table
@@ -24,7 +22,7 @@ func FetchData(conn ClickhouseConn, tableName string, limit int) ([]map[string]i
 	// Build and execute query
 	query := fmt.Sprintf("SELECT %s FROM %s",
 		strings.Join(columns, ", "),
-		common.QuoteIdentifier(tableName))
+		QuoteIdentifier(tableName))
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -101,7 +99,7 @@ func InsertData(conn ClickhouseConn, tableName string, data []map[string]interfa
 	// Prepare the statement
 	query := fmt.Sprintf(
 		"INSERT INTO %s (%s) VALUES (%s)",
-		common.QuoteIdentifier(tableName),
+		QuoteIdentifier(tableName),
 		strings.Join(columns, ", "),
 		strings.Join(placeholders, ", "),
 	)
@@ -160,7 +158,7 @@ func WipeDatabase(conn ClickhouseConn) error {
 
 	// Truncate all tables
 	for _, table := range tables {
-		err = conn.Exec(context.Background(), fmt.Sprintf("TRUNCATE TABLE %s", common.QuoteIdentifier(table)))
+		err = conn.Exec(context.Background(), fmt.Sprintf("TRUNCATE TABLE %s", QuoteIdentifier(table)))
 		if err != nil {
 			return fmt.Errorf("error truncating table %s: %v", table, err)
 		}

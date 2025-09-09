@@ -1,13 +1,11 @@
 package detection
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
-	"github.com/redbco/redb-open/services/unifiedmodel/internal/adapters"
-	"github.com/redbco/redb-open/services/unifiedmodel/internal/models"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 )
 
 // PrivilegedDataDetector handles the detection of privileged data in database schemas
@@ -244,17 +242,15 @@ func (d *PrivilegedDataDetector) initializeContextualPatterns() {
 	}
 }
 
-// DetectPrivilegedData analyzes a schema for potential privileged data
-func (d *PrivilegedDataDetector) DetectPrivilegedData(schemaType string, schema json.RawMessage) (*DetectionResult, error) {
-	// Convert schema to unified model
-	model, warnings, err := d.convertToUnifiedModel(schemaType, schema)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert schema: %w", err)
+// DetectPrivilegedData analyzes a unified model for potential privileged data
+func (d *PrivilegedDataDetector) DetectPrivilegedData(model *unifiedmodel.UnifiedModel) (*DetectionResult, error) {
+	if model == nil {
+		return nil, fmt.Errorf("unified model cannot be nil")
 	}
 
 	result := &DetectionResult{
 		Findings:           make([]PrivilegedDataFinding, 0),
-		Warnings:           warnings,
+		Warnings:           make([]string, 0),
 		ComplianceSummary:  ComplianceSummary{},
 		RecommendedActions: make([]string, 0),
 	}
@@ -277,14 +273,14 @@ func (d *PrivilegedDataDetector) DetectPrivilegedData(schemaType string, schema 
 }
 
 // buildTableContext creates a context map for a table to help with contextual analysis
-func (d *PrivilegedDataDetector) buildTableContext(table models.Table) map[string]string {
+func (d *PrivilegedDataDetector) buildTableContext(table unifiedmodel.Table) map[string]string {
 	context := make(map[string]string)
 	context["table_name"] = strings.ToLower(table.Name)
 
 	// Build a list of all column names for contextual analysis
-	columnNames := make([]string, len(table.Columns))
-	for i, col := range table.Columns {
-		columnNames[i] = strings.ToLower(col.Name)
+	columnNames := make([]string, 0, len(table.Columns))
+	for _, col := range table.Columns {
+		columnNames = append(columnNames, strings.ToLower(col.Name))
 	}
 	context["all_columns"] = strings.Join(columnNames, ",")
 
@@ -292,7 +288,7 @@ func (d *PrivilegedDataDetector) buildTableContext(table models.Table) map[strin
 }
 
 // analyzeColumn performs comprehensive analysis of a single column
-func (d *PrivilegedDataDetector) analyzeColumn(tableName string, column models.Column, tableContext map[string]string) []PrivilegedDataFinding {
+func (d *PrivilegedDataDetector) analyzeColumn(tableName string, column unifiedmodel.Column, tableContext map[string]string) []PrivilegedDataFinding {
 	findings := make([]PrivilegedDataFinding, 0)
 	columnName := strings.ToLower(column.Name)
 
@@ -305,7 +301,7 @@ func (d *PrivilegedDataDetector) analyzeColumn(tableName string, column models.C
 					finding := PrivilegedDataFinding{
 						TableName:         tableName,
 						ColumnName:        column.Name,
-						DataType:          column.DataType.Name,
+						DataType:          column.DataType,
 						DataCategory:      category,
 						SubCategory:       d.getSubCategory(category, pattern),
 						Confidence:        confidence,
@@ -365,36 +361,34 @@ func (d *PrivilegedDataDetector) calculateNameConfidence(columnName, pattern str
 }
 
 // analyzeDataType analyzes column based on data type patterns
-func (d *PrivilegedDataDetector) analyzeDataType(tableName string, column models.Column, context map[string]string) []PrivilegedDataFinding {
+func (d *PrivilegedDataDetector) analyzeDataType(tableName string, column unifiedmodel.Column, context map[string]string) []PrivilegedDataFinding {
 	findings := make([]PrivilegedDataFinding, 0)
-	dataTypeName := strings.ToLower(column.DataType.Name)
+	dataTypeName := strings.ToLower(column.DataType)
 
 	// Check for potentially sensitive data types
 	switch {
 	case d.isStringType(dataTypeName):
-		if column.DataType.Length > 0 {
-			findings = append(findings, d.analyzeStringColumn(tableName, column, context)...)
-		} else {
-			findings = append(findings, PrivilegedDataFinding{
-				TableName:         tableName,
-				ColumnName:        column.Name,
-				DataType:          column.DataType.Name,
-				DataCategory:      "text_data",
-				SubCategory:       "unstructured_text",
-				Confidence:        0.3,
-				Description:       "Text data type could potentially contain privileged information",
-				RiskLevel:         "low",
-				ComplianceImpact:  []string{"gdpr", "ccpa"},
-				RecommendedAction: "Review data content and implement appropriate access controls",
-				Context:           context,
-			})
-		}
+		// For string types, we can't easily determine length from the unified model
+		// so we'll do a general analysis
+		findings = append(findings, PrivilegedDataFinding{
+			TableName:         tableName,
+			ColumnName:        column.Name,
+			DataType:          column.DataType,
+			DataCategory:      "text_data",
+			SubCategory:       "potential_sensitive_text",
+			Confidence:        0.3,
+			Description:       "Text data type could potentially contain privileged information",
+			RiskLevel:         "low",
+			ComplianceImpact:  []string{"gdpr", "ccpa"},
+			RecommendedAction: "Review data content and implement appropriate access controls",
+			Context:           context,
+		})
 
 	case d.isNumericType(dataTypeName):
 		findings = append(findings, PrivilegedDataFinding{
 			TableName:         tableName,
 			ColumnName:        column.Name,
-			DataType:          column.DataType.Name,
+			DataType:          column.DataType,
 			DataCategory:      "numeric_identifier",
 			SubCategory:       "potential_id",
 			Confidence:        0.25,
@@ -409,7 +403,7 @@ func (d *PrivilegedDataDetector) analyzeDataType(tableName string, column models
 		findings = append(findings, PrivilegedDataFinding{
 			TableName:         tableName,
 			ColumnName:        column.Name,
-			DataType:          column.DataType.Name,
+			DataType:          column.DataType,
 			DataCategory:      "binary_data",
 			SubCategory:       "potential_biometric",
 			Confidence:        0.4,
@@ -424,64 +418,8 @@ func (d *PrivilegedDataDetector) analyzeDataType(tableName string, column models
 	return findings
 }
 
-// analyzeStringColumn provides detailed analysis for string columns based on length
-func (d *PrivilegedDataDetector) analyzeStringColumn(tableName string, column models.Column, context map[string]string) []PrivilegedDataFinding {
-	findings := make([]PrivilegedDataFinding, 0)
-	length := column.DataType.Length
-
-	// Analyze based on common lengths for specific data types
-	switch {
-	case length == 9 || length == 11: // SSN with/without dashes
-		findings = append(findings, PrivilegedDataFinding{
-			TableName:         tableName,
-			ColumnName:        column.Name,
-			DataType:          column.DataType.Name,
-			DataCategory:      "potential_ssn",
-			SubCategory:       "government_id",
-			Confidence:        0.6,
-			Description:       fmt.Sprintf("String length (%d) matches SSN format", length),
-			RiskLevel:         "high",
-			ComplianceImpact:  []string{"gdpr", "ccpa"},
-			RecommendedAction: "Verify if this contains SSN data and implement strong encryption",
-			Context:           context,
-		})
-
-	case length >= 15 && length <= 19: // Credit card numbers
-		findings = append(findings, PrivilegedDataFinding{
-			TableName:         tableName,
-			ColumnName:        column.Name,
-			DataType:          column.DataType.Name,
-			DataCategory:      "potential_credit_card",
-			SubCategory:       "financial_data",
-			Confidence:        0.5,
-			Description:       fmt.Sprintf("String length (%d) matches credit card number format", length),
-			RiskLevel:         "high",
-			ComplianceImpact:  []string{"pcidss"},
-			RecommendedAction: "Verify if this contains credit card data and implement PCI DSS compliance",
-			Context:           context,
-		})
-
-	case length >= 20 && length <= 34: // IBAN
-		findings = append(findings, PrivilegedDataFinding{
-			TableName:         tableName,
-			ColumnName:        column.Name,
-			DataType:          column.DataType.Name,
-			DataCategory:      "potential_iban",
-			SubCategory:       "financial_data",
-			Confidence:        0.4,
-			Description:       fmt.Sprintf("String length (%d) matches IBAN format", length),
-			RiskLevel:         "high",
-			ComplianceImpact:  []string{"gdpr", "sox"},
-			RecommendedAction: "Verify if this contains IBAN data and implement appropriate financial data controls",
-			Context:           context,
-		})
-	}
-
-	return findings
-}
-
 // analyzeContextualPatterns performs contextual analysis using advanced patterns
-func (d *PrivilegedDataDetector) analyzeContextualPatterns(tableName string, column models.Column, context map[string]string) []PrivilegedDataFinding {
+func (d *PrivilegedDataDetector) analyzeContextualPatterns(tableName string, column unifiedmodel.Column, context map[string]string) []PrivilegedDataFinding {
 	findings := make([]PrivilegedDataFinding, 0)
 
 	for patternName, pattern := range d.contextualPatterns {
@@ -491,7 +429,7 @@ func (d *PrivilegedDataDetector) analyzeContextualPatterns(tableName string, col
 				finding := PrivilegedDataFinding{
 					TableName:         tableName,
 					ColumnName:        column.Name,
-					DataType:          column.DataType.Name,
+					DataType:          column.DataType,
 					DataCategory:      patternName,
 					SubCategory:       "contextual_match",
 					Confidence:        confidence,
@@ -821,61 +759,4 @@ func (d *PrivilegedDataDetector) getRecommendedAction(category string) string {
 	}
 
 	return "Review data handling practices and implement appropriate security measures"
-}
-
-// convertToUnifiedModel converts the input schema to a unified model
-func (d *PrivilegedDataDetector) convertToUnifiedModel(schemaType string, schema json.RawMessage) (*models.UnifiedModel, []string, error) {
-	// Get the appropriate adapter for the schema type
-	adapter, err := getAdapter(schemaType)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get adapter: %w", err)
-	}
-
-	// Convert schema to unified model using the adapter
-	model, warnings, err := adapter.IngestSchema(schema)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to convert schema: %w", err)
-	}
-
-	return model, warnings, nil
-}
-
-// getAdapter returns the appropriate adapter based on the schema type
-func getAdapter(schemaType string) (adapters.SchemaIngester, error) {
-	switch schemaType {
-	case "postgres", "postgresql":
-		return &adapters.PostgresIngester{}, nil
-	case "mysql":
-		return &adapters.MySQLIngester{}, nil
-	case "mariadb":
-		return &adapters.MariaDBIngester{}, nil
-	case "mssql", "sqlserver":
-		return &adapters.MSSQLIngester{}, nil
-	case "oracle":
-		return &adapters.OracleIngester{}, nil
-	case "db2":
-		return &adapters.Db2Ingester{}, nil
-	case "cockroach", "cockroachdb":
-		return &adapters.CockroachIngester{}, nil
-	case "clickhouse":
-		return &adapters.ClickhouseIngester{}, nil
-	case "cassandra":
-		return &adapters.CassandraIngester{}, nil
-	case "mongodb":
-		return &adapters.MongoDBIngester{}, nil
-	case "redis":
-		return &adapters.RedisIngester{}, nil
-	case "neo4j":
-		return &adapters.Neo4jIngester{}, nil
-	case "elasticsearch":
-		return &adapters.ElasticsearchIngester{}, nil
-	case "snowflake":
-		return &adapters.SnowflakeIngester{}, nil
-	case "pinecone":
-		return &adapters.PineconeIngester{}, nil
-	case "edgedb":
-		return &adapters.EdgeDBIngester{}, nil
-	default:
-		return nil, fmt.Errorf("unsupported schema type: %s", schemaType)
-	}
 }

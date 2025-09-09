@@ -10,14 +10,20 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a MySQL database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
-	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
+	var decryptedPassword string
+	if config.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	var sslMode string
@@ -60,7 +66,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           db,
 		DatabaseType: "mysql",
 		DatabaseID:   config.DatabaseID,
@@ -70,10 +76,16 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a MySQL instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
-	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
+	var decryptedPassword string
+	if config.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	var sslMode string
@@ -116,7 +128,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           db,
 		InstanceType: "mysql",
 		InstanceID:   config.InstanceID,
@@ -125,17 +137,16 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 	}, nil
 }
 
-// DiscoverDetails retrieves details about a MySQL database
-func DiscoverDetails(db interface{}) (*MySQLDetails, error) {
+// DiscoverDetails retrieves basic details about a MySQL database for metadata purposes
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	sqlDB, ok := db.(*sql.DB)
 	if !ok {
 		return nil, fmt.Errorf("invalid MySQL connection type")
 	}
 
-	details := &MySQLDetails{
-		UniqueIdentifier: common.GenerateUniqueID(),
-		DatabaseType:     "mysql",
-	}
+	details := make(map[string]interface{})
+	details["uniqueIdentifier"] = dbclient.GenerateUniqueID()
+	details["databaseType"] = "mysql"
 
 	// Get database version
 	var version string
@@ -143,13 +154,13 @@ func DiscoverDetails(db interface{}) (*MySQLDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database version: %w", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Determine database edition based on version
 	if strings.Contains(strings.ToLower(version), "mariadb") {
-		details.DatabaseEdition = "MariaDB"
+		details["databaseEdition"] = "MariaDB"
 	} else {
-		details.DatabaseEdition = "MySQL"
+		details["databaseEdition"] = "MySQL"
 	}
 
 	// Get database size (approximate for MySQL)
@@ -163,7 +174,7 @@ func DiscoverDetails(db interface{}) (*MySQLDetails, error) {
 		// If we can't get the size, set it to 0 but continue
 		sizeBytes = 0
 	}
-	details.DatabaseSize = sizeBytes
+	details["databaseSize"] = sizeBytes
 
 	return details, nil
 }

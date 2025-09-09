@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
-
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,7 +23,7 @@ func FetchData(pool *pgxpool.Pool, tableName string, limit int) ([]map[string]in
 	// Build and execute query
 	query := fmt.Sprintf("SELECT %s FROM %s",
 		strings.Join(columns, ", "),
-		common.QuoteIdentifier(tableName))
+		QuoteIdentifier(tableName))
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -88,7 +86,7 @@ func InsertData(pool *pgxpool.Pool, tableName string, data []map[string]interfac
 	// Prepare the query
 	query := fmt.Sprintf(
 		"INSERT INTO %s (%s) VALUES (%s)",
-		common.QuoteIdentifier(tableName),
+		QuoteIdentifier(tableName),
 		strings.Join(columns, ", "),
 		strings.Join(placeholders, ", "),
 	)

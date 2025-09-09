@@ -8,11 +8,11 @@ import (
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // Connect establishes a connection to a Neo4j database
-func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
+func Connect(cfg dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	var connString strings.Builder
 
 	decryptedPassword, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
@@ -51,7 +51,7 @@ func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error connecting to Neo4j database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           driver,
 		DatabaseType: "neo4j",
 		DatabaseID:   cfg.DatabaseID,
@@ -61,7 +61,7 @@ func Connect(cfg common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Neo4j instance
-func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) {
+func ConnectInstance(cfg dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	var connString strings.Builder
 
 	decryptedPassword, err := encryption.DecryptPassword(cfg.TenantID, cfg.Password)
@@ -100,7 +100,7 @@ func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) 
 		return nil, fmt.Errorf("error connecting to Neo4j database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           driver,
 		InstanceType: "neo4j",
 		InstanceID:   cfg.InstanceID,
@@ -109,8 +109,8 @@ func ConnectInstance(cfg common.InstanceConfig) (*common.InstanceClient, error) 
 	}, nil
 }
 
-// DiscoverDetails fetches the details of a Neo4j database
-func DiscoverDetails(db interface{}) (*Neo4jDetails, error) {
+// DiscoverDetails fetches basic details of a Neo4j database for metadata purposes
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	driver, ok := db.(neo4j.DriverWithContext)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
@@ -120,8 +120,8 @@ func DiscoverDetails(db interface{}) (*Neo4jDetails, error) {
 	session := driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
 
-	var details Neo4jDetails
-	details.DatabaseType = "neo4j"
+	details := make(map[string]interface{})
+	details["databaseType"] = "neo4j"
 
 	// Get server version
 	result, err := session.Run(ctx, "CALL dbms.components() YIELD name, versions, edition RETURN name, versions, edition", nil)
@@ -137,38 +137,38 @@ func DiscoverDetails(db interface{}) (*Neo4jDetails, error) {
 
 		versionsArr, ok := versions.([]interface{})
 		if ok && len(versionsArr) > 0 {
-			details.Version = fmt.Sprintf("%s %v", name, versionsArr[0])
+			details["version"] = fmt.Sprintf("%s %v", name, versionsArr[0])
 		} else {
-			details.Version = fmt.Sprintf("%s", name)
+			details["version"] = fmt.Sprintf("%s", name)
 		}
 
-		details.DatabaseEdition = fmt.Sprintf("%v", edition)
+		details["databaseEdition"] = fmt.Sprintf("%v", edition)
 	}
 
 	// Get database size (approximate)
 	result, err = session.Run(ctx, "CALL dbms.database.size() YIELD totalStoreSize RETURN totalStoreSize", nil)
 	if err != nil {
 		// This procedure might not be available in all editions, so we'll handle the error gracefully
-		details.DatabaseSize = -1
+		details["databaseSize"] = int64(-1)
 	} else if result.Next(ctx) {
 		record := result.Record()
 		size, _ := record.Get("totalStoreSize")
 		if sizeVal, ok := size.(int64); ok {
-			details.DatabaseSize = sizeVal
+			details["databaseSize"] = sizeVal
 		}
 	}
 
 	// Get unique identifier (database ID)
 	result, err = session.Run(ctx, "CALL dbms.info() YIELD id RETURN id", nil)
 	if err != nil {
-		details.UniqueIdentifier = "unknown"
+		details["uniqueIdentifier"] = "unknown"
 	} else if result.Next(ctx) {
 		record := result.Record()
 		id, _ := record.Get("id")
-		details.UniqueIdentifier = fmt.Sprintf("%v", id)
+		details["uniqueIdentifier"] = fmt.Sprintf("%v", id)
 	}
 
-	return &details, nil
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Neo4j database

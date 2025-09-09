@@ -9,13 +9,13 @@ import (
 	"time"
 
 	gel "github.com/geldata/gel-go"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
 
 // CreateReplicationSource sets up a replication source
 func CreateReplicationSource(client *gel.Client, typeName string, databaseID string, eventHandler func(map[string]interface{})) (*EdgeDBReplicationSourceDetails, error) {
 	// Generate unique ID for the replication source
-	sourceID := fmt.Sprintf("source_%s_%s", databaseID, common.GenerateUniqueID())
+	sourceID := fmt.Sprintf("source_%s_%s", databaseID, dbclient.GenerateUniqueID())
 
 	// Split module and type name if provided in format "module::type"
 	var module, typeOnly string

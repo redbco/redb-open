@@ -1,31 +1,25 @@
 package snowflake
 
-import "github.com/redbco/redb-open/services/anchor/internal/database/common"
+import (
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
+)
 
-// SnowflakeDetails contains information about a Snowflake database
-type SnowflakeDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	Account          string `json:"account"`
-	Region           string `json:"region"`
-	Role             string `json:"role"`
-	Warehouse        string `json:"warehouse"`
+// ConvertSnowflakeStage converts SnowflakeStageInfo to unifiedmodel.ExternalTable (stages are similar to external tables)
+func ConvertSnowflakeStage(stageInfo SnowflakeStageInfo) unifiedmodel.ExternalTable {
+	return unifiedmodel.ExternalTable{
+		Name:     stageInfo.Name,
+		Location: stageInfo.URL,
+		Format:   stageInfo.StageType,
+	}
 }
 
-// SnowflakeSchema represents the schema of a Snowflake database
-type SnowflakeSchema struct {
-	Tables     []common.TableInfo          `json:"tables"`
-	Schemas    []common.DatabaseSchemaInfo `json:"schemas"`
-	Functions  []common.FunctionInfo       `json:"functions"`
-	Procedures []common.ProcedureInfo      `json:"procedures"`
-	Sequences  []common.SequenceInfo       `json:"sequences"`
-	Views      []common.ViewInfo           `json:"views"`
-	Stages     []SnowflakeStageInfo        `json:"stages"`
-	Warehouses []SnowflakeWarehouseInfo    `json:"warehouses"`
-	Pipes      []SnowflakePipeInfo         `json:"pipes"`
+// ConvertSnowflakePipe converts SnowflakePipeInfo to unifiedmodel.Function (pipes are data loading functions)
+func ConvertSnowflakePipe(pipeInfo SnowflakePipeInfo) unifiedmodel.Function {
+	return unifiedmodel.Function{
+		Name:       pipeInfo.Name,
+		Language:   "sql", // Snowflake uses SQL
+		Definition: pipeInfo.Definition,
+	}
 }
 
 // SnowflakeStageInfo represents a Snowflake stage

@@ -2,407 +2,436 @@ package clickhouse
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 )
 
-// DiscoverSchema fetches the current schema of a Clickhouse database
-func DiscoverSchema(conn ClickhouseConn) (*ClickhouseSchema, error) {
-	schema := &ClickhouseSchema{}
+// DiscoverSchema fetches the current schema of a Clickhouse database and returns a UnifiedModel
+func DiscoverSchema(conn ClickhouseConn) (*unifiedmodel.UnifiedModel, error) {
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.ClickHouse,
+		Tables:       make(map[string]unifiedmodel.Table),
+		Schemas:      make(map[string]unifiedmodel.Schema),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Views:        make(map[string]unifiedmodel.View),
+	}
+
 	var err error
 
-	// Get tables and their columns
-	tablesMap, _, err := discoverTablesAndColumns(conn)
+	// Get tables directly as unifiedmodel types
+	err = discoverTablesUnified(conn, um)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering tables: %v", err)
 	}
 
-	// Convert map to slice
-	tables := make([]common.TableInfo, 0, len(tablesMap))
-	for _, table := range tablesMap {
-		tables = append(tables, *table)
-	}
-	schema.Tables = tables
-
-	// Get schemas (databases in Clickhouse)
-	schema.Schemas, err = getSchemas(conn)
+	// Get schemas directly as unifiedmodel types
+	err = discoverSchemasUnified(conn, um)
 	if err != nil {
-		return nil, fmt.Errorf("error getting schemas: %v", err)
+		return nil, fmt.Errorf("error discovering schemas: %v", err)
 	}
 
-	// Get functions
-	schema.Functions, err = getFunctions(conn)
+	// Get functions directly as unifiedmodel types
+	err = discoverFunctionsUnified(conn, um)
 	if err != nil {
-		return nil, fmt.Errorf("error getting functions: %v", err)
+		return nil, fmt.Errorf("error discovering functions: %v", err)
 	}
 
-	// Get views
-	schema.Views, err = getViews(conn)
+	// Get views directly as unifiedmodel types
+	err = discoverViewsUnified(conn, um)
 	if err != nil {
-		return nil, fmt.Errorf("error getting views: %v", err)
+		return nil, fmt.Errorf("error discovering views: %v", err)
 	}
 
-	// Get dictionaries
-	schema.Dictionaries, err = getDictionaries(conn)
+	// Get dictionaries directly as unifiedmodel types
+	err = discoverDictionariesUnified(conn, um)
 	if err != nil {
-		return nil, fmt.Errorf("error getting dictionaries: %v", err)
+		return nil, fmt.Errorf("error discovering dictionaries: %v", err)
 	}
 
-	return schema, nil
+	return um, nil
 }
 
-// CreateStructure creates database objects based on the provided parameters
-func CreateStructure(conn ClickhouseConn, params common.StructureParams) error {
-	// Sort tables based on dependencies
-	sortedTables, err := common.TopologicalSort(params.Tables)
-	if err != nil {
-		return fmt.Errorf("error sorting tables: %v", err)
+// CreateStructure creates database objects from a UnifiedModel
+func CreateStructure(conn ClickhouseConn, um *unifiedmodel.UnifiedModel) error {
+	if um == nil {
+		return fmt.Errorf("unified model cannot be nil")
 	}
 
-	// Create tables
-	for _, table := range sortedTables {
-		if err := CreateTable(conn, table); err != nil {
+	// Create schemas from UnifiedModel
+	for _, schema := range um.Schemas {
+		if err := createSchemaFromUnified(conn, schema); err != nil {
+			return fmt.Errorf("error creating schema %s: %v", schema.Name, err)
+		}
+	}
+
+	// Create tables from UnifiedModel
+	for _, table := range um.Tables {
+		if err := createTableFromUnified(conn, table); err != nil {
 			return fmt.Errorf("error creating table %s: %v", table.Name, err)
 		}
 	}
 
+	// Create views from UnifiedModel
+	for _, view := range um.Views {
+		if err := createViewFromUnified(conn, view); err != nil {
+			return fmt.Errorf("error creating view %s: %v", view.Name, err)
+		}
+	}
+
+	// Create functions from UnifiedModel
+	for _, function := range um.Functions {
+		if err := createFunctionFromUnified(conn, function); err != nil {
+			return fmt.Errorf("error creating function %s: %v", function.Name, err)
+		}
+	}
+
 	return nil
 }
 
-func discoverTablesAndColumns(conn ClickhouseConn) (map[string]*common.TableInfo, []string, error) {
+// discoverTablesUnified discovers tables directly into UnifiedModel
+func discoverTablesUnified(conn ClickhouseConn, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			database AS table_schema,
-			table AS table_name,
-			name AS column_name,
-			type AS data_type,
-			is_nullable,
-			default_expression AS column_default,
-			is_in_primary_key,
-			0 AS is_array,
-			0 AS is_unique,
-			0 AS is_auto_increment,
+			name AS table_name,
 			engine AS table_type,
-			'' AS parent_table,
-			'' AS partition_value
-		FROM system.columns
-		WHERE database = currentDatabase()
-		ORDER BY table, position
+			comment AS table_comment
+		FROM system.tables 
+		WHERE database NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')
+		ORDER BY database, name
 	`
 
 	rows, err := conn.Query(context.Background(), query)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error fetching table and column information: %v", err)
+		return fmt.Errorf("error querying tables: %v", err)
 	}
 	defer rows.Close()
 
-	tables := make(map[string]*common.TableInfo)
-	tableNames := make([]string, 0)
-
 	for rows.Next() {
-		var schemaName, tableName, columnName, dataType string
-		var isNullable, isPrimaryKey, isArray, isUnique, isAutoIncrement sql.NullBool
-		var columnDefault, parentTable, partitionValue sql.NullString
-		var tableType string
-
-		if err := rows.Scan(
-			&schemaName, &tableName, &columnName, &dataType, &isNullable, &columnDefault,
-			&isPrimaryKey, &isArray, &isUnique, &isAutoIncrement, &tableType, &parentTable, &partitionValue,
-		); err != nil {
-			return nil, nil, fmt.Errorf("error scanning table and column row: %v", err)
+		var schema, tableName, tableType, comment string
+		if err := rows.Scan(&schema, &tableName, &tableType, &comment); err != nil {
+			return fmt.Errorf("error scanning table row: %v", err)
 		}
 
-		if _, exists := tables[tableName]; !exists {
-			tables[tableName] = &common.TableInfo{
-				Name:           tableName,
-				Schema:         schemaName,
-				TableType:      "clickhouse." + tableType,
-				ParentTable:    parentTable.String,
-				PartitionValue: partitionValue.String,
-			}
-			tableNames = append(tableNames, tableName)
+		table := unifiedmodel.Table{
+			Name:        tableName,
+			Comment:     comment,
+			Columns:     make(map[string]unifiedmodel.Column),
+			Indexes:     make(map[string]unifiedmodel.Index),
+			Constraints: make(map[string]unifiedmodel.Constraint),
 		}
 
-		var defaultValue *string
-		if columnDefault.Valid {
-			defaultValue = &columnDefault.String
-		}
-
-		columnInfo := common.ColumnInfo{
-			Name:            columnName,
-			DataType:        dataType,
-			IsNullable:      isNullable.Bool,
-			ColumnDefault:   defaultValue,
-			IsPrimaryKey:    isPrimaryKey.Bool,
-			IsArray:         isArray.Bool,
-			IsUnique:        isUnique.Bool,
-			IsAutoIncrement: isAutoIncrement.Bool,
-		}
-
-		// Handle array types in Clickhouse
-		if strings.Contains(dataType, "Array") {
-			columnInfo.IsArray = true
-			elementType := strings.TrimPrefix(strings.TrimSuffix(dataType, ")"), "Array(")
-			columnInfo.ArrayElementType = &elementType
-		}
-
-		tables[tableName].Columns = append(tables[tableName].Columns, columnInfo)
-	}
-
-	// Get primary keys for each table
-	for tableName, table := range tables {
-		primaryKeys, err := getPrimaryKeys(conn, tableName)
+		// Get columns for this table
+		err := getTableColumnsUnified(conn, schema, tableName, &table)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error getting primary keys for table %s: %v", tableName, err)
+			return fmt.Errorf("error getting columns for table %s.%s: %v", schema, tableName, err)
 		}
-		table.PrimaryKey = primaryKeys
+
+		um.Tables[fmt.Sprintf("%s.%s", schema, tableName)] = table
 	}
 
-	if len(tables) == 0 {
-		return tables, []string{}, nil
-	}
-
-	sort.Strings(tableNames)
-
-	return tables, tableNames, nil
+	return rows.Err()
 }
 
-func getPrimaryKeys(conn ClickhouseConn, tableName string) ([]string, error) {
+// getTableColumnsUnified gets columns for a table directly into UnifiedModel
+func getTableColumnsUnified(conn ClickhouseConn, database, tableName string, tableModel *unifiedmodel.Table) error {
 	query := `
-		SELECT name
-		FROM system.columns
-		WHERE database = currentDatabase()
-		AND table = ?
-		AND is_in_primary_key = 1
+		SELECT 
+			name AS column_name,
+			type AS data_type,
+			default_expression AS column_default,
+			is_in_primary_key AS is_primary_key,
+			comment AS column_comment
+		FROM system.columns 
+		WHERE database = ? AND table = ?
 		ORDER BY position
 	`
 
-	rows, err := conn.Query(context.Background(), query, tableName)
+	rows, err := conn.Query(context.Background(), query, database, tableName)
 	if err != nil {
-		return nil, fmt.Errorf("error fetching primary keys: %v", err)
+		return fmt.Errorf("error querying columns: %v", err)
 	}
 	defer rows.Close()
 
-	var primaryKeys []string
 	for rows.Next() {
-		var columnName string
-		if err := rows.Scan(&columnName); err != nil {
-			return nil, fmt.Errorf("error scanning primary key: %v", err)
+		var columnName, dataType, columnDefault, comment string
+		var isPrimaryKey bool
+		if err := rows.Scan(&columnName, &dataType, &columnDefault, &isPrimaryKey, &comment); err != nil {
+			return fmt.Errorf("error scanning column row: %v", err)
 		}
-		primaryKeys = append(primaryKeys, columnName)
+
+		column := unifiedmodel.Column{
+			Name:         columnName,
+			DataType:     dataType,
+			Default:      columnDefault,
+			IsPrimaryKey: isPrimaryKey,
+			Nullable:     !strings.Contains(strings.ToLower(dataType), "not null"),
+			Options:      map[string]any{"comment": comment},
+		}
+
+		tableModel.Columns[columnName] = column
 	}
 
-	return primaryKeys, nil
+	return rows.Err()
 }
 
-func getSchemas(conn ClickhouseConn) ([]common.DatabaseSchemaInfo, error) {
+// discoverSchemasUnified discovers schemas directly into UnifiedModel
+func discoverSchemasUnified(conn ClickhouseConn, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
-			name as schema_name,
-			'' as description
-		FROM system.databases
+			name AS database_name,
+			comment AS database_comment
+		FROM system.databases 
+		WHERE name NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')
 		ORDER BY name
 	`
 
 	rows, err := conn.Query(context.Background(), query)
 	if err != nil {
-		return nil, fmt.Errorf("error querying schemas: %v", err)
+		return fmt.Errorf("error querying schemas: %v", err)
 	}
 	defer rows.Close()
 
-	var schemas []common.DatabaseSchemaInfo
 	for rows.Next() {
-		var schema common.DatabaseSchemaInfo
-		var description sql.NullString
-		if err := rows.Scan(&schema.Name, &description); err != nil {
-			return nil, fmt.Errorf("error scanning schema: %v", err)
+		var name, comment string
+		if err := rows.Scan(&name, &comment); err != nil {
+			return fmt.Errorf("error scanning schema row: %v", err)
 		}
-		if description.Valid {
-			schema.Description = description.String
+
+		schema := unifiedmodel.Schema{
+			Name:    name,
+			Comment: comment,
 		}
-		schemas = append(schemas, schema)
+
+		um.Schemas[name] = schema
 	}
 
-	return schemas, nil
+	return rows.Err()
 }
 
-func getFunctions(conn ClickhouseConn) ([]common.FunctionInfo, error) {
+// discoverFunctionsUnified discovers functions directly into UnifiedModel
+func discoverFunctionsUnified(conn ClickhouseConn, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
 			name AS function_name,
-			'' AS schema_name,
-			'' AS argument_data_types,
+			'sql' AS language,
 			'' AS return_type,
 			'' AS function_body
-		FROM system.functions
+		FROM system.functions 
+		WHERE origin = 'System'
 		ORDER BY name
+		LIMIT 100
 	`
+
 	rows, err := conn.Query(context.Background(), query)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error querying functions: %v", err)
 	}
 	defer rows.Close()
 
-	var functions []common.FunctionInfo
-
 	for rows.Next() {
-		var function common.FunctionInfo
-		if err := rows.Scan(&function.Name, &function.Schema, &function.Arguments, &function.ReturnType, &function.Body); err != nil {
-			return nil, err
+		var name, language, returnType, body string
+		if err := rows.Scan(&name, &language, &returnType, &body); err != nil {
+			return fmt.Errorf("error scanning function row: %v", err)
 		}
-		functions = append(functions, function)
+
+		function := unifiedmodel.Function{
+			Name:       name,
+			Language:   language,
+			Returns:    returnType,
+			Definition: body,
+		}
+
+		um.Functions[name] = function
 	}
-	return functions, rows.Err()
+
+	return rows.Err()
 }
 
-func getViews(conn ClickhouseConn) ([]common.ViewInfo, error) {
+// discoverViewsUnified discovers views directly into UnifiedModel
+func discoverViewsUnified(conn ClickhouseConn, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
+			database AS view_schema,
 			name AS view_name,
-			database AS schema_name,
-			create_table_query AS definition
-		FROM system.tables
-		WHERE engine = 'View'
-		AND database = currentDatabase()
-		ORDER BY name
+			as_select AS view_definition
+		FROM system.tables 
+		WHERE engine = 'View' 
+		AND database NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')
+		ORDER BY database, name
 	`
+
 	rows, err := conn.Query(context.Background(), query)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error querying views: %v", err)
 	}
 	defer rows.Close()
 
-	var views []common.ViewInfo
-
 	for rows.Next() {
-		var view common.ViewInfo
-		if err := rows.Scan(&view.Name, &view.Schema, &view.Definition); err != nil {
-			return nil, err
+		var schema, name, definition string
+		if err := rows.Scan(&schema, &name, &definition); err != nil {
+			return fmt.Errorf("error scanning view row: %v", err)
 		}
-		views = append(views, view)
+
+		view := unifiedmodel.View{
+			Name:       name,
+			Definition: definition,
+		}
+
+		um.Views[fmt.Sprintf("%s.%s", schema, name)] = view
 	}
-	return views, rows.Err()
+
+	return rows.Err()
 }
 
-func getDictionaries(conn ClickhouseConn) ([]ClickhouseDictionaryInfo, error) {
+// discoverDictionariesUnified discovers dictionaries directly into UnifiedModel
+func discoverDictionariesUnified(conn ClickhouseConn, um *unifiedmodel.UnifiedModel) error {
 	query := `
 		SELECT 
-			name,
-			database AS schema,
-			source,
-			layout,
-			'' AS definition,
-			'' AS description
-		FROM system.dictionaries
-		WHERE database = currentDatabase()
-		ORDER BY name
+			database AS dict_database,
+			name AS dict_name,
+			type AS dict_type,
+			source AS dict_source
+		FROM system.dictionaries 
+		WHERE database NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')
+		ORDER BY database, name
 	`
+
 	rows, err := conn.Query(context.Background(), query)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("error querying dictionaries: %v", err)
 	}
 	defer rows.Close()
 
-	var dictionaries []ClickhouseDictionaryInfo
-
 	for rows.Next() {
-		var dict ClickhouseDictionaryInfo
-		if err := rows.Scan(&dict.Name, &dict.Schema, &dict.Source, &dict.Layout, &dict.Definition, &dict.Description); err != nil {
-			return nil, err
+		var database, name, dictType, source string
+		if err := rows.Scan(&database, &name, &dictType, &source); err != nil {
+			return fmt.Errorf("error scanning dictionary row: %v", err)
 		}
-		dictionaries = append(dictionaries, dict)
+
+		// Represent dictionaries as views since they're similar to materialized views
+		view := unifiedmodel.View{
+			Name:       name,
+			Definition: fmt.Sprintf("DICTIONARY %s TYPE %s SOURCE %s", name, dictType, source),
+		}
+
+		um.Views[fmt.Sprintf("%s.%s", database, name)] = view
 	}
-	return dictionaries, rows.Err()
+
+	return rows.Err()
 }
 
-func CreateTable(conn ClickhouseConn, tableInfo common.TableInfo) error {
-	if conn == nil {
-		return fmt.Errorf("connection is nil")
+// createSchemaFromUnified creates a schema from UnifiedModel Schema
+func createSchemaFromUnified(conn ClickhouseConn, schema unifiedmodel.Schema) error {
+	if schema.Name == "" {
+		return fmt.Errorf("schema name cannot be empty")
 	}
 
-	if tableInfo.Name == "" {
-		return fmt.Errorf("table name is empty")
+	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", QuoteIdentifier(schema.Name))
+	if schema.Comment != "" {
+		query += fmt.Sprintf(" COMMENT '%s'", strings.ReplaceAll(schema.Comment, "'", "''"))
 	}
 
-	// Check if the table already exists
-	var exists int
-	err := conn.QueryRow(context.Background(),
-		"SELECT count() FROM system.tables WHERE database = currentDatabase() AND name = ?",
-		tableInfo.Name).Scan(&exists)
-	if err != nil {
-		return fmt.Errorf("error checking if table exists: %v", err)
-	}
-	if exists > 0 {
-		return fmt.Errorf("table '%s' already exists", tableInfo.Name)
+	return conn.Exec(context.Background(), query)
+}
+
+// createTableFromUnified creates a table from UnifiedModel Table
+func createTableFromUnified(conn ClickhouseConn, table unifiedmodel.Table) error {
+	if table.Name == "" {
+		return fmt.Errorf("table name cannot be empty")
 	}
 
-	// Create table
-	createTableSQL := fmt.Sprintf("CREATE TABLE %s (", tableInfo.Name)
-	for i, column := range tableInfo.Columns {
-		if i > 0 {
-			createTableSQL += ", "
-		}
-		createTableSQL += fmt.Sprintf("%s ", column.Name)
-
-		// Handle Clickhouse data types
-		if column.IsArray {
-			if column.ArrayElementType != nil {
-				createTableSQL += fmt.Sprintf("Array(%s)", *column.ArrayElementType)
-			} else {
-				createTableSQL += "Array(String)"
-			}
-		} else {
-			// Map common data types to Clickhouse types
-			switch strings.ToUpper(column.DataType) {
-			case "INTEGER", "INT":
-				createTableSQL += "Int32"
-			case "BIGINT":
-				createTableSQL += "Int64"
-			case "FLOAT":
-				createTableSQL += "Float32"
-			case "DOUBLE":
-				createTableSQL += "Float64"
-			case "VARCHAR", "CHARACTER VARYING":
-				createTableSQL += "String"
-			case "DATE":
-				createTableSQL += "Date"
-			case "TIMESTAMP":
-				createTableSQL += "DateTime"
-			case "BOOLEAN":
-				createTableSQL += "UInt8"
-			default:
-				createTableSQL += column.DataType
-			}
-		}
-
-		if !column.IsNullable {
-			createTableSQL += " NOT NULL"
-		}
-		if column.ColumnDefault != nil {
-			createTableSQL += fmt.Sprintf(" DEFAULT %s", *column.ColumnDefault)
-		}
-	}
-
-	// Add primary key
-	if len(tableInfo.PrimaryKey) > 0 {
-		createTableSQL += fmt.Sprintf(") ENGINE = MergeTree() PRIMARY KEY (%s)",
-			strings.Join(tableInfo.PrimaryKey, ", "))
+	// Extract database name from table name if it contains a dot
+	parts := strings.Split(table.Name, ".")
+	var database, tableName string
+	if len(parts) == 2 {
+		database = parts[0]
+		tableName = parts[1]
 	} else {
-		// Default to MergeTree engine with order by tuple()
-		createTableSQL += ") ENGINE = MergeTree() ORDER BY tuple()"
+		database = "default"
+		tableName = table.Name
 	}
 
-	// Print the SQL statement
-	fmt.Printf("Creating table %s with SQL: %s\n", tableInfo.Name, createTableSQL)
+	var columnDefs []string
+	var primaryKeys []string
 
-	err = conn.Exec(context.Background(), createTableSQL)
-	if err != nil {
-		return fmt.Errorf("error creating table: %v", err)
+	for _, column := range table.Columns {
+		columnDef := fmt.Sprintf("%s %s", QuoteIdentifier(column.Name), column.DataType)
+
+		if column.Default != "" {
+			columnDef += fmt.Sprintf(" DEFAULT %s", column.Default)
+		}
+
+		if column.Options != nil {
+			if comment, ok := column.Options["comment"].(string); ok && comment != "" {
+				columnDef += fmt.Sprintf(" COMMENT '%s'", strings.ReplaceAll(comment, "'", "''"))
+			}
+		}
+
+		columnDefs = append(columnDefs, columnDef)
+
+		if column.IsPrimaryKey {
+			primaryKeys = append(primaryKeys, QuoteIdentifier(column.Name))
+		}
 	}
 
-	return nil
+	query := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (\n\t%s\n)",
+		QuoteIdentifier(database), QuoteIdentifier(tableName), strings.Join(columnDefs, ",\n\t"))
+
+	if len(primaryKeys) > 0 {
+		query = fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (\n\t%s,\n\tPRIMARY KEY (%s)\n)",
+			QuoteIdentifier(database), QuoteIdentifier(tableName),
+			strings.Join(columnDefs, ",\n\t"), strings.Join(primaryKeys, ", "))
+	}
+
+	query += " ENGINE = MergeTree()"
+
+	if table.Comment != "" {
+		query += fmt.Sprintf(" COMMENT '%s'", strings.ReplaceAll(table.Comment, "'", "''"))
+	}
+
+	return conn.Exec(context.Background(), query)
+}
+
+// createViewFromUnified creates a view from UnifiedModel View
+func createViewFromUnified(conn ClickhouseConn, view unifiedmodel.View) error {
+	if view.Name == "" {
+		return fmt.Errorf("view name cannot be empty")
+	}
+
+	// Extract database name from view name if it contains a dot
+	parts := strings.Split(view.Name, ".")
+	var database, viewName string
+	if len(parts) == 2 {
+		database = parts[0]
+		viewName = parts[1]
+	} else {
+		database = "default"
+		viewName = view.Name
+	}
+
+	query := fmt.Sprintf("CREATE VIEW IF NOT EXISTS %s.%s AS %s",
+		QuoteIdentifier(database), QuoteIdentifier(viewName), view.Definition)
+
+	return conn.Exec(context.Background(), query)
+}
+
+// createFunctionFromUnified creates a function from UnifiedModel Function
+func createFunctionFromUnified(conn ClickhouseConn, function unifiedmodel.Function) error {
+	if function.Name == "" {
+		return fmt.Errorf("function name cannot be empty")
+	}
+
+	// ClickHouse doesn't support user-defined functions in the same way as other databases
+	// This is a placeholder implementation
+	return fmt.Errorf("user-defined functions are not supported in ClickHouse")
+}
+
+// QuoteIdentifier quotes a ClickHouse identifier
+func QuoteIdentifier(name string) string {
+	return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``"))
 }

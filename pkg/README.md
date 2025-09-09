@@ -14,6 +14,7 @@ This document provides comprehensive documentation for all shared packages in th
 8. [Secure Storage (`/pkg/keyring`)](#secure-storage)
 9. [gRPC Utilities (`/pkg/grpc`)](#grpc-utilities)
 10. [System Logging (`/pkg/syslog`)](#system-logging)
+11. [Database Capabilities (`/pkg/dbcapabilities`)](#database-capabilities)
 
 ---
 
@@ -1349,6 +1350,35 @@ func (s *MyService) configureSyslog(cfg *config.Config) error {
 ```
 
 ---
+
+## Database Capabilities
+
+**Package:** `github.com/redbco/redb-open/pkg/dbcapabilities`
+
+Provides a shared registry describing capabilities for each supported database (system database name, CDC support, data paradigms).
+
+### Import and Basic Usage
+
+```go
+import "github.com/redbco/redb-open/pkg/dbcapabilities"
+
+// Check if a DB supports CDC
+ok := dbcapabilities.SupportsCDC(dbcapabilities.PostgreSQL)
+
+// Get full capability info
+cap, _ := dbcapabilities.Get(dbcapabilities.MongoDB)
+fmt.Println(cap.Name, cap.Paradigms)
+```
+
+### Database IDs
+
+Use the provided constants, e.g. `dbcapabilities.PostgreSQL`, `dbcapabilities.MySQL`, `dbcapabilities.Snowflake`, `dbcapabilities.MongoDB`, `dbcapabilities.Redis`, `dbcapabilities.Cassandra`, `dbcapabilities.Elasticsearch`, `dbcapabilities.Milvus`, `dbcapabilities.Weaviate`, `dbcapabilities.Pinecone`, `dbcapabilities.Chroma`, `dbcapabilities.Oracle`, `dbcapabilities.DB2`, `dbcapabilities.CockroachDB`, `dbcapabilities.ClickHouse`, `dbcapabilities.Neo4j`, `dbcapabilities.CosmosDB`, `dbcapabilities.DynamoDB`, `dbcapabilities.EdgeDB`.
+
+### Notes
+
+- The registry `dbcapabilities.All` is a `map[DatabaseID]Capability` intended for read-only use at runtime.
+- Additions or corrections can be made by extending `pkg/dbcapabilities/capabilities.go`.
+
 
 ## Common Integration Patterns
 

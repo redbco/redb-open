@@ -32,7 +32,8 @@ func NewPostgresStorage(ctx context.Context, config Config, logger *logger.Logge
 	}
 
 	// Use FromGlobalConfig to get the standard database configuration
-	// This connects to the main "redb" database like other microservices
+	// This connects to the main database like other microservices
+	// Pass nil config - database name will be read from environment variables
 	dbConfig := database.FromGlobalConfig(nil)
 
 	// Create database instance using shared package

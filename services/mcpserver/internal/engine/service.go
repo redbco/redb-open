@@ -6,6 +6,7 @@ import (
 
 	supervisorv1 "github.com/redbco/redb-open/api/proto/supervisor/v1"
 	"github.com/redbco/redb-open/pkg/config"
+	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/health"
 	"github.com/redbco/redb-open/pkg/logger"
 	"google.golang.org/grpc"
@@ -17,6 +18,7 @@ type Service struct {
 	config     *config.Config
 	grpcServer *grpc.Server // Store the gRPC server for BaseService compatibility
 	logger     *logger.Logger
+	db         *database.PostgreSQL
 }
 
 // NewService creates a new MCP service implementation
@@ -52,8 +54,17 @@ func (s *Service) Initialize(ctx context.Context, cfg *config.Config) error {
 		"services.mcpserver.security_key",  // Fixed: Use service-specific naming
 	})
 
+	// Initialize database connection (same pattern as core/integration)
+	dbConfig := database.FromGlobalConfig(cfg)
+	db, err := database.New(ctx, dbConfig)
+	if err != nil {
+		return err
+	}
+	s.db = db
+
 	// Initialize MCP engine
 	s.engine = NewEngine(cfg)
+	s.engine.SetDatabase(db)
 
 	// Pass the logger to the engine if available
 	if s.logger != nil {
@@ -73,7 +84,12 @@ func (s *Service) Start(ctx context.Context) error {
 func (s *Service) Stop(ctx context.Context, gracePeriod time.Duration) error {
 	// Stop the MCP engine
 	if s.engine != nil {
-		return s.engine.Stop(ctx)
+		if err := s.engine.Stop(ctx); err != nil {
+			return err
+		}
+	}
+	if s.db != nil {
+		s.db.Close()
 	}
 	return nil
 }

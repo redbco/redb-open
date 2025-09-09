@@ -14,7 +14,7 @@ CHECK (
     AND
     -- Ensure prefix is from allowed list
     substring(VALUE from '^([a-z]+)_') IN (
-        'mesh', 'node', 'route', 'region', 'tenant', 'user', 'group', 'role', 'perm', 'pol', 'ws', 'env', 'instance', 'db', 'repo', 'branch', 'commit', 'map', 'maprule','rel', 'transform', 'mcpserver', 'mcpresource', 'mcptool', 'mcpprompt', 'audit', 'satellite', 'anchor', 'template', 'apitoken', 'cdcs'
+        'mesh', 'node', 'route', 'region', 'tenant', 'user', 'group', 'role', 'perm', 'pol', 'ws', 'env', 'instance', 'db', 'repo', 'branch', 'commit', 'map', 'maprule','rel', 'transform', 'mcpserver', 'mcpresource', 'mcptool', 'mcpprompt', 'audit', 'satellite', 'anchor', 'template', 'apitoken', 'cdcs', 'integration', 'intjob'
     )
 );
 
@@ -636,6 +636,47 @@ CREATE TABLE transformations (
 ALTER TABLE mapping_rules ADD CONSTRAINT fk_mapping_rule_transformation_id FOREIGN KEY (mapping_rule_transformation_id) REFERENCES transformations(transformation_id) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- =============================================================================
+-- INTEGRATIONS
+-- =============================================================================
+
+-- Integrations registry
+CREATE TABLE integrations (
+    integration_id ulid PRIMARY KEY DEFAULT generate_ulid('integration'),
+    tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    integration_name VARCHAR(255) NOT NULL,
+    integration_description TEXT DEFAULT '',
+    integration_type VARCHAR(64) NOT NULL,
+    integration_config JSONB NOT NULL DEFAULT '{}',
+    credential_key TEXT DEFAULT '',
+    integration_metadata JSONB NOT NULL DEFAULT '{}',
+    supported_operations TEXT[] NOT NULL DEFAULT '{}',
+    health JSONB NOT NULL DEFAULT '{}',
+    owner_id ulid REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    status VARCHAR(255) DEFAULT 'STATUS_CREATED',
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(tenant_id, integration_name)
+);
+
+-- Integration execution jobs (for async/stream tracking)
+CREATE TABLE integration_jobs (
+    job_id ulid PRIMARY KEY DEFAULT generate_ulid('intjob'),
+    integration_id ulid NOT NULL REFERENCES integrations(integration_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    operation VARCHAR(255) NOT NULL,
+    mode VARCHAR(32) NOT NULL DEFAULT 'EXECUTION_MODE_SYNC',
+    status VARCHAR(64) NOT NULL DEFAULT 'JOB_STATUS_PENDING',
+    request_payload JSONB NOT NULL DEFAULT '{}',
+    request_parameters JSONB NOT NULL DEFAULT '{}',
+    progress JSONB NOT NULL DEFAULT '{}',
+    result JSONB NOT NULL DEFAULT '{}',
+    error_message TEXT DEFAULT '',
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed TIMESTAMP
+);
+
+-- =============================================================================
 -- MCP (MODEL CONTEXT PROTOCOL) SYSTEM
 -- =============================================================================
 
@@ -996,6 +1037,13 @@ CREATE INDEX idx_mcp_server_tools_server ON mcp_server_tools(mcpserver_id);
 CREATE INDEX idx_mcp_server_tools_tool ON mcp_server_tools(mcptool_id);
 CREATE INDEX idx_mcp_server_prompts_server ON mcp_server_prompts(mcpserver_id);
 CREATE INDEX idx_mcp_server_prompts_prompt ON mcp_server_prompts(mcpprompt_id);
+
+-- Integration queries
+CREATE INDEX idx_integrations_tenant ON integrations(tenant_id);
+CREATE INDEX idx_integrations_type ON integrations(integration_type);
+CREATE INDEX idx_integrations_name ON integrations(integration_name);
+CREATE INDEX idx_integration_jobs_integration ON integration_jobs(integration_id);
+CREATE INDEX idx_integration_jobs_status ON integration_jobs(status);
 
 -- Authorization system queries
 CREATE INDEX idx_groups_tenant_id ON groups(tenant_id);

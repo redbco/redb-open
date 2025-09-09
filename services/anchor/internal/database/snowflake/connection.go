@@ -9,15 +9,21 @@ import (
 	"time"
 
 	"github.com/redbco/redb-open/pkg/encryption"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 	"github.com/snowflakedb/gosnowflake"
 )
 
 // Connect establishes a connection to a Snowflake database
-func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
-	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+func Connect(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
+	var decryptedPassword string
+	if config.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	var connString strings.Builder
@@ -67,7 +73,7 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 		return nil, fmt.Errorf("error pinging Snowflake database: %v", err)
 	}
 
-	return &common.DatabaseClient{
+	return &dbclient.DatabaseClient{
 		DB:           db,
 		DatabaseType: "snowflake",
 		DatabaseID:   config.DatabaseID,
@@ -77,10 +83,16 @@ func Connect(config common.DatabaseConfig) (*common.DatabaseClient, error) {
 }
 
 // ConnectInstance establishes a connection to a Snowflake instance
-func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
-	decryptedPassword, err := encryption.DecryptPassword(config.TenantID, config.Password)
-	if err != nil {
-		return nil, fmt.Errorf("error decrypting password: %v", err)
+func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
+	var decryptedPassword string
+	if config.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting password: %v", err)
+		}
+		decryptedPassword = dp
 	}
 
 	var connString strings.Builder
@@ -130,7 +142,7 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 		return nil, fmt.Errorf("error pinging Snowflake database: %v", err)
 	}
 
-	return &common.InstanceClient{
+	return &dbclient.InstanceClient{
 		DB:           db,
 		InstanceType: "snowflake",
 		InstanceID:   config.InstanceID,
@@ -140,14 +152,14 @@ func ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, erro
 }
 
 // DiscoverDetails fetches the details of a Snowflake database
-func DiscoverDetails(db interface{}) (*SnowflakeDetails, error) {
+func DiscoverDetails(db interface{}) (map[string]interface{}, error) {
 	sqlDB, ok := db.(*sql.DB)
 	if !ok {
 		return nil, fmt.Errorf("invalid database connection")
 	}
 
-	var details SnowflakeDetails
-	details.DatabaseType = "snowflake"
+	details := make(map[string]interface{})
+	details["databaseType"] = "snowflake"
 
 	// Get server version
 	var version string
@@ -155,7 +167,7 @@ func DiscoverDetails(db interface{}) (*SnowflakeDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching version: %v", err)
 	}
-	details.Version = version
+	details["version"] = version
 
 	// Get account information
 	var account, region string
@@ -163,8 +175,8 @@ func DiscoverDetails(db interface{}) (*SnowflakeDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching account information: %v", err)
 	}
-	details.Account = account
-	details.Region = region
+	details["account"] = account
+	details["region"] = region
 
 	// Get current role
 	var role string
@@ -172,7 +184,7 @@ func DiscoverDetails(db interface{}) (*SnowflakeDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching current role: %v", err)
 	}
-	details.Role = role
+	details["role"] = role
 
 	// Get current warehouse
 	var warehouse string
@@ -180,7 +192,7 @@ func DiscoverDetails(db interface{}) (*SnowflakeDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching current warehouse: %v", err)
 	}
-	details.Warehouse = warehouse
+	details["warehouse"] = warehouse
 
 	// Get database size (approximate)
 	var size int64
@@ -195,7 +207,7 @@ func DiscoverDetails(db interface{}) (*SnowflakeDetails, error) {
 		// If we can't get the size, just set it to 0 and continue
 		size = 0
 	}
-	details.DatabaseSize = size
+	details["databaseSize"] = size
 
 	// Get unique identifier (account + database name)
 	var dbName string
@@ -203,7 +215,7 @@ func DiscoverDetails(db interface{}) (*SnowflakeDetails, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error fetching database name: %v", err)
 	}
-	details.UniqueIdentifier = fmt.Sprintf("%s.%s", account, dbName)
+	details["uniqueIdentifier"] = fmt.Sprintf("%s.%s", account, dbName)
 
 	// Get edition
 	var edition string
@@ -218,9 +230,9 @@ func DiscoverDetails(db interface{}) (*SnowflakeDetails, error) {
 	} else {
 		edition = "standard"
 	}
-	details.DatabaseEdition = edition
+	details["databaseEdition"] = edition
 
-	return &details, nil
+	return details, nil
 }
 
 // CollectDatabaseMetadata collects metadata from a Snowflake database

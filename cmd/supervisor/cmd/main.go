@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/redbco/redb-open/cmd/supervisor/internal/logger"
 	"github.com/redbco/redb-open/cmd/supervisor/internal/manager"
 	"github.com/redbco/redb-open/cmd/supervisor/internal/superconfig"
+	"github.com/redbco/redb-open/pkg/database"
 )
 
 var (
@@ -61,6 +63,16 @@ func main() {
 	// Initialize unified logger for initialization (using basic config since we may not have access to full config yet)
 	log := logger.NewUnifiedLogger("supervisor", "1.0.0", "logs/redb-node-event.log", "info")
 
+	// Load configuration first (needed for both initialization and normal startup)
+	cfg, err := superconfig.Load(*configFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Set environment variable for database name so it's available during initialization
+	os.Setenv("REDB_DATABASE_NAME", cfg.Database.Name)
+
 	// Handle initialization mode
 	if *initializeFlag {
 		log.Info("Starting reDB node initialization...")
@@ -95,10 +107,10 @@ func main() {
 		// Don't exit - continue with normal supervisor startup
 	}
 
-	// Load configuration
-	cfg, err := superconfig.Load(*configFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+	// Validate that the database and tables exist before starting services
+	if err := validateDatabaseSetup(cfg.Database.Name); err != nil {
+		fmt.Fprintf(os.Stderr, "Database validation failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Please run --initialize first to set up the database and schema.\n")
 		os.Exit(1)
 	}
 
@@ -378,4 +390,89 @@ func (s *Supervisor) addSystemReadyCallbacks() {
 		s.logger.Info("Performing post-startup system validation...")
 		// Add your validation logic here
 	})
+}
+
+// validateDatabaseSetup checks if the database and required tables exist
+func validateDatabaseSetup(databaseName string) error {
+	// Try to get production credentials from keyring first
+	dbConfig, err := database.FromProductionConfig(databaseName)
+	if err != nil {
+		// If keyring credentials don't exist, try default credentials
+		dbConfig = database.PostgreSQLConfig{
+			User:              "redb",
+			Password:          "redb",
+			Host:              "localhost",
+			Port:              5432,
+			Database:          databaseName,
+			SSLMode:           "disable",
+			MaxConnections:    10,
+			ConnectionTimeout: 5 * time.Second,
+		}
+	}
+
+	// Connect to database
+	connConfig, err := pgx.ParseConfig("")
+	if err != nil {
+		return fmt.Errorf("failed to create connection config: %w", err)
+	}
+
+	connConfig.Host = dbConfig.Host
+	connConfig.Port = uint16(dbConfig.Port)
+	connConfig.Database = dbConfig.Database
+	connConfig.User = dbConfig.User
+	connConfig.Password = dbConfig.Password
+	connConfig.ConnectTimeout = dbConfig.ConnectionTimeout
+
+	conn, err := pgx.ConnectConfig(context.Background(), connConfig)
+	if err != nil {
+		// Check if it's a database doesn't exist error
+		if err.Error() == fmt.Sprintf("failed to connect to `host=%s user=%s database=%s`: database \"%s\" does not exist", dbConfig.Host, dbConfig.User, dbConfig.Database, dbConfig.Database) {
+			return fmt.Errorf("database '%s' does not exist - please run --initialize first to create the database and schema", databaseName)
+		}
+		// Check if it's a connection refused error
+		if err.Error() == fmt.Sprintf("failed to connect to `host=%s user=%s database=%s`: dial tcp %s:%d: connect: connection refused", dbConfig.Host, dbConfig.User, dbConfig.Database, dbConfig.Host, dbConfig.Port) {
+			return fmt.Errorf("cannot connect to PostgreSQL at %s:%d - please ensure PostgreSQL is running", dbConfig.Host, dbConfig.Port)
+		}
+		// Check if it's an authentication error
+		if err.Error() == fmt.Sprintf("failed to connect to `host=%s user=%s database=%s`: ERROR: password authentication failed for user \"%s\"", dbConfig.Host, dbConfig.User, dbConfig.Database, dbConfig.User) {
+			return fmt.Errorf("authentication failed for user '%s' - please run --initialize first to set up the database credentials", dbConfig.User)
+		}
+		return fmt.Errorf("failed to connect to database '%s': %w", databaseName, err)
+	}
+	defer conn.Close(context.Background())
+
+	// Check if key tables exist
+	var schemaExists bool
+	err = conn.QueryRow(context.Background(), `
+		SELECT EXISTS(
+			SELECT 1 FROM information_schema.tables 
+			WHERE table_schema = 'public' 
+			AND table_name IN ('localidentity', 'tenants', 'users', 'nodes')
+		)
+	`).Scan(&schemaExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if schema exists: %w", err)
+	}
+
+	if !schemaExists {
+		return fmt.Errorf("database '%s' exists but required tables are missing - please run --initialize first to create the schema", databaseName)
+	}
+
+	// Check if local node exists
+	var localNodeExists bool
+	err = conn.QueryRow(context.Background(), `
+		SELECT EXISTS(
+			SELECT 1 FROM localidentity li
+			JOIN nodes n ON n.node_id = li.identity_id
+		)
+	`).Scan(&localNodeExists)
+	if err != nil {
+		return fmt.Errorf("failed to check if local node exists: %w", err)
+	}
+
+	if !localNodeExists {
+		return fmt.Errorf("database schema exists but local node is not configured - please run --initialize first to configure the local node")
+	}
+
+	return nil
 }

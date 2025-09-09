@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	port           = flag.Int("port", 50061, "The server port")
+	port           = flag.Int("port", 50060, "The server port")
 	supervisorAddr = flag.String("supervisor", "localhost:50000", "Supervisor address")
 	serviceVersion = "1.0.0"
 )

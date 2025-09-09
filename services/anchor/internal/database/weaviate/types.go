@@ -1,23 +1,5 @@
 package weaviate
 
-// WeaviateDetails contains information about a Weaviate vector database
-type WeaviateDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-	Host             string `json:"host"`
-	Port             int    `json:"port"`
-	ClassCount       int64  `json:"classCount"`
-	TotalObjects     int64  `json:"totalObjects"`
-}
-
-// WeaviateSchema represents the schema of a Weaviate vector database
-type WeaviateSchema struct {
-	Classes []WeaviateClassInfo `json:"classes"`
-}
-
 // WeaviateClassInfo represents information about a Weaviate class
 type WeaviateClassInfo struct {
 	Class               string                 `json:"class"`

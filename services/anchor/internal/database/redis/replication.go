@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -16,7 +16,7 @@ func CreateReplicationSource(client *redis.Client, keyPattern string, databaseID
 	ctx := context.Background()
 
 	// Generate a unique channel name for this replication
-	channelName := fmt.Sprintf("keyevent_%s_%s", databaseID, common.GenerateUniqueID())
+	channelName := fmt.Sprintf("keyevent_%s_%s", databaseID, dbclient.GenerateUniqueID())
 
 	// Enable keyspace notifications if not already enabled
 	result, err := client.Do(ctx, "CONFIG", "GET", "notify-keyspace-events").Result()

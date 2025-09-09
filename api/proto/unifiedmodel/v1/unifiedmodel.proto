@@ -5,41 +5,53 @@ package redbco.redbopen.unifiedmodel.v1;
 option go_package = "github.com/redbco/redb-open/api/proto/unifiedmodel/v1;unifiedmodelv1";
 
 service UnifiedModelService {
+  // Schema analysis services
   rpc AnalyzeSchema(AnalyzeSchemaRequest) returns (AnalyzeSchemaResponse) {}
   rpc AnalyzeSchemaEnriched(AnalyzeSchemaEnrichedRequest) returns (AnalyzeSchemaEnrichedResponse) {}
+  
+  // Translation and generation services
   rpc Translate(TranslationRequest) returns (TranslationResponse) {}
   rpc Generate(GenerationRequest) returns (GenerationResponse) {}
-  rpc CompareSchemas(CompareRequest) returns (CompareResponse) {}
-  rpc MatchSchemasEnriched(MatchSchemasEnrichedRequest) returns (MatchSchemasEnrichedResponse) {}
-  rpc MatchTablesEnriched(MatchTablesEnrichedRequest) returns (MatchTablesEnrichedResponse) {}
+  
+  // Comparison services
+  rpc CompareSchemas(CompareRequest) returns (CompareResponse) {} // Deprecated: Use CompareUnifiedModels
+  rpc CompareUnifiedModels(CompareUnifiedModelsRequest) returns (CompareResponse) {}
+  
+  // Classification and enrichment services
+  rpc ClassifyUnifiedModel(ClassifyUnifiedModelRequest) returns (ClassifyUnifiedModelResponse) {}
+  rpc Classify(ClassifyRequest) returns (ClassifyResponse) {}
+  
+  // Matching services
+  rpc MatchUnifiedModelsEnriched(MatchUnifiedModelsEnrichedRequest) returns (MatchUnifiedModelsEnrichedResponse) {}
+  
+  // Detection services
   rpc DetectPrivilegedData(DetectRequest) returns (DetectResponse) {}
-  rpc Classify (ClassifyRequest) returns (ClassifyResponse);
 }
 
 message AnalyzeSchemaRequest {
   string schema_type = 1;
-  bytes schema = 2;
+  UnifiedModel unified_model = 2;
 }
 
 message AnalyzeSchemaResponse {
-  bytes tables = 1;
+  repeated Table tables = 1;
 }
 
 message TranslationRequest {
-  string target = 1;
+  string target_type = 1;
   string source_type = 2;
-  bytes source_structure = 3;
+  UnifiedModel source_structure = 3;
 }
 
 message TranslationResponse {
-  bytes target_structure = 1;
+  UnifiedModel target_structure = 1;
   repeated string warnings = 2;
 }
 
 message GenerationRequest {
-  string target = 1;
+  string target_type = 1;
   string source_type = 2;
-  bytes structure = 3;
+  UnifiedModel structure = 3;
 }
 
 message GenerationResponse {
@@ -49,14 +61,27 @@ message GenerationResponse {
 
 message CompareRequest {
   string schema_type = 1;
-  bytes previous_schema = 2;
-  bytes current_schema = 3;
+  UnifiedModel previous_schema = 2;
+  UnifiedModel current_schema = 3;
 }
 
 message CompareResponse {
   bool has_changes = 1;
   repeated string changes = 2;
   repeated string warnings = 3;
+}
+
+message CompareUnifiedModelsRequest {
+  UnifiedModel previous_unified_model = 1;
+  UnifiedModel current_unified_model = 2;
+}
+
+message ClassifyUnifiedModelRequest {
+  UnifiedModel unified_model = 1;
+}
+
+message ClassifyUnifiedModelResponse {
+  UnifiedModelEnrichment unified_model_enrichment = 1;
 }
 
 message EnrichedColumnMatch {
@@ -87,31 +112,19 @@ message EnrichedTableMatch {
   repeated EnrichedColumnMatch column_matches = 11;
 }
 
-message MatchSchemasEnrichedRequest {
-  string source_schema_type = 1;
-  bytes source_schema = 2;
-  string target_schema_type = 3;
-  bytes target_schema = 4;
+message MatchUnifiedModelsEnrichedRequest {
+  UnifiedModel source_unified_model = 1;
+  UnifiedModelEnrichment source_enrichment = 2;
+  UnifiedModel target_unified_model = 3;
+  UnifiedModelEnrichment target_enrichment = 4;
   MatchOptions options = 5;
 }
 
-message MatchSchemasEnrichedResponse {
+message MatchUnifiedModelsEnrichedResponse {
   repeated EnrichedTableMatch table_matches = 1;
   repeated EnrichedColumnMatch unmatched_columns = 2;
   repeated string warnings = 3;
   double overall_similarity_score = 4;
-}
-
-message MatchTablesEnrichedRequest {
-  repeated EnrichedTableMetadata source_tables = 1;
-  repeated EnrichedTableMetadata target_tables = 2;
-  MatchOptions options = 3;
-}
-
-message MatchTablesEnrichedResponse {
-  repeated EnrichedTableMatch matches = 1;
-  repeated string warnings = 2;
-  double overall_similarity_score = 3;
 }
 
 message MatchOptions {
@@ -127,7 +140,7 @@ message MatchOptions {
 
 message DetectRequest {
   string schema_type = 1;
-  bytes schema = 2;
+  UnifiedModel unified_model = 2;
   bool include_example_data = 3;
 }
 
@@ -196,7 +209,7 @@ message ClassifyResponse {
 
 message AnalyzeSchemaEnrichedRequest {
   string schema_type = 1;
-  bytes schema = 2;
+  UnifiedModel unified_model = 2;
 }
 
 message EnrichedColumnMetadata {
@@ -242,4 +255,1227 @@ message EnrichedTableMetadata {
 message AnalyzeSchemaEnrichedResponse {
   repeated EnrichedTableMetadata tables = 1;
   repeated string warnings = 2;
+}
+
+// Core UnifiedModel message representing the unified schema structure
+message UnifiedModel {
+  // Database Structure Type
+  string database_type = 1;
+
+  // Structural organization (optional levels depending on engine)
+  map<string, Catalog> catalogs = 2;
+  map<string, Database> databases = 3;
+  map<string, Schema> schemas = 4;
+
+  // Primary Data Containers
+  map<string, Table> tables = 5;
+  map<string, Collection> collections = 6;
+  map<string, Node> nodes = 7;
+  map<string, MemoryTable> memory_tables = 8;
+
+  // Temporary Data Containers
+  map<string, TemporaryTable> temporary_tables = 9;
+  map<string, TransientTable> transient_tables = 10;
+  string cache_mechanism = 11;
+  map<string, Cache> caches = 12;
+
+  // Virtual Data Containers
+  map<string, View> views = 13;
+  map<string, LiveView> live_views = 14;
+  map<string, WindowView> window_views = 15;
+  map<string, MaterializedView> materialized_views = 16;
+  map<string, ExternalTable> external_tables = 17;
+  map<string, ForeignTable> foreign_tables = 18;
+
+  // Graph / Vector / Search abstractions
+  map<string, Graph> graphs = 19;
+  map<string, VectorIndex> vector_indexes = 20;
+  map<string, SearchIndex> search_indexes = 21;
+
+  // Specialized Data Containers
+  map<string, Vector> vectors = 22;
+  map<string, Embedding> embeddings = 23;
+  map<string, Document> documents = 24;
+  map<string, EmbeddedDocument> embedded_documents = 25;
+  map<string, Relationship> relationships = 26;
+  map<string, Path> paths = 27;
+
+  // Data Organization Containers
+  map<string, Partition> partitions = 28;
+  map<string, SubPartition> sub_partitions = 29;
+  map<string, Shard> shards = 30;
+  map<string, Keyspace> keyspaces = 31;
+  map<string, Namespace> namespaces = 32;
+
+  // Structural definition objects
+  map<string, Column> columns = 33;
+  map<string, Type> types = 34;
+  map<string, PropertyKey> property_keys = 35;
+
+  // Integrity, performance and identity objects
+  map<string, Index> indexes = 36;
+  map<string, Constraint> constraints = 37;
+  map<string, Sequence> sequences = 38;
+  map<string, Identity> identities = 39;
+  map<string, UUIDGenerator> uuid_generators = 40;
+
+  // Executable code objects
+  map<string, Function> functions = 41;
+  map<string, Procedure> procedures = 42;
+  map<string, Method> methods = 43;
+  map<string, Trigger> triggers = 44;
+  map<string, EventTrigger> event_triggers = 45;
+  map<string, Aggregate> aggregates = 46;
+  map<string, Operator> operators = 47;
+  map<string, Module> modules = 48;
+  map<string, Package> packages = 49;
+  map<string, PackageBody> package_bodies = 50;
+  map<string, Macro> macros = 51;
+  map<string, Rule> rules = 52;
+  map<string, WindowFunc> window_functions = 53;
+
+  // Security and access control
+  map<string, DBUser> users = 54;
+  map<string, DBRole> roles = 55;
+  map<string, Grant> grants = 56;
+  map<string, Policy> policies = 57;
+
+  // Physical storage and placement
+  map<string, Tablespace> tablespaces = 58;
+  map<string, Segment> segments = 59;
+  map<string, Extent> extents = 60;
+  map<string, Page> pages = 61;
+  map<string, Filegroup> filegroups = 62;
+  map<string, Datafile> datafiles = 63;
+
+  // Connectivity and integration
+  map<string, Server> servers = 64;
+  map<string, Connection> connections = 65;
+  map<string, Endpoint> endpoints = 66;
+  map<string, ForeignDataWrapper> foreign_data_wrappers = 67;
+  map<string, UserMapping> user_mappings = 68;
+  map<string, Federation> federations = 69;
+  map<string, Replica> replicas = 70;
+  map<string, Cluster> clusters = 71;
+
+  // Operational, pipelines and streaming
+  map<string, Task> tasks = 72;
+  map<string, Job> jobs = 73;
+  map<string, Schedule> schedules = 74;
+  map<string, Pipeline> pipelines = 75;
+  map<string, Stream> streams = 76;
+
+  // Monitoring and alerting
+  map<string, Event> events = 77;
+  map<string, Notification> notifications = 78;
+  map<string, Alert> alerts = 79;
+  map<string, Statistic> statistics = 80;
+  map<string, Histogram> histograms = 81;
+  map<string, Monitor> monitors = 82;
+  map<string, MonitorMetric> monitor_metrics = 83;
+  map<string, Threshold> thresholds = 84;
+
+  // Text processing / search configuration
+  map<string, TextSearchComponent> text_search_components = 85;
+
+  // Metadata and documentation
+  map<string, Comment> comments = 86;
+  map<string, Annotation> annotations = 87;
+  map<string, Tag> tags = 88;
+  map<string, Alias> aliases = 89;
+  map<string, Synonym> synonyms = 90;
+  map<string, Label> labels = 91;
+
+  // Backup and recovery, versioning
+  map<string, Snapshot> snapshots = 92;
+  map<string, Backup> backups = 93;
+  map<string, Archive> archives = 94;
+  map<string, RecoveryPoint> recovery_points = 95;
+  map<string, VersionNode> versions = 96;
+  map<string, Migration> migrations = 97;
+  map<string, Branch> branches = 98;
+  map<string, TimeTravel> time_travel = 99;
+
+  // Extensions and customization
+  map<string, Extension> extensions = 100;
+  map<string, Plugin> plugins = 101;
+  map<string, ModuleExtension> module_extensions = 102;
+  map<string, TTLSetting> ttl_settings = 103;
+  map<string, DimensionSpec> dimensions = 104;
+  map<string, DistanceMetricSpec> distance_metrics = 105;
+
+  // Advanced analytics
+  map<string, Projection> projections = 106;
+  map<string, AggregationOp> analytics_aggregations = 107;
+  map<string, TransformationStep> transformations = 108;
+  map<string, Enrichment> enrichments = 109;
+  map<string, BufferPool> buffer_pools = 110;
+
+  // Replication & distribution
+  map<string, Publication> publications = 111;
+  map<string, Subscription> subscriptions = 112;
+  map<string, ReplicationSlot> replication_slots = 113;
+  map<string, FailoverGroup> failover_groups = 114;
+}
+
+// Table definition in the unified model
+message Table {
+  string name = 1;
+  string owner = 2;
+  string comment = 3;
+  map<string, string> labels = 4;
+  map<string, Column> columns = 5;
+  map<string, Index> indexes = 6;
+  map<string, Constraint> constraints = 7;
+  map<string, Partition> partitions = 8;
+}
+
+// Column definition in the unified model
+message Column {
+  string name = 1;
+  string data_type = 2;
+  bool nullable = 3;
+  string default_value = 4;
+  string generated_expression = 5;
+  bool is_primary_key = 6;
+  bool is_partition_key = 7;
+  bool is_clustering_key = 8;
+  bool auto_increment = 9;
+  string collation = 10;
+}
+
+// Collection definition for document databases
+message Collection {
+  string name = 1;
+  string owner = 2;
+  string comment = 3;
+  map<string, string> labels = 4;
+  map<string, Field> fields = 5;
+  map<string, Index> indexes = 6;
+  repeated string shard_key = 7;
+}
+
+// Field definition for document collections
+message Field {
+  string name = 1;
+  string type = 2;
+  bool required = 3;
+}
+
+// View definition
+message View {
+  string name = 1;
+  string definition = 2;
+  string comment = 3;
+  map<string, Column> columns = 4;
+}
+
+// Materialized view definition
+message MaterializedView {
+  string name = 1;
+  string definition = 2;
+  string refresh_mode = 3;
+  string refresh_cron = 4;
+  map<string, Column> columns = 5;
+}
+
+// Index definition
+message Index {
+  string name = 1;
+  string type = 2;
+  repeated string columns = 3;
+  repeated string fields = 4;
+  string expression = 5;
+  string predicate = 6;
+  bool unique = 7;
+}
+
+// Constraint definition
+message Constraint {
+  string name = 1;
+  string type = 2;
+  repeated string columns = 3;
+  string expression = 4;
+  Reference reference = 5;
+}
+
+// Foreign key reference
+message Reference {
+  string table = 1;
+  repeated string columns = 2;
+  string on_update = 3;
+  string on_delete = 4;
+}
+
+// Partition definition
+message Partition {
+  string name = 1;
+  string type = 2;
+  repeated string key = 3;
+}
+
+// Sequence definition
+message Sequence {
+  string name = 1;
+  int64 start = 2;
+  int64 increment = 3;
+  int64 min_value = 4;
+  int64 max_value = 5;
+  int64 cache = 6;
+  bool cycle = 7;
+}
+
+// Function definition
+message Function {
+  string name = 1;
+  string language = 2;
+  string returns = 3;
+  repeated Argument arguments = 4;
+  string definition = 5;
+}
+
+// Procedure definition
+message Procedure {
+  string name = 1;
+  string language = 2;
+  repeated Argument arguments = 3;
+  string definition = 4;
+}
+
+// Trigger definition
+message Trigger {
+  string name = 1;
+  string table = 2;
+  string timing = 3;
+  repeated string events = 4;
+  string procedure = 5;
+}
+
+// Type definition
+message Type {
+  string name = 1;
+  string category = 2;
+}
+
+// Function/Procedure argument
+message Argument {
+  string name = 1;
+  string type = 2;
+}
+
+// Comprehensive enrichment data structure
+message UnifiedModelEnrichment {
+  // Metadata
+  string schema_id = 1;
+  string enrichment_version = 2;
+  int64 generated_at = 3; // Unix timestamp
+  string generated_by = 4;
+  
+  // Object-level enrichments (keyed by object name)
+  map<string, TableEnrichment> table_enrichments = 5;
+  map<string, ColumnEnrichment> column_enrichments = 6; // Key format: "table_name.column_name"
+  map<string, IndexEnrichment> index_enrichments = 7;
+  map<string, ViewEnrichment> view_enrichments = 8;
+  
+  // Graph and document enrichments
+  map<string, NodeEnrichment> node_enrichments = 9;
+  map<string, RelationshipEnrichment> relationship_enrichments = 10;
+  map<string, CollectionEnrichment> collection_enrichments = 11;
+  map<string, DocumentEnrichment> document_enrichments = 12;
+  
+  // Global analysis results
+  ComplianceSummary compliance_summary = 13;
+  RiskAssessment risk_assessment = 14;
+  repeated Recommendation recommendations = 15;
+  repeated PerformanceHint performance_hints = 16;
+}
+
+// Table enrichment data
+message TableEnrichment {
+  // Classification
+  string primary_category = 1;
+  double classification_confidence = 2;
+  repeated CategoryScore classification_scores = 3;
+  
+  // Access patterns and performance
+  string access_pattern = 4;
+  int64 estimated_rows = 5;
+  double growth_rate = 6;
+  double query_complexity = 7;
+  
+  // Data characteristics
+  bool has_privileged_data = 8;
+  repeated string privileged_columns = 9;
+  double data_sensitivity = 10;
+  
+  // Optimization hints
+  repeated IndexRecommendation recommended_indexes = 11;
+  repeated PartitionRecommendation recommended_partitions = 12;
+  
+  // Relationships
+  repeated string related_tables = 13;
+  repeated string dependent_tables = 14;
+  
+  // Metadata
+  string business_purpose = 15;
+  int64 data_retention_days = 16;
+  repeated string tags = 17;
+  map<string, string> context = 18;
+}
+
+// Column enrichment data
+message ColumnEnrichment {
+  // Privileged data detection
+  bool is_privileged_data = 1;
+  string data_category = 2;
+  string sub_category = 3;
+  double privileged_confidence = 4;
+  string privileged_description = 5;
+  string risk_level = 6;
+  repeated string compliance_impact = 7;
+  
+  // Data characteristics
+  int64 cardinality = 8;
+  double null_percentage = 9;
+  string data_distribution = 10;
+  repeated string value_patterns = 11;
+  repeated string sample_values = 12;
+  
+  // Usage patterns
+  bool is_searchable = 13;
+  bool is_filterable = 14;
+  bool is_sortable = 15;
+  double query_frequency = 16;
+  
+  // Optimization hints
+  string recommended_index_type = 17;
+  bool should_encrypt = 18;
+  bool should_mask = 19;
+  
+  // Relationships
+  bool is_foreign_key = 20;
+  string referenced_table = 21;
+  string referenced_column = 22;
+  repeated string referencing_tables = 23;
+  
+  // Quality metrics
+  double data_quality_score = 24;
+  double completeness_score = 25;
+  double consistency_score = 26;
+  
+  // Metadata
+  string business_meaning = 27;
+  repeated string tags = 28;
+  map<string, string> context = 29;
+}
+
+// Index enrichment data
+message IndexEnrichment {
+  double usage_frequency = 1;
+  double selectivity = 2;
+  double efficiency_score = 3;
+  double scan_ratio = 4;
+  double maintenance_cost = 5;
+  int64 storage_overhead = 6;
+  bool is_redundant = 7;
+  bool should_drop = 8;
+  repeated string optimization_hints = 9;
+  string created_for = 10;
+  map<string, string> context = 11;
+}
+
+// View enrichment data
+message ViewEnrichment {
+  double complexity_score = 1;
+  int32 query_depth = 2;
+  repeated string table_dependencies = 3;
+  repeated string view_dependencies = 4;
+  int64 estimated_rows_returned = 5;
+  double execution_cost = 6;
+  bool is_optimizable = 7;
+  double access_frequency = 8;
+  bool is_materializable = 9;
+  string business_purpose = 10;
+  map<string, string> context = 11;
+}
+
+// Node enrichment for graph databases
+message NodeEnrichment {
+  int32 in_degree = 1;
+  int32 out_degree = 2;
+  double centrality = 3;
+  double cluster_coefficient = 4;
+  bool has_privileged_data = 5;
+  repeated string privileged_properties = 6;
+  repeated string compliance_impact = 7;
+  bool is_frequently_queried = 8;
+  repeated string should_index = 9;
+  string business_role = 10;
+  map<string, string> context = 11;
+}
+
+// Relationship enrichment for graph databases
+message RelationshipEnrichment {
+  int64 frequency = 1;
+  double strength = 2;
+  bool is_directional = 3;
+  double query_frequency = 4;
+  double traversal_cost = 5;
+  string business_meaning = 6;
+  map<string, string> context = 7;
+}
+
+// Collection enrichment for document databases
+message CollectionEnrichment {
+  int64 document_count = 1;
+  int64 average_document_size = 2;
+  double schema_flexibility = 3;
+  repeated string common_fields = 4;
+  repeated string rare_fields = 5;
+  bool has_privileged_data = 6;
+  repeated string privileged_fields = 7;
+  repeated string query_patterns = 8;
+  repeated string recommended_indexes = 9;
+  string business_purpose = 10;
+  map<string, string> context = 11;
+}
+
+// Document enrichment
+message DocumentEnrichment {
+  int64 size = 1;
+  int32 field_count = 2;
+  int32 nested_depth = 3;
+  bool has_privileged_data = 4;
+  repeated string privileged_fields = 5;
+  repeated string compliance_impact = 6;
+  string document_type = 7;
+  map<string, string> context = 8;
+}
+
+// Compliance summary
+message ComplianceSummary {
+  repeated ComplianceFinding gdpr_findings = 1;
+  repeated ComplianceFinding hipaa_findings = 2;
+  repeated ComplianceFinding pci_findings = 3;
+  repeated ComplianceFinding sox_findings = 4;
+  repeated ComplianceFinding ccpa_findings = 5;
+  string overall_risk_level = 6;
+  repeated string required_frameworks = 7;
+  repeated string recommended_actions = 8;
+  double compliance_score = 9;
+}
+
+// Compliance finding
+message ComplianceFinding {
+  string framework = 1;
+  string severity = 2;
+  string object_type = 3;
+  string object_name = 4;
+  string finding = 5;
+  string requirement = 6;
+  string remediation = 7;
+}
+
+// Risk assessment
+message RiskAssessment {
+  double overall_risk_score = 1;
+  double privacy_risk_score = 2;
+  double security_risk_score = 3;
+  double compliance_risk_score = 4;
+  repeated RiskObject high_risk_objects = 5;
+  repeated string critical_findings = 6;
+  repeated string mitigation_strategies = 7;
+}
+
+// Risk object
+message RiskObject {
+  string object_type = 1;
+  string object_name = 2;
+  string risk_level = 3;
+  repeated string risk_factors = 4;
+  double impact_score = 5;
+}
+
+// Recommendation
+message Recommendation {
+  string id = 1;
+  string type = 2;
+  string priority = 3;
+  string title = 4;
+  string description = 5;
+  string object_type = 6;
+  string object_name = 7;
+  string action = 8;
+  string rationale = 9;
+  string estimated_impact = 10;
+  string implementation_hint = 11;
+}
+
+// Performance hint
+message PerformanceHint {
+  string target_database = 1;
+  string category = 2;
+  string priority = 3;
+  string hint = 4;
+  string object_path = 5;
+  string estimated_benefit = 6;
+  map<string, string> context = 7;
+}
+
+// Index recommendation
+message IndexRecommendation {
+  repeated string columns = 1;
+  string index_type = 2;
+  string reason = 3;
+  string estimated_benefit = 4;
+  string priority = 5;
+}
+
+// Partition recommendation
+message PartitionRecommendation {
+  string partition_type = 1;
+  repeated string partition_key = 2;
+  string reason = 3;
+  string estimated_benefit = 4;
+  string priority = 5;
+}
+
+// Structural organization messages
+
+message Catalog {
+  string name = 1;
+  string owner = 2;
+  string comment = 3;
+  map<string, string> labels = 4;
+  map<string, Database> databases = 5;
+  map<string, Schema> schemas = 6;
+  map<string, Table> tables = 7;
+  map<string, Collection> collections = 8;
+}
+
+message Database {
+  string name = 1;
+  string owner = 2;
+  string comment = 3;
+  map<string, string> labels = 4;
+  string default_schema = 5;
+  map<string, Schema> schemas = 6;
+  map<string, Table> tables = 7;
+  map<string, Collection> collections = 8;
+  map<string, Graph> graphs = 9;
+  map<string, Namespace> namespaces = 10;
+  map<string, Bucket> buckets = 11;
+}
+
+message Schema {
+  string name = 1;
+  string owner = 2;
+  string comment = 3;
+  map<string, string> labels = 4;
+  map<string, Table> tables = 5;
+  map<string, View> views = 6;
+  map<string, MaterializedView> materialized_views = 7;
+  map<string, Sequence> sequences = 8;
+  map<string, Type> types = 9;
+  map<string, Function> functions = 10;
+  map<string, Procedure> procedures = 11;
+  map<string, Trigger> triggers = 12;
+}
+
+// Primary and virtual containers
+
+message Node {
+  string label = 1;
+  map<string, Property> properties = 2;
+  map<string, Index> indexes = 3;
+}
+
+message Property {
+  string name = 1;
+  string type = 2;
+}
+
+message PropertyKey {
+  string name = 1;
+  string type = 2;
+}
+
+message MemoryTable {
+  string name = 1;
+  map<string, Column> columns = 2;
+}
+
+// Temporary Data Containers
+
+message TemporaryTable {
+  string name = 1;
+  string scope = 2; // session, transaction
+  map<string, Column> columns = 3;
+}
+
+message TransientTable {
+  string name = 1;
+  map<string, Column> columns = 2;
+}
+
+message Cache {
+  string name = 1;
+  string scope = 2; // session, global, query, materialized
+}
+
+// Virtual Data Containers
+
+message LiveView {
+  string name = 1;
+  string definition = 2;
+}
+
+message WindowView {
+  string name = 1;
+  string definition = 2;
+  string window_spec = 3;
+}
+
+message ExternalTable {
+  string name = 1;
+  string location = 2;
+  string format = 3;
+  map<string, Column> columns = 4;
+}
+
+message ForeignTable {
+  string name = 1;
+  string server = 2;
+  map<string, Column> columns = 3;
+}
+
+// Graph and vector/search containers
+
+message Graph {
+  string name = 1;
+  map<string, Node> node_labels = 2;
+  map<string, Relationship> relationship_types = 3;
+  map<string, Index> indexes = 4;
+  map<string, Constraint> constraints = 5;
+}
+
+message VectorIndex {
+  string name = 1;
+  string on = 2; // table/collection name
+  repeated string fields = 3;
+  string metric = 4; // cosine, l2, ip
+  int32 dimension = 5;
+}
+
+message SearchIndex {
+  string name = 1;
+  string on = 2;
+  repeated string fields = 3;
+  string analyzer = 4;
+}
+
+// Specialized Data Containers
+
+message Vector {
+  string name = 1;
+  int32 dimension = 2;
+  string metric = 3;
+}
+
+message Embedding {
+  string name = 1;
+  string model = 2;
+}
+
+message Document {
+  string key = 1;
+}
+
+message EmbeddedDocument {
+  string name = 1;
+}
+
+message Relationship {
+  string type = 1;
+  string from_label = 2;
+  string to_label = 3;
+  map<string, Property> properties = 4;
+}
+
+message Path {
+  string name = 1;
+  repeated string sequence = 2; // Relationship type sequence or pattern
+}
+
+// Data Organization Containers
+
+message SubPartition {
+  string name = 1;
+  string type = 2;
+  repeated string key = 3;
+}
+
+message Shard {
+  string name = 1;
+  string strategy = 2;
+  repeated string key = 3;
+}
+
+message Keyspace {
+  string name = 1;
+  string replication_strategy = 2;
+  map<string, string> replication_options = 3;
+  bool durable_writes = 4;
+}
+
+message Namespace {
+  string name = 1;
+  map<string, string> labels = 2;
+}
+
+// Integrity, performance and identity objects
+
+message Identity {
+  string name = 1;
+  string table = 2;
+  string column = 3;
+  string strategy = 4; // always, by_default
+  int64 start = 5;
+  int64 increment = 6;
+  bool cycle = 7;
+}
+
+message UUIDGenerator {
+  string name = 1;
+  string version = 2; // v1, v4, v7
+}
+
+// Executable code objects
+
+message Method {
+  string name = 1;
+  string of_type = 2; // object type
+  string language = 3;
+  repeated Argument arguments = 4;
+  string definition = 5;
+}
+
+message EventTrigger {
+  string name = 1;
+  string scope = 2; // database, schema
+  repeated string events = 3;
+  string procedure = 4;
+}
+
+message Aggregate {
+  string name = 1;
+  repeated string input_types = 2;
+  string state_type = 3;
+  string final_type = 4;
+}
+
+message Operator {
+  string name = 1;
+  string left_type = 2;
+  string right_type = 3;
+  string returns = 4;
+  string definition = 5;
+}
+
+message Module {
+  string name = 1;
+  string comment = 2;
+  string language = 3;
+  string code = 4;
+}
+
+message Package {
+  string name = 1;
+  string spec = 2;
+  string body = 3;
+}
+
+message PackageBody {
+  string name = 1;
+  string body = 2;
+}
+
+message Macro {
+  string name = 1;
+  string definition = 2;
+}
+
+message Rule {
+  string name = 1;
+  string target = 2;
+  string definition = 3;
+}
+
+message WindowFunc {
+  string name = 1;
+  string definition = 2;
+}
+
+// Security and access control
+
+message DBUser {
+  string name = 1;
+  repeated string roles = 2;
+  map<string, string> labels = 3;
+}
+
+message DBRole {
+  string name = 1;
+  repeated string members = 2;
+  repeated string parent_roles = 3;
+  map<string, string> labels = 4;
+}
+
+message Grant {
+  string principal = 1; // user/role
+  string privilege = 2;
+  string scope = 3; // database, schema, table, column, function, sequence, collection, index
+  string object = 4;
+  repeated string columns = 5;
+}
+
+message Policy {
+  string name = 1;
+  string type = 2; // row_security, column_masking, data_masking, access_control, audit, password, session, encryption, retention
+  string scope = 3; // database, schema, table, column, function, etc.
+  string object = 4;
+  string definition = 5;
+}
+
+// Physical storage and placement
+
+message Tablespace {
+  string name = 1;
+}
+
+message Segment {
+  string name = 1;
+}
+
+message Extent {
+  string name = 1;
+  int64 size_bytes = 2;
+}
+
+message Page {
+  int32 number = 1;
+  int64 size_bytes = 2;
+}
+
+message Filegroup {
+  string name = 1;
+}
+
+message Datafile {
+  string name = 1;
+  string path = 2;
+  int64 size_bytes = 3;
+}
+
+// Connectivity and integration
+
+message Server {
+  string name = 1;
+  string type = 2;
+}
+
+message Connection {
+  string name = 1;
+  string driver = 2;
+  string dsn = 3;
+}
+
+message Endpoint {
+  string name = 1;
+  string scheme = 2;
+  string host = 3;
+  int32 port = 4;
+  string path = 5;
+}
+
+message ForeignDataWrapper {
+  string name = 1;
+  string handler = 2;
+}
+
+message UserMapping {
+  string user = 1;
+  string server = 2;
+}
+
+message Federation {
+  string name = 1;
+  repeated string members = 2;
+}
+
+message Replica {
+  string name = 1;
+  string mode = 2; // sync, async
+}
+
+message Cluster {
+  string name = 1;
+  repeated string nodes = 2;
+}
+
+// Operational, pipelines and streaming
+
+message Task {
+  string name = 1;
+  string definition = 2;
+  string schedule = 3;
+}
+
+message Job {
+  string name = 1;
+  string type = 2;
+  string schedule = 3;
+}
+
+message Schedule {
+  string name = 1;
+  string cron = 2;
+}
+
+message Pipeline {
+  string name = 1;
+  repeated string steps = 2;
+}
+
+message Stream {
+  string name = 1;
+  string on = 2;
+}
+
+// Monitoring and alerting
+
+message Event {
+  string name = 1;
+  string source = 2;
+}
+
+message Notification {
+  string name = 1;
+  string channel = 2;
+  string message = 3;
+}
+
+message Alert {
+  string name = 1;
+  string condition = 2;
+  string severity = 3;
+}
+
+message Statistic {
+  string name = 1;
+  string value = 2;
+  map<string, string> labels = 3;
+}
+
+message Histogram {
+  string name = 1;
+  map<string, double> buckets = 2;
+}
+
+message Monitor {
+  string name = 1;
+  string scope = 2;
+}
+
+message MonitorMetric {
+  string name = 1;
+  string unit = 2;
+  map<string, string> labels = 3;
+}
+
+message Threshold {
+  string name = 1;
+  string metric = 2;
+  string operator = 3;
+  string value = 4;
+}
+
+// Text processing / search configuration
+
+message TextSearchComponent {
+  string name = 1;
+  string type = 2; // parser, dictionary, template, configuration, analyzer, tokenizer, filter, normalizer
+  string parser = 3; // For configuration type
+  repeated string dictionaries = 4; // For configuration type
+  repeated string chain = 5; // For analyzer type (tokenizer + filters)
+  string comment = 6;
+}
+
+// Metadata and documentation
+
+message Comment {
+  string on = 1; // qualified object name
+  string comment = 2;
+}
+
+message Annotation {
+  string on = 1;
+  string key = 2;
+  string value = 3;
+}
+
+message Tag {
+  string on = 1;
+  string name = 2;
+}
+
+message Alias {
+  string on = 1;
+  string alias = 2;
+}
+
+message Synonym {
+  string on = 1;
+  string name = 2;
+}
+
+message Label {
+  string on = 1;
+  string name = 2;
+  map<string, string> props = 3;
+}
+
+// Backup and recovery, versioning
+
+message Snapshot {
+  string name = 1;
+  string scope = 2; // instance, database, schema, table
+}
+
+message Backup {
+  string name = 1;
+  string method = 2;
+}
+
+message Archive {
+  string name = 1;
+  string format = 2;
+}
+
+message RecoveryPoint {
+  string name = 1;
+  string point = 2; // LSN/GTID/TSO/timestamp
+}
+
+message VersionNode {
+  string id = 1;
+  repeated string parents = 2;
+  string message = 3;
+}
+
+message Migration {
+  string id = 1;
+  string description = 2;
+  string script = 3;
+}
+
+message Branch {
+  string name = 1;
+  string from = 2;
+}
+
+message TimeTravel {
+  string object = 1;
+  string as_of = 2; // timestamp or version id
+}
+
+// Object storage
+
+message Bucket {
+  string name = 1;
+  string region = 2;
+}
+
+// Extensions and customization
+
+message Extension {
+  string name = 1;
+  string version = 2;
+}
+
+message Plugin {
+  string name = 1;
+  string version = 2;
+}
+
+message ModuleExtension {
+  string name = 1;
+  string module = 2;
+  string version = 3;
+}
+
+message TTLSetting {
+  string name = 1;
+  string scope = 2; // table, collection, index
+  string policy = 3;
+}
+
+message DimensionSpec {
+  string name = 1;
+  int32 size = 2;
+}
+
+message DistanceMetricSpec {
+  string name = 1;
+  string method = 2; // cosine, l2, ip, hamming
+}
+
+// Advanced analytics
+
+message Projection {
+  string name = 1;
+  string definition = 2;
+}
+
+message AggregationOp {
+  string name = 1;
+  string definition = 2;
+}
+
+message TransformationStep {
+  string name = 1;
+  string definition = 2;
+}
+
+message Enrichment {
+  string name = 1;
+  string definition = 2;
+}
+
+message BufferPool {
+  string name = 1;
+  int64 size_bytes = 2;
+}
+
+// Replication & distribution
+
+message Publication {
+  string name = 1;
+  repeated string objects = 2;
+}
+
+message Subscription {
+  string name = 1;
+  string source = 2;
+}
+
+message ReplicationSlot {
+  string name = 1;
+  string type = 2; // logical, physical
+}
+
+message FailoverGroup {
+  string name = 1;
+  repeated string members = 2;
+  string mode = 3; // active-active, active-passive
 }

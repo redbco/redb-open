@@ -3,7 +3,7 @@
 # Project variables
 BINARY_DIR := bin
 BUILD_DIR := build
-SERVICES := supervisor security unifiedmodel transformation mesh anchor core webhook clientapi serviceapi queryapi mcpserver cli
+SERVICES := supervisor security unifiedmodel transformation integration mesh anchor core webhook clientapi mcpserver cli
 
 # Default to darwin arm64 build
 GOOS ?= darwin
@@ -13,9 +13,21 @@ GO_BUILD_FLAGS := -v
 # Detect operating system
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-    HOST_OS := darwin
+	HOST_OS := darwin
 else
-    HOST_OS := linux
+	HOST_OS := linux
+endif
+
+# Detect host architecture (map kernel arch to GOARCH)
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),x86_64)
+	HOST_ARCH := amd64
+else ifeq ($(UNAME_M),aarch64)
+	HOST_ARCH := arm64
+else ifeq ($(UNAME_M),arm64)
+	HOST_ARCH := arm64
+else
+	HOST_ARCH := $(UNAME_M)
 endif
 
 # Version information
@@ -37,7 +49,8 @@ PROTO_FILES := api/proto/common/v1/common.proto \
 			   api/proto/mesh/v1/mesh.proto \
                api/proto/anchor/v1/anchor.proto \
 			   api/proto/core/v1/core.proto \
-			   api/proto/webhook/v1/webhook.proto
+			   api/proto/webhook/v1/webhook.proto \
+			   api/proto/integration/v1/integration.proto
 
 .PHONY: all clean build test proto dev local
 
@@ -58,9 +71,9 @@ clean:
 # Build all services (cross-compile for Linux by default)
 build: $(BINARY_DIR) $(addprefix build-,$(SERVICES))
 
-# Local development build (builds for host OS)
-local: GOOS=$(HOST_OS)
-local: build
+# Local development build (builds for host OS/ARCH)
+local:
+	$(MAKE) GOOS=$(HOST_OS) GOARCH=$(HOST_ARCH) build
 
 # Generic build rule for services
 build-%: 
@@ -73,6 +86,10 @@ build-%:
 		CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
 		-o $(BINARY_DIR)/redb-$* ./cmd/$*/cmd; \
+	elif [ "$*" = "anchor" ]; then \
+		CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
+		-o $(BINARY_DIR)/redb-$* ./services/$*/cmd; \
 	else \
 		CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
@@ -127,28 +144,34 @@ build-all: $(BUILD_DIR)
 	@for os in linux darwin windows; do \
 		for arch in amd64 arm64; do \
 			mkdir -p $(BUILD_DIR)/$$os-$$arch; \
-			for service in $(SERVICES); do \
+				for service in $(SERVICES); do \
 				if [ "$$service" = "supervisor" ]; then \
 					echo "Building supervisor for $$os/$$arch..."; \
-					GOOS=$$os GOARCH=$$arch \
-					CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
+						GOOS=$$os GOARCH=$$arch \
+						CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
 					-ldflags "$(VERSION_FLAGS)" \
 					-o $(BUILD_DIR)/$$os-$$arch/redb-node \
 					./cmd/supervisor/cmd; \
 				elif [ "$$service" = "cli" ]; then \
 					echo "Building cli for $$os/$$arch..."; \
-					GOOS=$$os GOARCH=$$arch \
-					CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
+						GOOS=$$os GOARCH=$$arch \
+						CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
 					-ldflags "$(VERSION_FLAGS)" \
 					-o $(BUILD_DIR)/$$os-$$arch/redb-cli \
 					./cmd/cli/cmd; \
 				else \
-					echo "Building $$service for $$os/$$arch..."; \
-					GOOS=$$os GOARCH=$$arch \
-					CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
-					-ldflags "$(VERSION_FLAGS)" \
-					-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
-					./services/$$service/cmd; \
+						echo "Building $$service for $$os/$$arch..."; \
+						if [ "$$service" = "anchor" ]; then \
+							GOOS=$$os GOARCH=$$arch CGO_ENABLED=1 \
+							go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
+							-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
+							./services/$$service/cmd; \
+						else \
+							GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 \
+							go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
+							-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
+							./services/$$service/cmd; \
+						fi; \
 				fi \
 			done \
 		done \

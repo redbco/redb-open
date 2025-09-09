@@ -7,337 +7,208 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redis/go-redis/v9"
 )
 
-// DiscoverSchema fetches the current schema of a Redis database
-func DiscoverSchema(client *redis.Client) (*RedisSchema, error) {
+// DiscoverSchema fetches the current schema of a Redis database and returns a UnifiedModel
+func DiscoverSchema(client *redis.Client) (*unifiedmodel.UnifiedModel, error) {
 	ctx := context.Background()
-	schema := &RedisSchema{}
-	var err error
 
-	// Get all keys
-	schema.Keys, err = discoverKeys(ctx, client)
-	if err != nil {
-		return nil, fmt.Errorf("error discovering keys: %v", err)
+	// Create the unified model
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType: dbcapabilities.Redis,
+		Modules:      make(map[string]unifiedmodel.Module),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Streams:      make(map[string]unifiedmodel.Stream),
+		Namespaces:   make(map[string]unifiedmodel.Namespace),
+		Extensions:   make(map[string]unifiedmodel.Extension),
 	}
 
 	// Get loaded modules
-	schema.Modules, err = discoverModules(ctx, client)
-	if err != nil {
+	if err := discoverModulesUnified(ctx, client, um); err != nil {
 		return nil, fmt.Errorf("error discovering modules: %v", err)
 	}
 
 	// Get Redis functions (Redis 7.0+)
-	schema.Functions, err = discoverFunctions(ctx, client)
-	if err != nil {
+	if err := discoverFunctionsUnified(ctx, client, um); err != nil {
 		// Functions might not be available in older Redis versions
 		// Just log the error and continue
 		fmt.Printf("Warning: Could not discover Redis functions: %v\n", err)
 	}
 
 	// Get Redis streams
-	schema.Streams, err = discoverStreams(ctx, client)
-	if err != nil {
+	if err := discoverStreamsUnified(ctx, client, um); err != nil {
 		return nil, fmt.Errorf("error discovering streams: %v", err)
 	}
 
 	// Get keyspace info
-	schema.KeySpaces, err = discoverKeySpaces(ctx, client)
-	if err != nil {
+	if err := discoverKeySpacesUnified(ctx, client, um); err != nil {
 		return nil, fmt.Errorf("error discovering keyspaces: %v", err)
 	}
 
-	return schema, nil
+	return um, nil
 }
 
-// discoverKeys fetches information about Redis keys
-func discoverKeys(ctx context.Context, client *redis.Client) ([]common.KeyInfo, error) {
-	// Get all keys (warning: KEYS is not recommended for production use with large datasets)
-	// In a real implementation, you might want to use SCAN instead
-	keys, err := client.Keys(ctx, "*").Result()
+// discoverModulesUnified discovers Redis modules directly into UnifiedModel
+func discoverModulesUnified(ctx context.Context, client *redis.Client, um *unifiedmodel.UnifiedModel) error {
+	// Get list of loaded modules
+	result, err := client.Do(ctx, "MODULE", "LIST").Result()
 	if err != nil {
-		return nil, fmt.Errorf("error fetching keys: %v", err)
+		return fmt.Errorf("error getting module list: %v", err)
 	}
 
-	// Limit the number of keys to process to avoid performance issues
-	maxKeys := 1000
-	if len(keys) > maxKeys {
-		keys = keys[:maxKeys]
+	modules, ok := result.([]interface{})
+	if !ok {
+		return fmt.Errorf("unexpected result type for MODULE LIST")
 	}
 
-	var keyInfos []common.KeyInfo
-	for _, key := range keys {
-		// Get key type
-		keyType, err := client.Type(ctx, key).Result()
-		if err != nil {
-			continue
+	for _, moduleData := range modules {
+		moduleInfo, ok := moduleData.([]interface{})
+		if ok && len(moduleInfo) >= 2 {
+			if nameInterface, ok := moduleInfo[1].(string); ok {
+				module := unifiedmodel.Module{
+					Name:    nameInterface,
+					Comment: "", // Redis modules don't have descriptions in MODULE LIST
+				}
+				um.Modules[nameInterface] = module
+			}
 		}
-
-		// Get TTL
-		ttl, err := client.TTL(ctx, key).Result()
-		if err != nil {
-			continue
-		}
-
-		ttlSeconds := int64(-1)
-		if ttl != time.Duration(-1) && ttl != time.Duration(-2) {
-			ttlSeconds = int64(ttl.Seconds())
-		}
-
-		// Get size/length based on type
-		var size int64
-		var sampleValue interface{}
-
-		switch keyType {
-		case "string":
-			val, err := client.Get(ctx, key).Result()
-			if err == nil {
-				size = int64(len(val))
-				if len(val) <= 100 {
-					sampleValue = val
-				} else {
-					sampleValue = val[:100] + "..."
-				}
-			}
-		case "list":
-			size, err = client.LLen(ctx, key).Result()
-			if err == nil && size > 0 {
-				// Get a sample of the list
-				samples, err := client.LRange(ctx, key, 0, 2).Result()
-				if err == nil && len(samples) > 0 {
-					sampleValue = samples
-				}
-			}
-		case "set":
-			size, err = client.SCard(ctx, key).Result()
-			if err == nil && size > 0 {
-				// Get a sample of the set
-				samples, err := client.SRandMemberN(ctx, key, 3).Result()
-				if err == nil && len(samples) > 0 {
-					sampleValue = samples
-				}
-			}
-		case "zset":
-			size, err = client.ZCard(ctx, key).Result()
-			if err == nil && size > 0 {
-				// Get a sample of the sorted set
-				samples, err := client.ZRangeWithScores(ctx, key, 0, 2).Result()
-				if err == nil && len(samples) > 0 {
-					sampleValue = samples
-				}
-			}
-		case "hash":
-			size, err = client.HLen(ctx, key).Result()
-			if err == nil && size > 0 {
-				// Get a sample of the hash
-				if size <= 3 {
-					samples, err := client.HGetAll(ctx, key).Result()
-					if err == nil {
-						sampleValue = samples
-					}
-				} else {
-					// Just get a few fields
-					fields, err := client.HKeys(ctx, key).Result()
-					if err == nil && len(fields) > 0 {
-						sampleFields := fields
-						if len(fields) > 3 {
-							sampleFields = fields[:3]
-						}
-						samples := make(map[string]string)
-						for _, field := range sampleFields {
-							val, err := client.HGet(ctx, key, field).Result()
-							if err == nil {
-								samples[field] = val
-							}
-						}
-						sampleValue = samples
-					}
-				}
-			}
-		case "stream":
-			size, err = client.XLen(ctx, key).Result()
-			if err != nil {
-				continue
-			}
-			// Sample value for streams is handled in discoverStreams
-		}
-
-		keyInfos = append(keyInfos, common.KeyInfo{
-			Name:        key,
-			Type:        keyType,
-			TTL:         ttlSeconds,
-			Size:        size,
-			SampleValue: sampleValue,
-		})
 	}
 
-	return keyInfos, nil
+	return nil
 }
 
-// discoverModules fetches information about loaded Redis modules
-func discoverModules(ctx context.Context, client *redis.Client) ([]common.ModuleInfo, error) {
-	// Get Redis modules info
-	info, err := client.Info(ctx, "modules").Result()
-	if err != nil {
-		return nil, fmt.Errorf("error fetching modules info: %v", err)
-	}
-
-	infoMap := parseRedisInfo(info)
-
-	var modules []common.ModuleInfo
-
-	// Parse modules from info
-	for key, value := range infoMap {
-		if strings.HasPrefix(key, "module:") {
-			parts := strings.Split(value, ",")
-			if len(parts) > 0 {
-				moduleName := parts[0]
-				modules = append(modules, common.ModuleInfo{
-					Name: moduleName,
-				})
-			}
-		}
-	}
-
-	return modules, nil
-}
-
-// discoverFunctions fetches information about Redis functions (Redis 7.0+)
-func discoverFunctions(ctx context.Context, client *redis.Client) ([]common.FunctionInfo, error) {
-	// Check if FUNCTION LIST command is available (Redis 7.0+)
-	cmd := client.Do(ctx, "COMMAND", "INFO", "FUNCTION")
-	if cmd.Err() != nil {
-		return nil, fmt.Errorf("FUNCTION command not available: %v", cmd.Err())
-	}
-
-	// Get all functions
+// discoverFunctionsUnified discovers Redis functions directly into UnifiedModel
+func discoverFunctionsUnified(ctx context.Context, client *redis.Client, um *unifiedmodel.UnifiedModel) error {
+	// Get list of Redis functions (Redis 7.0+)
 	result, err := client.Do(ctx, "FUNCTION", "LIST").Result()
 	if err != nil {
-		return nil, fmt.Errorf("error listing functions: %v", err)
+		return err // Return error to caller for handling
 	}
 
-	var functions []common.FunctionInfo
+	functions, ok := result.([]interface{})
+	if !ok {
+		return fmt.Errorf("unexpected result type for FUNCTION LIST")
+	}
 
-	// Parse the result based on Redis response format
-	// This is a simplified implementation and might need adjustment
-	// based on the actual response format
-	if funcList, ok := result.([]interface{}); ok {
-		for _, funcData := range funcList {
-			if funcMap, ok := funcData.(map[string]interface{}); ok {
-				name, _ := funcMap["name"].(string)
-				body, _ := funcMap["code"].(string)
+	for _, functionData := range functions {
+		functionInfo, ok := functionData.([]interface{})
+		if ok && len(functionInfo) >= 4 {
+			if nameInterface, ok := functionInfo[1].(string); ok {
+				var body string
+				if len(functionInfo) > 3 {
+					if bodyInterface, ok := functionInfo[3].(string); ok {
+						body = bodyInterface
+					}
+				}
 
-				functions = append(functions, common.FunctionInfo{
-					Name: name,
-					Body: body,
-					// Other fields might be available depending on Redis version
-				})
+				function := unifiedmodel.Function{
+					Name:       nameInterface,
+					Language:   "lua", // Redis functions are typically Lua-based
+					Definition: body,
+				}
+				um.Functions[nameInterface] = function
 			}
 		}
 	}
 
-	return functions, nil
+	return nil
 }
 
-// discoverStreams fetches information about Redis streams
-func discoverStreams(ctx context.Context, client *redis.Client) ([]common.StreamInfo, error) {
-	// First, find all keys that are streams
+// discoverStreamsUnified discovers Redis streams directly into UnifiedModel
+func discoverStreamsUnified(ctx context.Context, client *redis.Client, um *unifiedmodel.UnifiedModel) error {
+	// Get all keys that are streams
 	keys, err := client.Keys(ctx, "*").Result()
 	if err != nil {
-		return nil, fmt.Errorf("error fetching keys: %v", err)
+		return fmt.Errorf("error getting keys: %v", err)
 	}
-
-	var streams []common.StreamInfo
 
 	for _, key := range keys {
 		keyType, err := client.Type(ctx, key).Result()
-		if err != nil || keyType != "stream" {
-			continue
-		}
-
-		// Get stream length
-		length, err := client.XLen(ctx, key).Result()
 		if err != nil {
-			continue
+			continue // Skip keys we can't check
 		}
 
-		// Get stream info
-		streamInfo := common.StreamInfo{
-			Name:   key,
-			Length: length,
-		}
-
-		// Get first and last entry IDs if stream is not empty
-		if length > 0 {
-			// Get first entry
-			first, err := client.XRange(ctx, key, "-", "+").Result()
-			if err == nil && len(first) > 0 {
-				streamInfo.FirstEntryID = first[0].ID
+		if keyType == "stream" {
+			// Get stream info
+			streamInfo, err := client.XInfoStream(ctx, key).Result()
+			if err != nil {
+				continue // Skip streams we can't get info for
 			}
 
-			// Get last entry
-			last, err := client.XRevRange(ctx, key, "+", "-").Result()
-			if err == nil && len(last) > 0 {
-				streamInfo.LastEntryID = last[0].ID
+			stream := unifiedmodel.Stream{
+				Name: key,
+				Options: map[string]interface{}{
+					"length":           streamInfo.Length,
+					"radix_tree_keys":  streamInfo.RadixTreeKeys,
+					"radix_tree_nodes": streamInfo.RadixTreeNodes,
+					"groups":           streamInfo.Groups,
+				},
 			}
+			um.Streams[key] = stream
 		}
-
-		// Get consumer groups
-		groups, err := client.XInfoGroups(ctx, key).Result()
-		if err == nil {
-			streamInfo.Groups = len(groups)
-		}
-
-		streams = append(streams, streamInfo)
 	}
 
-	return streams, nil
+	return nil
 }
 
-// discoverKeySpaces fetches information about Redis keyspaces
-func discoverKeySpaces(ctx context.Context, client *redis.Client) ([]common.KeySpaceInfo, error) {
-	// Get keyspace info
+// discoverKeySpacesUnified discovers Redis keyspaces directly into UnifiedModel
+func discoverKeySpacesUnified(ctx context.Context, client *redis.Client, um *unifiedmodel.UnifiedModel) error {
+	// Get keyspace info from INFO command
 	info, err := client.Info(ctx, "keyspace").Result()
 	if err != nil {
-		return nil, fmt.Errorf("error fetching keyspace info: %v", err)
+		return fmt.Errorf("error getting keyspace info: %v", err)
 	}
 
-	infoMap := parseRedisInfo(info)
+	lines := strings.Split(info, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "db") {
+			// Parse db line: db0:keys=1,expires=0,avg_ttl=0
+			parts := strings.Split(line, ":")
+			if len(parts) == 2 {
+				dbName := parts[0]
+				dbID, err := strconv.Atoi(strings.TrimPrefix(dbName, "db"))
+				if err != nil {
+					continue
+				}
 
-	var keyspaces []common.KeySpaceInfo
+				// Parse keyspace stats
+				stats := parts[1]
+				var keys, expires int64
+				var avgTTL time.Duration
 
-	// Parse keyspace info
-	for key, value := range infoMap {
-		if strings.HasPrefix(key, "db") {
-			// Extract database number
-			dbNumStr := strings.TrimPrefix(key, "db")
-			dbNum, err := strconv.Atoi(dbNumStr)
-			if err != nil {
-				continue
-			}
-
-			// Parse keyspace stats
-			// Format: keys=123,expires=12,avg_ttl=3600
-			stats := make(map[string]int64)
-			for _, stat := range strings.Split(value, ",") {
-				parts := strings.Split(stat, "=")
-				if len(parts) == 2 {
-					if val, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-						stats[parts[0]] = val
+				statPairs := strings.Split(stats, ",")
+				for _, pair := range statPairs {
+					kv := strings.Split(pair, "=")
+					if len(kv) == 2 {
+						switch kv[0] {
+						case "keys":
+							keys, _ = strconv.ParseInt(kv[1], 10, 64)
+						case "expires":
+							expires, _ = strconv.ParseInt(kv[1], 10, 64)
+						case "avg_ttl":
+							ttlMs, _ := strconv.ParseInt(kv[1], 10, 64)
+							avgTTL = time.Duration(ttlMs) * time.Millisecond
+						}
 					}
 				}
-			}
 
-			keyspaces = append(keyspaces, common.KeySpaceInfo{
-				ID:      dbNum,
-				Keys:    stats["keys"],
-				Expires: stats["expires"],
-				AvgTTL:  stats["avg_ttl"],
-			})
+				namespace := unifiedmodel.Namespace{
+					Name: fmt.Sprintf("db%d", dbID),
+					Options: map[string]interface{}{
+						"database_id": dbID,
+						"keys":        keys,
+						"expires":     expires,
+						"avg_ttl":     avgTTL,
+					},
+				}
+				um.Namespaces[namespace.Name] = namespace
+			}
 		}
 	}
 
-	return keyspaces, nil
+	return nil
 }

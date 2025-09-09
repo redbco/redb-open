@@ -5,28 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 )
-
-// PostgresDetails contains information about a PostgreSQL database
-type PostgresDetails struct {
-	UniqueIdentifier string `json:"uniqueIdentifier"`
-	DatabaseType     string `json:"databaseType"`
-	DatabaseEdition  string `json:"databaseEdition"`
-	Version          string `json:"version"`
-	DatabaseSize     int64  `json:"databaseSize"`
-}
-
-// PostgresSchema represents the schema of a PostgreSQL database
-type PostgresSchema struct {
-	Tables     []common.TableInfo          `json:"tables"`
-	EnumTypes  []common.EnumInfo           `json:"enumTypes"`
-	Schemas    []common.DatabaseSchemaInfo `json:"schemas"`
-	Functions  []common.FunctionInfo       `json:"functions"`
-	Triggers   []common.TriggerInfo        `json:"triggers"`
-	Sequences  []common.SequenceInfo       `json:"sequences"`
-	Extensions []common.ExtensionInfo      `json:"extensions"`
-}
 
 type PostgresReplicationSourceDetails struct {
 	SlotName        string                       `json:"slot_name"`

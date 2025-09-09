@@ -10,15 +10,17 @@ import (
 	"github.com/gocql/gocql"
 	"github.com/jackc/pgx/v5/pgxpool"
 	neo4jgo "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/services/anchor/internal/database/cassandra"
 	"github.com/redbco/redb-open/services/anchor/internal/database/chroma"
 	"github.com/redbco/redb-open/services/anchor/internal/database/clickhouse"
 	"github.com/redbco/redb-open/services/anchor/internal/database/cockroach"
-	"github.com/redbco/redb-open/services/anchor/internal/database/common"
 	"github.com/redbco/redb-open/services/anchor/internal/database/cosmosdb"
+	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 	"github.com/redbco/redb-open/services/anchor/internal/database/dynamodb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/edgedb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/elasticsearch"
+	"github.com/redbco/redb-open/services/anchor/internal/database/iceberg"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mariadb"
 	"github.com/redbco/redb-open/services/anchor/internal/database/milvus"
 	"github.com/redbco/redb-open/services/anchor/internal/database/mongodb"
@@ -35,57 +37,59 @@ import (
 )
 
 // ConnectDatabase establishes a connection to a database
-func (dm *DatabaseManager) ConnectDatabase(config common.DatabaseConfig) (*common.DatabaseClient, error) {
+func (dm *DatabaseManager) ConnectDatabase(config dbclient.DatabaseConfig) (*dbclient.DatabaseClient, error) {
 	// Log connection attempt with unified logging
 	if dm.dbLogger != nil {
 		dm.dbLogger.LogClientConnectionAttempt(config.ConnectionType, config.DatabaseID, config.Host, config.Port)
 	}
 
-	var client *common.DatabaseClient
+	var client *dbclient.DatabaseClient
 	var err error
 
 	switch config.ConnectionType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		client, err = postgres.Connect(config)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		client, err = mysql.Connect(config)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		client, err = mariadb.Connect(config)
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		client, err = cockroach.Connect(config)
-	case "redis":
+	case string(dbcapabilities.Redis):
 		client, err = redis.Connect(config)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		client, err = mongodb.Connect(config)
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		client, err = mssql.Connect(config)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		client, err = cassandra.Connect(config)
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		client, err = edgedb.Connect(config)
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		client, err = snowflake.Connect(config)
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		client, err = clickhouse.Connect(config)
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		client, err = pinecone.Connect(config)
-	case "chroma":
+	case string(dbcapabilities.Chroma):
 		client, err = chroma.Connect(config)
-	case "milvus":
+	case string(dbcapabilities.Milvus):
 		client, err = milvus.Connect(config)
-	case "weaviate":
+	case string(dbcapabilities.Weaviate):
 		client, err = weaviate.Connect(config)
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		client, err = elasticsearch.Connect(config)
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		client, err = neo4j.Connect(config)
-	case "dynamodb":
+	case string(dbcapabilities.DynamoDB):
 		client, err = dynamodb.Connect(config)
-	case "cosmosdb":
+	case string(dbcapabilities.CosmosDB):
 		client, err = cosmosdb.Connect(config)
-	//case "db2":
+	case string(dbcapabilities.Iceberg):
+		client, err = iceberg.Connect(config)
+	//case string(dbcapabilities.DB2):
 	//	client, err = db2.Connect(config)
-	//case "oracle":
+	//case string(dbcapabilities.Oracle):
 	//	client, err = oracle.Connect(config)
 	default:
 		// Log unsupported database type as a warning (not an error)
@@ -172,119 +176,122 @@ func (dm *DatabaseManager) DisconnectDatabase(id string) error {
 }
 
 // closeDatabase closes the database connection properly based on the type
-func closeDatabase(client *common.DatabaseClient) error {
+func closeDatabase(client *dbclient.DatabaseClient) error {
 	atomic.StoreInt32(&client.IsConnected, 0)
 
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		if pool, ok := client.DB.(*pgxpool.Pool); ok {
 			pool.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid postgres connection type")
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		if db, ok := client.DB.(*sql.DB); ok {
 			return db.Close()
 		}
 		return fmt.Errorf("invalid mysql connection type")
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		if db, ok := client.DB.(*sql.DB); ok {
 			return db.Close()
 		}
 		return fmt.Errorf("invalid mariadb connection type")
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		if pool, ok := client.DB.(*pgxpool.Pool); ok {
 			pool.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid cockroach connection type")
-	case "redis":
+	case string(dbcapabilities.Redis):
 		if client, ok := client.DB.(*goredis.Client); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid redis connection type")
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		if database, ok := client.DB.(*mongo.Database); ok {
 			return database.Client().Disconnect(context.Background())
 		}
 		return fmt.Errorf("invalid mongodb connection type")
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		if db, ok := client.DB.(*sql.DB); ok {
 			return db.Close()
 		}
 		return fmt.Errorf("invalid mssql connection type")
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		if session, ok := client.DB.(*gocql.Session); ok {
 			session.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid cassandra connection type")
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		if client, ok := client.DB.(*gel.Client); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid edgedb connection type")
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		if db, ok := client.DB.(*sql.DB); ok {
 			return db.Close()
 		}
 		return fmt.Errorf("invalid snowflake connection type")
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		if conn, ok := client.DB.(clickhouse.ClickhouseConn); ok {
 			conn.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid clickhouse connection type")
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		if client, ok := client.DB.(*pinecone.PineconeClient); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid pinecone connection type")
-	case "chroma":
+	case string(dbcapabilities.Chroma):
 		if client, ok := client.DB.(*chroma.ChromaClient); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid chroma connection type")
-	case "milvus":
+	case string(dbcapabilities.Milvus):
 		if client, ok := client.DB.(*milvus.MilvusClient); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid milvus connection type")
-	case "weaviate":
+	case string(dbcapabilities.Weaviate):
 		if client, ok := client.DB.(*weaviate.WeaviateClient); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid weaviate connection type")
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		if client, ok := client.DB.(*elasticsearch.ElasticsearchClient); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid elasticsearch connection type")
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		if driver, ok := client.DB.(neo4jgo.DriverWithContext); ok {
 			driver.Close(context.Background())
 			return nil
 		}
 		return fmt.Errorf("invalid neo4j connection type")
-	case "dynamodb":
+	case string(dbcapabilities.DynamoDB):
 		// DynamoDB client doesn't need explicit close
 		return nil
-	case "cosmosdb":
+	case string(dbcapabilities.CosmosDB):
 		// CosmosDB client doesn't need explicit close
 		return nil
-	//case "db2":
+	case string(dbcapabilities.Iceberg):
+		// Iceberg client cleanup (HTTP client, etc.)
+		return nil
+	//case string(dbcapabilities.DB2):
 	//	if db, ok := client.DB.(*sql.DB); ok {
 	//		return db.Close()
 	//	}
 	//	return fmt.Errorf("invalid db2 connection type")
-	//case "oracle":
+	//case string(dbcapabilities.Oracle):
 	//	if db, ok := client.DB.(*sql.DB); ok {
 	//		return db.Close()
 	//	}
@@ -295,7 +302,7 @@ func closeDatabase(client *common.DatabaseClient) error {
 }
 
 // ConnectInstance establishes a connection to a database instance
-func (dm *DatabaseManager) ConnectInstance(config common.InstanceConfig) (*common.InstanceClient, error) {
+func (dm *DatabaseManager) ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, error) {
 	// Log instance connection attempt with unified logging
 	if dm.dbLogger != nil {
 		dm.dbLogger.LogConnectionAttempt(DatabaseLogContext{
@@ -307,51 +314,53 @@ func (dm *DatabaseManager) ConnectInstance(config common.InstanceConfig) (*commo
 		})
 	}
 
-	var client *common.InstanceClient
+	var client *dbclient.InstanceClient
 	var err error
 
 	switch config.ConnectionType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		client, err = postgres.ConnectInstance(config)
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		client, err = mysql.ConnectInstance(config)
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		client, err = mariadb.ConnectInstance(config)
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		client, err = cockroach.ConnectInstance(config)
-	case "redis":
+	case string(dbcapabilities.Redis):
 		client, err = redis.ConnectInstance(config)
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		client, err = mongodb.ConnectInstance(config)
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		client, err = mssql.ConnectInstance(config)
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		client, err = cassandra.ConnectInstance(config)
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		client, err = edgedb.ConnectInstance(config)
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		client, err = snowflake.ConnectInstance(config)
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		client, err = clickhouse.ConnectInstance(config)
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		client, err = pinecone.ConnectInstance(config)
-	case "chroma":
+	case string(dbcapabilities.Chroma):
 		client, err = chroma.ConnectInstance(config)
-	case "milvus":
+	case string(dbcapabilities.Milvus):
 		client, err = milvus.ConnectInstance(config)
-	case "weaviate":
+	case string(dbcapabilities.Weaviate):
 		client, err = weaviate.ConnectInstance(config)
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		client, err = elasticsearch.ConnectInstance(config)
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		client, err = neo4j.ConnectInstance(config)
-	case "dynamodb":
+	case string(dbcapabilities.DynamoDB):
 		client, err = dynamodb.ConnectInstance(config)
-	case "cosmosdb":
+	case string(dbcapabilities.CosmosDB):
 		client, err = cosmosdb.ConnectInstance(config)
-	//case "db2":
+	case string(dbcapabilities.Iceberg):
+		client, err = iceberg.ConnectInstance(config)
+	//case string(dbcapabilities.DB2):
 	//	client, err = db2.ConnectInstance(config)
-	//case "oracle":
+	//case string(dbcapabilities.Oracle):
 	//	client, err = oracle.ConnectInstance(config)
 	default:
 		// Log unsupported instance type as a warning
@@ -424,119 +433,122 @@ func (dm *DatabaseManager) DisconnectInstance(id string) error {
 }
 
 // closeInstance closes the database connection properly based on the type
-func closeInstance(client *common.InstanceClient) error {
+func closeInstance(client *dbclient.InstanceClient) error {
 	atomic.StoreInt32(&client.IsConnected, 0)
 
 	switch client.InstanceType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		if pool, ok := client.DB.(*pgxpool.Pool); ok {
 			pool.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid postgres connection type")
-	case "mysql":
+	case string(dbcapabilities.MySQL):
 		if db, ok := client.DB.(*sql.DB); ok {
 			return db.Close()
 		}
 		return fmt.Errorf("invalid mysql connection type")
-	case "mariadb":
+	case string(dbcapabilities.MariaDB):
 		if db, ok := client.DB.(*sql.DB); ok {
 			return db.Close()
 		}
 		return fmt.Errorf("invalid mariadb connection type")
-	case "cockroach":
+	case string(dbcapabilities.CockroachDB):
 		if pool, ok := client.DB.(*pgxpool.Pool); ok {
 			pool.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid cockroach connection type")
-	case "redis":
+	case string(dbcapabilities.Redis):
 		if client, ok := client.DB.(*goredis.Client); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid redis connection type")
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		if database, ok := client.DB.(*mongo.Database); ok {
 			return database.Client().Disconnect(context.Background())
 		}
 		return fmt.Errorf("invalid mongodb connection type")
-	case "mssql":
+	case string(dbcapabilities.SQLServer):
 		if db, ok := client.DB.(*sql.DB); ok {
 			return db.Close()
 		}
 		return fmt.Errorf("invalid mssql connection type")
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		if session, ok := client.DB.(*gocql.Session); ok {
 			session.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid cassandra connection type")
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		if client, ok := client.DB.(*gel.Client); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid edgedb connection type")
-	case "snowflake":
+	case string(dbcapabilities.Snowflake):
 		if db, ok := client.DB.(*sql.DB); ok {
 			return db.Close()
 		}
 		return fmt.Errorf("invalid snowflake connection type")
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		if conn, ok := client.DB.(clickhouse.ClickhouseConn); ok {
 			conn.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid clickhouse connection type")
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		if client, ok := client.DB.(*pinecone.PineconeClient); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid pinecone connection type")
-	case "chroma":
+	case string(dbcapabilities.Chroma):
 		if client, ok := client.DB.(*chroma.ChromaClient); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid chroma connection type")
-	case "milvus":
+	case string(dbcapabilities.Milvus):
 		if client, ok := client.DB.(*milvus.MilvusClient); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid milvus connection type")
-	case "weaviate":
+	case string(dbcapabilities.Weaviate):
 		if client, ok := client.DB.(*weaviate.WeaviateClient); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid weaviate connection type")
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		if client, ok := client.DB.(*elasticsearch.ElasticsearchClient); ok {
 			client.Close()
 			return nil
 		}
 		return fmt.Errorf("invalid elasticsearch connection type")
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		if driver, ok := client.DB.(neo4jgo.DriverWithContext); ok {
 			driver.Close(context.Background())
 			return nil
 		}
 		return fmt.Errorf("invalid neo4j connection type")
-	case "dynamodb":
+	case string(dbcapabilities.DynamoDB):
 		// No explicit close method for aws dynamodb client
 		return fmt.Errorf("invalid dynamodb connection type")
-	case "cosmosdb":
+	case string(dbcapabilities.CosmosDB):
 		// No explicit close method for azure cosmos db client
 		return fmt.Errorf("invalid cosmosdb connection type")
-	//case "db2":
+	case string(dbcapabilities.Iceberg):
+		// Iceberg client cleanup (HTTP client, etc.)
+		return fmt.Errorf("invalid iceberg connection type")
+	//case string(dbcapabilities.DB2):
 	//	if db, ok := client.DB.(*sql.DB); ok {
 	//		return db.Close()
 	//	}
 	//	return fmt.Errorf("invalid db2 connection type")
-	//case "oracle":
+	//case string(dbcapabilities.Oracle):
 	//	if db, ok := client.DB.(*sql.DB); ok {
 	//		return db.Close()
 	//	}
@@ -547,7 +559,7 @@ func closeInstance(client *common.InstanceClient) error {
 }
 
 // Refactor ConnectReplication for multi-table support
-func (dm *DatabaseManager) ConnectReplication(config common.ReplicationConfig) (*common.ReplicationClient, error) {
+func (dm *DatabaseManager) ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.ReplicationClient, error) {
 	// Log replication connection attempt
 	if dm.dbLogger != nil {
 		dm.dbLogger.LogReplicationEvent(DatabaseLogContext{
@@ -596,7 +608,7 @@ func (dm *DatabaseManager) ConnectReplication(config common.ReplicationConfig) (
 	}
 
 	// No client exists, create a new one
-	if config.ConnectionType == "postgres" {
+	if config.ConnectionType == string(dbcapabilities.PostgreSQL) {
 		var err error
 		client, _, err = postgres.ConnectReplication(config)
 		if err != nil {
@@ -675,11 +687,11 @@ func (dm *DatabaseManager) DisconnectReplication(id string) error {
 }
 
 // closeReplication closes the replication connection properly based on the type
-func closeReplication(client *common.ReplicationClient) error {
+func closeReplication(client *dbclient.ReplicationClient) error {
 	atomic.StoreInt32(&client.IsConnected, 0)
 
 	// Close the replication source if it implements the interface
-	if source, ok := client.ReplicationSource.(common.ReplicationSourceInterface); ok {
+	if source, ok := client.ReplicationSource.(dbclient.ReplicationSourceInterface); ok {
 		if err := source.Close(); err != nil {
 			return fmt.Errorf("failed to close replication source: %w", err)
 		}
@@ -687,7 +699,7 @@ func closeReplication(client *common.ReplicationClient) error {
 
 	// Close the underlying connection based on database type
 	switch client.DatabaseType {
-	case "postgres":
+	case string(dbcapabilities.PostgreSQL):
 		if replicationSource, ok := client.ReplicationSource.(*postgres.PostgresReplicationSourceDetails); ok {
 			if replicationSource.ReplicationConn != nil {
 				replicationSource.ReplicationConn.Close(context.Background())
@@ -697,64 +709,67 @@ func closeReplication(client *common.ReplicationClient) error {
 			}
 		}
 		return nil
-	case "mysql", "mariadb", "mssql", "snowflake":
+	case string(dbcapabilities.MySQL), string(dbcapabilities.MariaDB), string(dbcapabilities.SQLServer), string(dbcapabilities.Snowflake):
 		// SQL-based databases might use regular database connections for replication
 		if db, ok := client.Connection.(*sql.DB); ok {
 			return db.Close()
 		}
 		return nil
-	case "mongodb":
+	case string(dbcapabilities.MongoDB):
 		if database, ok := client.Connection.(*mongo.Database); ok {
 			return database.Client().Disconnect(context.Background())
 		}
 		return nil
-	case "redis":
+	case string(dbcapabilities.Redis):
 		if redisClient, ok := client.Connection.(*goredis.Client); ok {
 			redisClient.Close()
 		}
 		return nil
-	case "cassandra":
+	case string(dbcapabilities.Cassandra):
 		if session, ok := client.Connection.(*gocql.Session); ok {
 			session.Close()
 		}
 		return nil
-	case "elasticsearch":
+	case string(dbcapabilities.Elasticsearch):
 		if esClient, ok := client.Connection.(*elasticsearch.ElasticsearchClient); ok {
 			esClient.Close()
 		}
 		return nil
-	case "neo4j":
+	case string(dbcapabilities.Neo4j):
 		if driver, ok := client.Connection.(neo4jgo.DriverWithContext); ok {
 			driver.Close(context.Background())
 		}
 		return nil
-	case "edgedb":
+	case string(dbcapabilities.EdgeDB):
 		if edgeClient, ok := client.Connection.(*gel.Client); ok {
 			edgeClient.Close()
 		}
 		return nil
-	case "clickhouse":
+	case string(dbcapabilities.ClickHouse):
 		if conn, ok := client.Connection.(clickhouse.ClickhouseConn); ok {
 			conn.Close()
 		}
 		return nil
-	case "pinecone":
+	case string(dbcapabilities.Pinecone):
 		if pineconeClient, ok := client.Connection.(*pinecone.PineconeClient); ok {
 			pineconeClient.Close()
 		}
 		return nil
-	case "dynamodb":
+	case string(dbcapabilities.DynamoDB):
 		// No explicit close method for aws dynamodb client
 		return nil
-	case "cosmosdb":
+	case string(dbcapabilities.CosmosDB):
 		// No explicit close method for azure cosmos db client
 		return nil
-	//case "db2":
+	case string(dbcapabilities.Iceberg):
+		// Iceberg doesn't support traditional replication
+		return nil
+	//case string(dbcapabilities.DB2):
 	//	if db, ok := client.Connection.(*sql.DB); ok {
 	//		return db.Close()
 	//	}
 	//	return nil
-	//case "oracle":
+	//case string(dbcapabilities.Oracle):
 	//	if db, ok := client.Connection.(*sql.DB); ok {
 	//		return db.Close()
 	//	}
