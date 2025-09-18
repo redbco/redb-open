@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package redbco.redbopen.mesh.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/mesh/v1;meshv1";
+
+import "google/protobuf/empty.proto";
+
+// Session information
+message SessionInfo {
+    uint64 peer_node_id = 1;
+    string remote_addr = 2;
+    string state = 3;           // Connected, Draining, Resuming, etc.
+    uint64 rtt_microseconds = 4;
+    uint64 bytes_sent = 5;
+    uint64 bytes_received = 6;
+    uint64 frames_sent = 7;
+    uint64 frames_received = 8;
+    bool is_tls = 9;
+}
+
+// Routing table entry
+message RouteEntry {
+    uint64 dst_node = 1;
+    repeated uint64 next_hops = 2;  // for ECMP
+    uint32 cost = 3;
+    uint32 epoch = 4;
+}
+
+// Neighbor information
+message NeighborInfo {
+    uint64 node_id = 1;
+    string addr = 2;
+    bool connected = 3;
+    uint32 epoch = 4;
+}
+
+// Topology snapshot
+message TopologySnapshot {
+    uint64 local_node_id = 1;
+    uint32 current_epoch = 2;
+    repeated NeighborInfo neighbors = 3;
+    repeated RouteEntry routes = 4;
+}
+
+// Request to get all active sessions
+message GetSessionsRequest {}
+
+// Response with session list
+message GetSessionsResponse {
+    repeated SessionInfo sessions = 1;
+}
+
+// Request to get routing table
+message GetRoutingTableRequest {}
+
+// Response with routing table
+message GetRoutingTableResponse {
+    repeated RouteEntry routes = 1;
+    uint32 current_epoch = 2;
+}
+
+// Request to get topology snapshot
+message GetTopologyRequest {}
+
+// Response with topology information
+message GetTopologyResponse {
+    TopologySnapshot topology = 1;
+}
+
+// Request to drop a session
+message DropSessionRequest {
+    uint64 peer_node_id = 1;
+}
+
+// Request to add a new session
+message AddSessionRequest {
+    string addr = 1;
+}
+
+// Request to add a neighbor
+message InjectNeighborRequest {
+    string addr = 1;
+}
+
+// Request to set a policy value
+message SetPolicyRequest {
+    string key = 1;
+    string value = 2;
+}
+
+// Request to get message metrics
+message GetMessageMetricsRequest {}
+
+// Response containing message metrics
+message GetMessageMetricsResponse {
+    uint64 total_messages = 1;
+    uint64 undeliverable = 2;
+    uint64 queued = 3;
+    uint64 pending_node = 4;
+    uint64 pending_client = 5;
+    uint64 delivered = 6;
+    uint64 waiting_for_ack = 7;
+    uint64 ack_success = 8;
+    uint64 ack_failure = 9;
+    double success_rate = 10;    // Percentage
+    double failure_rate = 11;    // Percentage
+    double pending_rate = 12;    // Percentage
+}
+
+// MeshControl service for administration and monitoring
+service MeshControl {
+    rpc GetSessions(GetSessionsRequest) returns (GetSessionsResponse);
+    rpc GetRoutingTable(GetRoutingTableRequest) returns (GetRoutingTableResponse);
+    rpc GetTopology(GetTopologyRequest) returns (GetTopologyResponse);
+    rpc DropSession(DropSessionRequest) returns (google.protobuf.Empty);
+    rpc AddSession(AddSessionRequest) returns (google.protobuf.Empty);
+    rpc InjectNeighbor(InjectNeighborRequest) returns (google.protobuf.Empty);
+    rpc SetPolicy(SetPolicyRequest) returns (google.protobuf.Empty);
+    rpc GetMessageMetrics(GetMessageMetricsRequest) returns (GetMessageMetricsResponse);
+}

@@ -1,0 +1,32 @@
+[package]
+name = "mesh-storage"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Reliability storage for mesh: WAL + Dedup with pluggable backends"
+
+[features]
+default = []
+redis-backend = ["redis"]
+
+[dependencies]
+async-trait.workspace = true
+redis = { workspace = true, optional = true }
+memmap2.workspace = true
+crc32fast.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+uuid = { version = "1.0", features = ["v4"] }
+dashmap = "5.5"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3.0"

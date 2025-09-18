@@ -1,0 +1,23 @@
+[package]
+name = "mesh-routing"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Domain-aware routing tables, ECMP, BR policies, and path computation for mesh"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+dashmap.workspace = true
+mesh-topology = { path = "../topology" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

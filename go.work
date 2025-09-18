@@ -9,7 +9,6 @@ use (
 	./services/core
 	./services/integration
 	./services/mcpserver
-	./services/mesh
 	./services/security
 	./services/transformation
 	./services/unifiedmodel
