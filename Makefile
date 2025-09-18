@@ -3,12 +3,26 @@
 # Project variables
 BINARY_DIR := bin
 BUILD_DIR := build
-SERVICES := supervisor security unifiedmodel transformation integration mesh anchor core webhook clientapi mcpserver cli
+GO_SERVICES := supervisor security unifiedmodel transformation integration anchor core webhook clientapi mcpserver cli
+RUST_SERVICES := mesh
+SERVICES := $(GO_SERVICES) $(RUST_SERVICES)
 
 # Default to darwin arm64 build
 GOOS ?= darwin
 GOARCH ?= arm64
 GO_BUILD_FLAGS := -v
+
+# Rust build configuration
+RUST_TARGET_MAP_darwin_amd64 := x86_64-apple-darwin
+RUST_TARGET_MAP_darwin_arm64 := aarch64-apple-darwin
+RUST_TARGET_MAP_linux_amd64 := x86_64-unknown-linux-gnu
+RUST_TARGET_MAP_linux_arm64 := aarch64-unknown-linux-gnu
+RUST_TARGET_MAP_windows_amd64 := x86_64-pc-windows-gnu
+RUST_TARGET_MAP_windows_arm64 := aarch64-pc-windows-gnullvm
+
+# Get Rust target for current GOOS/GOARCH
+RUST_TARGET := $(RUST_TARGET_MAP_$(GOOS)_$(GOARCH))
+CARGO_BUILD_FLAGS := --release
 
 # Detect operating system
 UNAME_S := $(shell uname -s)
@@ -46,7 +60,8 @@ PROTO_FILES := api/proto/common/v1/common.proto \
 			   api/proto/security/v1/security.proto \
 			   api/proto/unifiedmodel/v1/unifiedmodel.proto \
 			   api/proto/transformation/v1/transformation.proto \
-			   api/proto/mesh/v1/mesh.proto \
+			   api/proto/mesh/v1/data.proto \
+			   api/proto/mesh/v1/control.proto \
                api/proto/anchor/v1/anchor.proto \
 			   api/proto/core/v1/core.proto \
 			   api/proto/webhook/v1/webhook.proto \
@@ -78,7 +93,16 @@ local:
 # Generic build rule for services
 build-%: 
 	@echo "Building $* for $(GOOS)/$(GOARCH)..."
-	@if [ "$*" = "supervisor" ]; then \
+	@if echo "$(RUST_SERVICES)" | grep -q "\b$*\b"; then \
+		echo "Building Rust service: $*"; \
+		if [ -n "$(RUST_TARGET)" ]; then \
+			cargo build $(CARGO_BUILD_FLAGS) --target $(RUST_TARGET) --bin redb-$*; \
+			cp target/$(RUST_TARGET)/release/redb-$* $(BINARY_DIR)/redb-$*; \
+		else \
+			echo "Unsupported target for $(GOOS)/$(GOARCH)"; \
+			exit 1; \
+		fi \
+	elif [ "$*" = "supervisor" ]; then \
 		CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
 		-o $(BINARY_DIR)/redb-node ./cmd/$*/cmd; \
@@ -103,13 +127,15 @@ dev: clean proto build test
 # Run all tests
 test:
 	@echo "Running tests..."
-	@for service in $(SERVICES); do \
+	@for service in $(GO_SERVICES); do \
 		if [ "$$service" = "supervisor" ] || [ "$$service" = "cli" ]; then \
 			go test -v ./cmd/$$service/...; \
 		else \
 			go test -v ./services/$$service/...; \
 		fi \
 	done
+	@echo "Running Rust tests..."
+	@cargo test
 
 # Generate Protocol Buffer code
 proto:
@@ -144,34 +170,43 @@ build-all: $(BUILD_DIR)
 	@for os in linux darwin windows; do \
 		for arch in amd64 arm64; do \
 			mkdir -p $(BUILD_DIR)/$$os-$$arch; \
-				for service in $(SERVICES); do \
+			for service in $(GO_SERVICES); do \
 				if [ "$$service" = "supervisor" ]; then \
 					echo "Building supervisor for $$os/$$arch..."; \
-						GOOS=$$os GOARCH=$$arch \
-						CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
+					GOOS=$$os GOARCH=$$arch \
+					CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
 					-ldflags "$(VERSION_FLAGS)" \
 					-o $(BUILD_DIR)/$$os-$$arch/redb-node \
 					./cmd/supervisor/cmd; \
 				elif [ "$$service" = "cli" ]; then \
 					echo "Building cli for $$os/$$arch..."; \
-						GOOS=$$os GOARCH=$$arch \
-						CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
+					GOOS=$$os GOARCH=$$arch \
+					CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) \
 					-ldflags "$(VERSION_FLAGS)" \
 					-o $(BUILD_DIR)/$$os-$$arch/redb-cli \
 					./cmd/cli/cmd; \
+				elif [ "$$service" = "anchor" ]; then \
+					echo "Building $$service for $$os/$$arch..."; \
+					GOOS=$$os GOARCH=$$arch CGO_ENABLED=1 \
+					go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
+					-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
+					./services/$$service/cmd; \
 				else \
-						echo "Building $$service for $$os/$$arch..."; \
-						if [ "$$service" = "anchor" ]; then \
-							GOOS=$$os GOARCH=$$arch CGO_ENABLED=1 \
-							go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
-							-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
-							./services/$$service/cmd; \
-						else \
-							GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 \
-							go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
-							-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
-							./services/$$service/cmd; \
-						fi; \
+					echo "Building $$service for $$os/$$arch..."; \
+					GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 \
+					go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
+					-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
+					./services/$$service/cmd; \
+				fi \
+			done; \
+			for service in $(RUST_SERVICES); do \
+				echo "Building Rust service $$service for $$os/$$arch..."; \
+				rust_target=$$(echo "$(RUST_TARGET_MAP_$$os"_"$$arch)"); \
+				if [ -n "$$rust_target" ]; then \
+					cargo build $(CARGO_BUILD_FLAGS) --target $$rust_target --bin redb-$$service; \
+					cp target/$$rust_target/release/redb-$$service $(BUILD_DIR)/$$os-$$arch/redb-$$service; \
+				else \
+					echo "Unsupported Rust target for $$os/$$arch"; \
 				fi \
 			done \
 		done \

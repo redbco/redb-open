@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package redbco.redbopen.mesh.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/mesh/v1;meshv1";
+
+import "google/protobuf/empty.proto";
+
+// Header for key-value metadata
+message Header {
+    string key = 1;
+    bytes value = 2;
+}
+
+// Send delivery mode enumeration
+enum SendMode {
+    SEND_MODE_FIRE_AND_FORGET = 0;  // return immediately with queued status
+    SEND_MODE_WAIT_FOR_DELIVERY = 1; // wait until message is delivered to target node
+    SEND_MODE_WAIT_FOR_ACK = 2;      // wait until client acknowledges (if require_ack=true)
+}
+
+// Request to send a message through the mesh
+message SendRequest {
+    uint64 dst_node = 1;
+    repeated Header headers = 2;
+    bytes payload = 3;
+    bool end_to_end_encrypt = 4; // honored in Milestone 3
+    uint32 partition = 5;
+    uint32 qos_class = 6;
+    uint64 corr_id = 7;          // echoed back in delivery
+    bool require_ack = 8;        // whether client acknowledgment is required
+    SendMode mode = 9;           // delivery mode for this send request
+    uint32 timeout_seconds = 10; // timeout for wait modes (0 = no timeout)
+}
+
+// Message status enumeration
+enum MessageStatus {
+    MESSAGE_STATUS_UNSPECIFIED = 0;
+    MESSAGE_STATUS_UNDELIVERABLE = 1;    // node id is unknown - never been part of mesh
+    MESSAGE_STATUS_QUEUED = 2;           // message is queued due to busy mesh/node
+    MESSAGE_STATUS_PENDING_NODE = 3;     // node is unreachable/offline but known in mesh
+    MESSAGE_STATUS_PENDING_CLIENT = 4;   // node reachable but no subscribed clients
+    MESSAGE_STATUS_DELIVERED = 5;        // message delivered to client
+    MESSAGE_STATUS_WAITING_FOR_CLIENT_ACK = 6; // waiting for client acknowledgment
+    MESSAGE_STATUS_ACK_SUCCESS = 7;      // client acknowledged with success
+    MESSAGE_STATUS_ACK_FAILURE = 8;      // client acknowledged with failure
+}
+
+// Enhanced response containing message ID and initial status
+message SendResponse {
+    uint64 msg_id = 1;
+    MessageStatus status = 2;
+    string status_message = 3;   // human-readable status description
+    bool require_ack = 4;        // echoes back the require_ack setting
+}
+
+// Request to subscribe to incoming messages
+message SubscribeRequest {
+    uint32 partition = 1;  // optional filter
+    uint32 qos_class = 2;
+    uint64 src_node = 3;   // optional filter
+}
+
+// A received message delivered to subscribers
+message Received {
+    uint64 src_node = 1;
+    uint64 dst_node = 2;
+    uint64 msg_id = 3;
+    uint64 corr_id = 4;
+    repeated Header headers = 5;
+    bytes payload = 6;           // plaintext to the local process
+    bool require_ack = 7;        // whether this message requires acknowledgment
+}
+
+// Acknowledgment for app-level idempotency
+message Ack {
+    uint64 src_node = 1;
+    uint64 msg_id = 2;
+    bool success = 3;            // true for success, false for failure
+    string message = 4;          // optional status message
+}
+
+// Request to query message status
+message QueryMessageStatusRequest {
+    repeated uint64 msg_ids = 1; // message IDs to query
+}
+
+// Message status information
+message MessageStatusInfo {
+    uint64 msg_id = 1;
+    MessageStatus status = 2;
+    string status_message = 3;
+    uint64 timestamp = 4;        // unix timestamp of last status update
+    bool require_ack = 5;        // whether acknowledgment is required
+}
+
+// Response containing message status information
+message QueryMessageStatusResponse {
+    repeated MessageStatusInfo message_statuses = 1;
+}
+
+// MeshData service for sending and receiving messages
+service MeshData {
+    rpc Send(SendRequest) returns (SendResponse);
+    rpc SendWithStatusStream(SendRequest) returns (stream MessageStatusInfo); // streaming status updates
+    rpc Subscribe(SubscribeRequest) returns (stream Received);
+    rpc AckMessage(Ack) returns (google.protobuf.Empty);
+    rpc QueryMessageStatus(QueryMessageStatusRequest) returns (QueryMessageStatusResponse);
+}

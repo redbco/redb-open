@@ -1,0 +1,22 @@
+[package]
+name = "mesh-topology"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Domain graph, epochs, gossip/link-state intra-domain, path-vector inter-domain for mesh"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+mesh-wire = { path = "../wire" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

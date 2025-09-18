@@ -19,3 +19,9 @@ vendor/
 
 # Compiled proto files
 **/*.pb.go
+
+# Rust build output
+**/target/
+
+# MachOS DS_Store
+**/.DS_Store

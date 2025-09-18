@@ -18,15 +18,16 @@ import (
 )
 
 type Engine struct {
-	config       *config.Config
-	grpcServer   *grpc.Server
-	coreSvc      *Server
-	db           *database.PostgreSQL
-	logger       *logger.Logger
-	umClient     unifiedmodelv1.UnifiedModelServiceClient
-	anchorClient anchorv1.AnchorServiceClient
-	meshClient   meshv1.MeshServiceClient
-	state        struct {
+	config            *config.Config
+	grpcServer        *grpc.Server
+	coreSvc           *Server
+	db                *database.PostgreSQL
+	logger            *logger.Logger
+	umClient          unifiedmodelv1.UnifiedModelServiceClient
+	anchorClient      anchorv1.AnchorServiceClient
+	meshControlClient meshv1.MeshControlClient
+	meshDataClient    meshv1.MeshDataClient
+	state             struct {
 		sync.Mutex
 		isRunning         bool
 		ongoingOperations int32
@@ -82,7 +83,6 @@ func (e *Engine) RegisterCoreServices() error {
 	}
 
 	e.coreSvc = NewServer(e)
-	corev1.RegisterMeshServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterWorkspaceServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterSatelliteServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterAnchorServiceServer(e.grpcServer, e.coreSvc)
@@ -167,7 +167,8 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to mesh service: %w", err)
 	}
 
-	e.meshClient = meshv1.NewMeshServiceClient(meshConn)
+	e.meshControlClient = meshv1.NewMeshControlClient(meshConn)
+	e.meshDataClient = meshv1.NewMeshDataClient(meshConn)
 
 	return nil
 }
@@ -262,6 +263,10 @@ func (e *Engine) GetAnchorClient() anchorv1.AnchorServiceClient {
 	return e.anchorClient
 }
 
-func (e *Engine) GetMeshClient() meshv1.MeshServiceClient {
-	return e.meshClient
+func (e *Engine) GetMeshControlClient() meshv1.MeshControlClient {
+	return e.meshControlClient
+}
+
+func (e *Engine) GetMeshDataClient() meshv1.MeshDataClient {
+	return e.meshDataClient
 }

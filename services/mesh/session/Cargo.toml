@@ -1,0 +1,35 @@
+[package]
+name = "mesh-session"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "TCP/TLS sockets, send/recv loops, ACK/CREDIT, HELLO/RESUME, DRAIN/BYE for mesh"
+
+[features]
+default = []
+tls = ["rustls", "tokio-rustls", "x509-parser", "rustls-pemfile"]
+
+[dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "io-util", "sync"] }
+bytes.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+mesh-wire = { path = "../wire" }
+mesh-storage = { path = "../storage" }
+mesh-routing = { path = "../routing" }
+once_cell = "1.19"
+serde_cbor = "0.11"
+ciborium = "0.2"
+
+# TLS dependencies (optional)
+rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "0.26", optional = true }
+x509-parser = { version = "0.16", optional = true }
+rustls-pemfile = { version = "2.1", optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

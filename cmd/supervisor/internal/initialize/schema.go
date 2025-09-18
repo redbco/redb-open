@@ -60,6 +60,16 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- =============================================================================
+-- CUSTOM ENUMS
+-- =============================================================================
+
+-- Status enum
+CREATE TYPE status_enum AS ENUM ('STATUS_HEALTHY', 'STATUS_DEGRADED', 'STATUS_UNHEALTHY', 'STATUS_PENDING', 'STATUS_UNKNOWN', 'STATUS_SUCCESS', 'STATUS_FAILURE', 'STATUS_STARTING', 'STATUS_STOPPING', 'STATUS_STOPPED', 'STATUS_STARTED', 'STATUS_CREATED', 'STATUS_DELETED', 'STATUS_UPDATED', 'STATUS_CONNECTED', 'STATUS_DISCONNECTED', 'STATUS_CONNECTING', 'STATUS_DISCONNECTING', 'STATUS_RECONNECTING', 'STATUS_ERROR', 'STATUS_WARNING', 'STATUS_INFO', 'STATUS_DEBUG', 'STATUS_TRACE', 'STATUS_EMPTY', 'STATUS_JOINING', 'STATUS_LEAVING', 'STATUS_SEEDING', 'STATUS_ORPHANED', 'STATUS_SENT', 'STATUS_CANCELLED', 'STATUS_PROCESSING', 'STATUS_DONE', 'STATUS_RECEIVED');
+
+-- Join key hash enum
+CREATE TYPE join_key_enum AS ENUM ('OPEN', 'KEY_REQUIRED', 'CLOSED');
+
+-- =============================================================================
 -- CORE SYSTEM TABLES
 -- =============================================================================
 
@@ -73,8 +83,9 @@ CREATE TABLE mesh (
     mesh_id ulid PRIMARY KEY DEFAULT generate_ulid('mesh'),
     mesh_name VARCHAR(255) UNIQUE NOT NULL,
     mesh_description TEXT DEFAULT '',
-    allow_join BOOLEAN DEFAULT false,
-    status VARCHAR(255) DEFAULT 'STATUS_PENDING',
+    allow_join join_key_enum DEFAULT 'KEY_REQUIRED',
+    join_key_hash TEXT,
+    status status_enum DEFAULT 'STATUS_CREATED',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -85,7 +96,7 @@ CREATE TABLE tenants (
     tenant_name VARCHAR(255) UNIQUE NOT NULL,
     tenant_description TEXT DEFAULT '',
     tenant_url VARCHAR(255) UNIQUE NOT NULL,
-    status VARCHAR(255) DEFAULT 'STATUS_HEALTHY',
+    status status_enum DEFAULT 'STATUS_HEALTHY',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -101,39 +112,43 @@ CREATE TABLE regions (
     region_latitude DOUBLE PRECISION,
     region_longitude DOUBLE PRECISION,
     global_region BOOLEAN DEFAULT false,
-    status VARCHAR(255) DEFAULT 'STATUS_EMPTY',
+    status status_enum DEFAULT 'STATUS_EMPTY',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Nodes in the mesh network
+-- Core mesh topology (replaces old mesh_* tables)
 CREATE TABLE nodes (
     node_id ulid PRIMARY KEY DEFAULT generate_ulid('node'),
-    node_name VARCHAR(255) UNIQUE NOT NULL,
+    node_name VARCHAR(255) NOT NULL,
     node_description TEXT DEFAULT '',
-    node_platform VARCHAR(255) DEFAULT 'linux-amd64',
-    node_version VARCHAR(255) DEFAULT '1.0.0',
-    region_id ulid REFERENCES regions(region_id) ON DELETE SET NULL ON UPDATE CASCADE,
-    node_public_key TEXT DEFAULT '',
-    ip_address VARCHAR(255) NOT NULL,
-    port INTEGER DEFAULT 8443,
-    status VARCHAR(255) DEFAULT 'STATUS_PENDING',
+    node_public_key BYTEA NOT NULL,
+    node_last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    node_incarnation BIGINT DEFAULT 1,
+    node_meta JSONB DEFAULT '{}',
+    node_platform VARCHAR(100) DEFAULT '',
+    node_version VARCHAR(100) DEFAULT '',
+    region_id ulid REFERENCES regions(region_id) ON DELETE SET NULL,
+    ip_address INET,
+    port INTEGER,
+    status status_enum DEFAULT 'STATUS_CREATED',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Routes between nodes
 CREATE TABLE routes (
     route_id ulid PRIMARY KEY DEFAULT generate_ulid('route'),
-    source_node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE,
-    target_node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE,
-    route_bidirectional BOOLEAN DEFAULT false,
-    route_latency DECIMAL DEFAULT 0.00,
-    route_bandwidth DECIMAL DEFAULT 0.00,
-    route_cost INTEGER DEFAULT 100,
-    status VARCHAR(255) DEFAULT 'STATUS_PENDING',
+    a_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    b_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    latency_ms INTEGER DEFAULT 0,
+    bandwidth_mbps INTEGER DEFAULT 0,
+    loss DECIMAL(5,4) DEFAULT 0.0,
+    utilization DECIMAL(5,4) DEFAULT 0.0,
+    status status_enum DEFAULT 'STATUS_CREATED',
+    meta JSONB DEFAULT '{}',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(a_node, b_node)
 );
 
 -- =============================================================================
@@ -324,7 +339,7 @@ CREATE TABLE satellites (
     satellite_ip_address VARCHAR(255) NOT NULL,
     connected_to_node_id ulid NOT NULL REFERENCES nodes(node_id),
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
-    status VARCHAR(255) DEFAULT 'STATUS_PENDING',
+    status status_enum DEFAULT 'STATUS_PENDING',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -341,7 +356,7 @@ CREATE TABLE anchors (
     anchor_ip_address VARCHAR(255) NOT NULL,
     connected_to_node_id ulid REFERENCES nodes(node_id),
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
-    status VARCHAR(255) DEFAULT 'STATUS_PENDING',
+    status status_enum DEFAULT 'STATUS_PENDING',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -371,7 +386,7 @@ CREATE TABLE workspaces (
     workspace_description TEXT DEFAULT '',
     policy_ids ulid[] DEFAULT '{}',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
-    status VARCHAR(255) DEFAULT 'STATUS_CREATED',
+    status status_enum DEFAULT 'STATUS_CREATED',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(tenant_id, workspace_name)
@@ -389,7 +404,7 @@ CREATE TABLE environments (
     environment_priority INTEGER DEFAULT 0,
     policy_ids ulid[] DEFAULT '{}',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
-    status VARCHAR(255) DEFAULT 'STATUS_EMPTY',
+    status status_enum DEFAULT 'STATUS_EMPTY',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(workspace_id, environment_name)
@@ -428,7 +443,7 @@ CREATE TABLE instances (
     instance_databases JSONB NOT NULL DEFAULT '{}',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     instance_status_message VARCHAR(255) DEFAULT '',
-    status VARCHAR(255) DEFAULT 'STATUS_PENDING',
+    status status_enum DEFAULT 'STATUS_PENDING',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -456,7 +471,7 @@ CREATE TABLE databases (
     database_tables JSONB NOT NULL DEFAULT '{}',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     database_status_message VARCHAR(255) DEFAULT '',
-    status VARCHAR(255) DEFAULT 'STATUS_PENDING',
+    status status_enum DEFAULT 'STATUS_PENDING',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(workspace_id, database_name)
@@ -475,7 +490,7 @@ CREATE TABLE repos (
     repo_description TEXT NOT NULL DEFAULT '',
     policy_ids ulid[] NOT NULL DEFAULT '{}',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
-    status VARCHAR(255) NOT NULL DEFAULT 'STATUS_EMPTY',
+    status status_enum NOT NULL DEFAULT 'STATUS_EMPTY',
     created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(workspace_id, repo_name)
@@ -492,7 +507,7 @@ CREATE TABLE branches (
     connected_to_database BOOLEAN NOT NULL DEFAULT false,
     connected_database_id ulid REFERENCES databases(database_id) ON DELETE SET NULL ON UPDATE CASCADE,
     policy_ids ulid[] NOT NULL DEFAULT '{}',
-    status VARCHAR(255) NOT NULL DEFAULT 'STATUS_EMPTY',
+    status status_enum NOT NULL DEFAULT 'STATUS_EMPTY',
     created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -579,7 +594,7 @@ CREATE TABLE relationships (
     policy_ids ulid[] DEFAULT '{}',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     status_message VARCHAR(255) DEFAULT '',
-    status VARCHAR(255) DEFAULT 'STATUS_PENDING',
+    status status_enum DEFAULT 'STATUS_PENDING',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(workspace_id, relationship_name)
@@ -596,7 +611,7 @@ CREATE TABLE replication_sources (
     publication_name VARCHAR(255) NOT NULL,
     slot_name VARCHAR(255) NOT NULL,
     status_message VARCHAR(255) DEFAULT '',
-    status VARCHAR(255) DEFAULT 'STATUS_PENDING',
+    status status_enum DEFAULT 'STATUS_PENDING',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(workspace_id, database_id, table_name)
@@ -678,7 +693,7 @@ CREATE TABLE mcpservers (
     policy_ids ulid[] DEFAULT '{}',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     status_message VARCHAR(255) DEFAULT '',
-    status VARCHAR(255) DEFAULT 'STATUS_CREATED',
+    status status_enum DEFAULT 'STATUS_CREATED',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(workspace_id, mcpserver_name)
@@ -777,7 +792,7 @@ CREATE TABLE audit_log (
     change_details JSONB DEFAULT '{}',
     ip_address VARCHAR(255),
     user_agent VARCHAR(255),
-    status VARCHAR(255) DEFAULT 'STATUS_SUCCESS',
+    status status_enum DEFAULT 'STATUS_SUCCESS',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (audit_id, created)
 ) PARTITION BY RANGE (created);
@@ -820,85 +835,105 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- =============================================================================
--- MESH NETWORK STORAGE
+-- MESH SERVICE SCHEMA
 -- =============================================================================
 
--- Mesh messages for inter-node communication
-CREATE TABLE mesh_messages (
-    id VARCHAR(64) PRIMARY KEY,
-    from_node VARCHAR(64) NOT NULL,
-    to_node VARCHAR(64) NOT NULL,
-    content BYTEA NOT NULL,
-    timestamp BIGINT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE mesh_lsa_versions (
+    node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    version BIGINT NOT NULL,
+    hash VARCHAR(64) NOT NULL,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (node_id, version)
 );
 
--- Mesh state storage for distributed state management
-CREATE TABLE mesh_state (
-    key VARCHAR(255) PRIMARY KEY,
-    value BYTEA NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+-- Raft consensus system (unified for MCG and DSG)
+CREATE TABLE mesh_raft_groups (
+    id ulid PRIMARY KEY DEFAULT generate_ulid('raft'),
+    type VARCHAR(10) NOT NULL CHECK (type IN ('MCG', 'DSG')),
+    members JSONB NOT NULL DEFAULT '[]',
+    term BIGINT DEFAULT 0,
+    leader_id ulid REFERENCES nodes(node_id) ON DELETE SET NULL,
+    meta JSONB DEFAULT '{}',
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Mesh node state for individual node state tracking
-CREATE TABLE mesh_node_state (
-    node_id VARCHAR(64) PRIMARY KEY,
-    state JSONB NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Mesh consensus log for distributed consensus operations
-CREATE TABLE mesh_consensus_log (
-    term BIGINT NOT NULL,
-    index BIGINT NOT NULL,
-    entry JSONB NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (term, index)
-);
-
--- Mesh runtime routing table (dynamic routes for message routing)
-CREATE TABLE mesh_routing_table (
-    destination VARCHAR(255) PRIMARY KEY,
-    route JSONB NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Mesh runtime configuration (ephemeral config, different from mesh table which is persistent admin config)
-CREATE TABLE mesh_runtime_config (
-    key VARCHAR(255) PRIMARY KEY,
-    value JSONB NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- =============================================================================
--- RAFT CONSENSUS SYSTEM TABLES
--- =============================================================================
-
--- Raft log entries for distributed consensus
-CREATE TABLE raft_logs (
-    id BIGSERIAL PRIMARY KEY,
-    group_id VARCHAR(255) NOT NULL,
+CREATE TABLE mesh_raft_log (
+    group_id ulid NOT NULL REFERENCES mesh_raft_groups(id) ON DELETE CASCADE,
     log_index BIGINT NOT NULL,
-    log_term BIGINT NOT NULL,
-    log_type SMALLINT NOT NULL,
-    log_data BYTEA,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(group_id, log_index)
+    term BIGINT NOT NULL,
+    payload BYTEA NOT NULL,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id, log_index)
 );
 
--- Raft stable store for persistent state
-CREATE TABLE raft_stable_store (
-    id BIGSERIAL PRIMARY KEY,
-    group_id VARCHAR(255) NOT NULL,
-    key_name VARCHAR(255) NOT NULL,
-    value BYTEA,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(group_id, key_name)
+-- Stream management
+CREATE TABLE mesh_streams (
+    id ulid PRIMARY KEY DEFAULT generate_ulid('strm'),
+    tenant_id ulid REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    src_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    dst_nodes JSONB NOT NULL DEFAULT '[]',
+    qos VARCHAR(20) DEFAULT 'QOS_NORMAL' CHECK (qos IN ('QOS_CRITICAL', 'QOS_HIGH', 'QOS_NORMAL', 'QOS_LOW')),
+    priority INTEGER DEFAULT 0,
+    meta JSONB DEFAULT '{}',
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE mesh_stream_offsets (
+    stream_id ulid NOT NULL REFERENCES mesh_streams(id) ON DELETE CASCADE,
+    node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    committed_seq BIGINT DEFAULT 0,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (stream_id, node_id)
+);
+
+CREATE TABLE mesh_delivery_log (
+    stream_id ulid NOT NULL REFERENCES mesh_streams(id) ON DELETE CASCADE,
+    message_id ulid NOT NULL,
+    src_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    dst_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    state status_enum DEFAULT 'STATUS_RECEIVED',
+    err TEXT DEFAULT '',
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (stream_id, message_id, dst_node)
+);
+
+-- Message queuing (outbox pattern)
+CREATE TABLE mesh_outbox (
+    stream_id ulid NOT NULL REFERENCES mesh_streams(id) ON DELETE CASCADE,
+    message_id ulid NOT NULL,
+    payload BYTEA NOT NULL,
+    headers JSONB DEFAULT '{}',
+    next_attempt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    attempts INTEGER DEFAULT 0,
+    status status_enum DEFAULT 'STATUS_PENDING',
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (stream_id, message_id)
+);
+
+CREATE TABLE mesh_inbox (
+    stream_id ulid NOT NULL REFERENCES mesh_streams(id) ON DELETE CASCADE,
+    message_id ulid NOT NULL,
+    payload BYTEA NOT NULL,
+    headers JSONB DEFAULT '{}',
+    received TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    processed TIMESTAMP,
+    PRIMARY KEY (stream_id, message_id)
+);
+
+-- Topology and routing
+CREATE TABLE mesh_topology_snapshots (
+    version BIGINT PRIMARY KEY,
+    graph JSONB NOT NULL,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE mesh_config_kv (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- =============================================================================
@@ -1040,9 +1075,6 @@ CREATE INDEX idx_anchors_node_id ON anchors(connected_to_node_id) WHERE connecte
 -- Regional and mesh network queries
 CREATE INDEX idx_regions_global ON regions(global_region) WHERE global_region = true;
 CREATE INDEX idx_nodes_region_id ON nodes(region_id) WHERE region_id IS NOT NULL;
-CREATE INDEX idx_routes_source_node ON routes(source_node_id);
-CREATE INDEX idx_routes_target_node ON routes(target_node_id);
-CREATE INDEX idx_routes_bidirectional ON routes(source_node_id, target_node_id, route_bidirectional);
 
 -- Audit and compliance queries
 CREATE INDEX idx_audit_log_tenant_id ON audit_log(tenant_id);
@@ -1083,28 +1115,6 @@ CREATE INDEX idx_mcpresources_config_gin ON mcpresources USING gin(mcpresource_c
 CREATE INDEX idx_mcptools_config_gin ON mcptools USING gin(mcptool_config);
 CREATE INDEX idx_mcpprompts_config_gin ON mcpprompts USING gin(mcpprompt_config);
 
--- Mesh network indexes for performance
-CREATE INDEX idx_mesh_messages_timestamp ON mesh_messages(timestamp);
-CREATE INDEX idx_mesh_messages_from_node ON mesh_messages(from_node);
-CREATE INDEX idx_mesh_messages_to_node ON mesh_messages(to_node);
-CREATE INDEX idx_mesh_messages_from_to ON mesh_messages(from_node, to_node);
-CREATE INDEX idx_mesh_consensus_log_term ON mesh_consensus_log(term);
-CREATE INDEX idx_mesh_consensus_log_index ON mesh_consensus_log(index);
-CREATE INDEX idx_mesh_consensus_log_term_index ON mesh_consensus_log(term, index);
-CREATE INDEX idx_mesh_node_state_node_id ON mesh_node_state(node_id);
-CREATE INDEX idx_mesh_routing_table_destination ON mesh_routing_table(destination);
-CREATE INDEX idx_mesh_runtime_config_key ON mesh_runtime_config(key);
-CREATE INDEX idx_mesh_state_key ON mesh_state(key);
-
--- Raft consensus indexes for performance
-CREATE INDEX idx_raft_logs_group_index ON raft_logs(group_id, log_index);
-CREATE INDEX idx_raft_logs_group_term ON raft_logs(group_id, log_term);
-CREATE INDEX idx_raft_logs_index_range ON raft_logs(group_id, log_index) WHERE log_index > 0;
-CREATE INDEX idx_raft_logs_term_range ON raft_logs(group_id, log_term) WHERE log_term > 0;
-CREATE INDEX idx_raft_stable_store_group_key ON raft_stable_store(group_id, key_name);
-CREATE INDEX idx_raft_stable_store_group_id ON raft_stable_store(group_id);
-CREATE INDEX idx_raft_stable_store_updated ON raft_stable_store(group_id, updated_at);
-
 -- Resource name indexes
 CREATE INDEX idx_workspaces_name ON workspaces(workspace_name);
 CREATE INDEX idx_regions_name ON regions(region_name);
@@ -1126,5 +1136,16 @@ CREATE INDEX idx_license_keys_key_hash ON license_keys(key_hash);
 CREATE INDEX idx_license_feature_usage_feature ON license_feature_usage(feature);
 CREATE INDEX idx_license_feature_usage_local_identity ON license_feature_usage(local_identity);
 CREATE INDEX idx_license_feature_usage_mesh_id ON license_feature_usage(mesh_id);
+
+-- Mesh network indexes for performance
+CREATE INDEX idx_mesh_status ON mesh(status);
+CREATE INDEX idx_nodes_status ON nodes(status);
+CREATE INDEX idx_nodes_last_seen ON nodes(last_seen);
+CREATE INDEX idx_routes_nodes ON routes(a_node, b_node);
+CREATE INDEX idx_routes_status ON routes(status);
+CREATE INDEX idx_stream_offsets_updated ON mesh_stream_offsets(updated);
+CREATE INDEX idx_outbox_next_attempt ON mesh_outbox(next_attempt) WHERE status = 'STATUS_PENDING';
+CREATE INDEX idx_outbox_stream_status ON mesh_outbox(stream_id, status);
+CREATE INDEX idx_inbox_processed ON mesh_inbox(processed) WHERE processed IS NULL;
 
 `

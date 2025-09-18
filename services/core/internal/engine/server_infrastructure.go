@@ -6,7 +6,6 @@ import (
 
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
-	meshv1 "github.com/redbco/redb-open/api/proto/mesh/v1"
 	"github.com/redbco/redb-open/services/core/internal/services/mesh"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -50,26 +49,9 @@ func (s *Server) SeedMesh(ctx context.Context, req *corev1.SeedMeshRequest) (*co
 		s.engine.logger.Warnf("Failed to set node status to JOINING: %v", err)
 	}
 
-	// Call mesh service via gRPC to start runtime mesh
-	meshClient := s.engine.GetMeshClient()
-	if meshClient != nil {
-		startReq := &meshv1.StartMeshRequest{
-			MeshId: createdMesh.ID,
-			NodeId: localNode.ID,
-		}
-
-		startResp, err := meshClient.StartMesh(ctx, startReq)
-		if err != nil {
-			s.engine.logger.Errorf("Failed to start mesh runtime: %v", err)
-			// Don't fail the whole operation, just log the error
-		} else if !startResp.Success {
-			s.engine.logger.Errorf("Mesh runtime start failed: %s", startResp.Error)
-		} else {
-			s.engine.logger.Infof("Mesh runtime started successfully for mesh %s with node %s", startResp.MeshId, startResp.NodeId)
-		}
-	} else {
-		s.engine.logger.Warnf("Mesh client not available - runtime start skipped")
-	}
+	// Note: Mesh runtime starts automatically with the mesh service
+	// No explicit StartMesh call needed - this is handled by the mesh service itself
+	s.engine.logger.Infof("Mesh %s created with local node %s. Mesh runtime will start automatically.", createdMesh.Name, localNode.Name)
 
 	// Convert to protobuf format
 	protoMesh := s.meshToProto(createdMesh)
@@ -113,26 +95,11 @@ func (s *Server) JoinMesh(ctx context.Context, req *corev1.JoinMeshRequest) (*co
 		return nil, status.Errorf(codes.Internal, "failed to create node: %v", err)
 	}
 
-	// Call mesh service via gRPC to start runtime mesh
-	meshClient := s.engine.GetMeshClient()
-	if meshClient != nil {
-		startReq := &meshv1.StartMeshRequest{
-			MeshId: req.MeshId,
-			NodeId: createdNode.ID,
-		}
-
-		startResp, err := meshClient.StartMesh(ctx, startReq)
-		if err != nil {
-			s.engine.logger.Errorf("Failed to start mesh runtime: %v", err)
-			// Don't fail the whole operation, just log the error
-		} else if !startResp.Success {
-			s.engine.logger.Errorf("Mesh runtime start failed: %s", startResp.Error)
-		} else {
-			s.engine.logger.Infof("Mesh runtime started successfully for mesh %s with node %s", startResp.MeshId, startResp.NodeId)
-		}
-	} else {
-		s.engine.logger.Warnf("Mesh client not available - runtime start skipped")
-	}
+	// Note: Mesh runtime starts automatically with the mesh service
+	// For joining a mesh, we need to establish connections to existing nodes
+	// TODO: Implement AddSession calls to connect to existing mesh nodes
+	// This requires getting the list of existing nodes in the mesh and calling AddSession for each
+	s.engine.logger.Infof("Node %s created for mesh %s. Mesh runtime will start automatically. Connection to existing nodes pending implementation.", createdNode.Name, req.MeshId)
 
 	return &corev1.JoinMeshResponse{
 		Message: fmt.Sprintf("Node %s created for mesh %s. Runtime initialization pending.", createdNode.Name, existingMesh.Name),

@@ -1,0 +1,29 @@
+[package]
+name = "mesh-wire"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Wire protocol framing, encoding/decoding, fast headers, and chunking for mesh"
+
+[dependencies]
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+bitflags = { version = "2.4", features = ["serde"] }
+ciborium = "0.2"
+crc32fast.workspace = true
+smallvec = "1.11"
+chacha20poly1305 = { workspace = true, optional = true }
+aes-gcm = { version = "0.10", optional = true }
+
+[features]
+default = []
+crypto = ["chacha20poly1305", "aes-gcm"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

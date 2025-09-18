@@ -81,13 +81,26 @@ services:
     required: true
     executable: ./bin/redb-mesh
     args:
-      - --port=50056
+      - --grpc-bind=127.0.0.1:50056
+      - --enable-grpc
+      - --listen=0.0.0.0:10001
       - --supervisor=localhost:50000
+      - --config=config.yaml
     dependencies:
       - core
     environment:
       SERVICE_NAME: mesh
-    external_port: 8443
+    external_port: 10001
+    config:
+      services.mesh.external_port: "10001"
+      services.mesh.timeout: "30"
+      services.mesh.mesh_id: "default-mesh"
+      services.mesh.node_id: "1001"
+      services.mesh.mesh_token: ""
+      services.mesh.tls.enabled: "true"
+      services.mesh.tls.cert_file: "./node-1001-cert.pem"
+      services.mesh.tls.key_file: "./node-1001-key.pem"
+      services.mesh.tls.ca_file: "./mesh-ca-cert.pem"
 
   anchor:
     enabled: true
