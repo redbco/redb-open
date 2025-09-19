@@ -10,7 +10,7 @@ const getSessionName = () => {
 };
 
 const getUserAgent = () => {
-  return process.env.NEXT_PUBLIC_USER_AGENT || 'redb-client-dashboard/1.0.0';
+  return process.env.NEXT_PUBLIC_USER_AGENT || 'redb-dashboard/1.0.0';
 };
 
 // Get system information for session metadata

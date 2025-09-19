@@ -1,377 +1,84 @@
-# reDB Node
-## The Data Portability Platform for the AI Era
+## reDB Node
+### The Data Portability Platform for the AI Era
 
-reDB is a distributed, policy-driven data mesh that enables True Data Portability across any mix of databases, warehouses, clouds, and environments. Built for developers, architects, and AI systems, reDB unifies data access, data mobility, and schema transformation into one open platform.
+reDB is a distributed, policy-driven data mesh that unifies access, mobility, and transformation across heterogeneous databases and clouds. Built for developers, data platform teams, and AI agents.
 
-## Why reDB?
+### What’s new
 
-Modern enterprises operate in fragmented data ecosystems: multi-cloud, hybrid, on-prem, and filled with incompatible database technologies—relational, document, key-value, vector, graph, and more. These silos limit agility, complicate migrations, and throttle AI.
+- ⚙️ Mesh microservice rewritten in Rust for efficiency and correctness (Tokio + Tonic)
+- 🧠 Major upgrades to `pkg/unifiedmodel` and the Unified Model service: richer conversion engine, analytics/metrics, and privacy-aware detection
+- 🧰 Makefile now builds Go services and the Rust mesh; Rust toolchain is required
+- 📄 Documentation structure and content updated
 
-reDB solves this with a unified approach to enterprise data infrastructure:
-- 🔌 reDB Mesh: A decentralized network that securely connects all your databases—cloud, on-prem, or hybrid—without brittle pipelines or manual tunnels.
-- 🧠 Unified Schema Model: Translate and normalize structures across relational, NoSQL, and graph databases into a single, interoperable model.
-- 🚀 Zero-Downtime Migration & Replication: Replicate and migrate live data across environments—reliably, securely, and in real time.
-- 🔐 Policy-Driven Data Obfuscation: Automatically protect sensitive data with contextual masking and privacy rules at the access layer.
-- 🤖 AI-Ready Access: Through the Model Context Protocol (MCP), reDB gives AI agents and tools frictionless access to data with full compliance and schema context.
+### Why reDB
 
-This project is for:
-- Data platform teams who need real-time migrations and multi-database interoperability
-- AI/ML engineers who need contextual access to distributed data
-- Developers who want production-like data access with built-in privacy
-- Enterprises undergoing cloud transitions, database modernization, or data compliance transformations
+- 🔌 Connect any mix of SQL/NoSQL/vector/graph without brittle pipelines
+- 🧠 Unified schema model across paradigms with conversion and diffing
+- 🚀 Zero-downtime replication and migration workflows
+- 🔐 Policy-first access with masking and tenant isolation
+- 🤖 AI-native via MCP: expose data resources and tools to LLMs safely
 
-Key capabilities that this project aims to provide:
-- ✅ Multi-database interoperability across SQL, NoSQL, vector, and graph
-- ✅ Automated schema versioning and transformation
-- ✅ Zero-downtime, bidirectional replication
-- ✅ Real-time developer data environments with obfuscation
-- ✅ Quantum-resistant encryption and policy-based access control
-- ✅ Distributed MCP server for scalable AI/IDE integration
+## Build & Quick Start
 
-**We want to build the foundation for future-proof data infrastructure.**
-
-## Build Instructions
-
-This project uses Make for building and managing the application.
-
-### Prerequisites
-
-- **Go 1.23+** - [Download](https://golang.org/dl/)
-- **PostgreSQL 17+** - [Download](https://www.postgresql.org/download/)
-- **Redis Server** - [Download](https://redis.io/download)
-- **Protocol Buffers Compiler** - [Installation Guide](https://grpc.io/docs/protoc-installation/)
-
-### Quick Start
+Prerequisites: Go 1.23+, Rust (stable), protoc, PostgreSQL 17+, Redis
 
 ```bash
-# Clone the repository
 git clone https://github.com/redbco/redb-open.git
 cd redb-open
-
-# Install development tools
-make dev-tools
-
-# Build for local development
-make local
-
-# Run tests
-make test
-```
-
-### Available Make Targets
-
-- `make all` - Clean, generate proto files, build, and test
-- `make build` - Build all services (cross-compile for Linux by default)
-- `make local` - Build for local development (host OS)
-- `make dev` - Development build (clean, proto, build, test)
-- `make clean` - Remove build artifacts
-- `make test` - Run all tests
-- `make proto` - Generate Protocol Buffer code
-- `make lint` - Run linter
-- `make dev-tools` - Install development tools
-- `make build-all` - Build for multiple platforms (Linux/macOS, amd64/arm64)
-- `make install` - Install binaries (Linux only)
-- `make version` - Show version information
-
-The build process creates binaries in the `bin/` directory for local builds and `build/` directory for multi-platform builds.
-
-## Installation Instructions
-
-### From Source
-
-```bash
-# Clone and build
-git clone https://github.com/redbco/redb-open.git
-cd redb-open
-make build
-
-# Install PostgreSQL 17 as prerequisite
-sudo apt install -y postgresql-common
-sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
-sudo apt update
-sudo apt -y install postgresql
-
-# Create an admin user that the application can use for initialization
-sudo -u postgres psql
-CREATE USER your_admin_user WITH ENCRYPTED PASSWORD 'your_admin_password' CREATEDB CREATEROLE LOGIN;
-exit
-
-# Install Redis Server as a prerequisite
-sudo apt install redis-server
-
-# Initialize the reDB installation
+make dev-tools   # optional Go tools
+make local       # builds Go services + Rust mesh
 ./bin/redb-node --initialize
-
-# If prompted, provide the PostgreSQL details
-Enter PostgreSQL username [postgres]: your_admin_user
-Enter PostgreSQL password: *your_admin_password*
-Enter PostgreSQL host [localhost]: 
-Enter PostgreSQL port [5432]: 
-
-# Select "y" to create the default tenant and user - required for a fresh install
-Would you like to create a default tenant and user? (Y/n): y
-
-# Enter the details of the default tenant and user
-Enter tenant name: tenant_name
-Enter admin user email: you@domain.com
-Enter admin user password: *your_new_login_password*
-Confirm password: *your_new_login_password*
-
-# Initialization is complete, ready to start the application
-./bin/redb-node
-
-# The application can be run in the background as a service
+./bin/redb-node &
+./bin/redb-cli auth login
 ```
 
-### Using the application for the first time
+Full install docs: see `docs/INSTALL.md`.
+
+### Make targets
+
+- `make local`: build for host OS/arch
+- `make build`: cross-compile Go for Linux by default + Rust mesh
+- `make build-all`: linux/darwin/windows on amd64/arm64
+- `make test`: run Go and Rust tests
+- `make proto`, `make lint`, `make dev`
+
+## First login
+
+After starting, authenticate with the CLI:
 
 ```bash
-# Logging in
-redb@redb-demo:~$ ./bin/redb-cli auth login
-Username (email): demo@redb.co
-Password: 
-Hostname (default: localhost:8080): 
-Tenant URL: demo
-Successfully logged in as demo@redb.co
-Session: reDB CLI (ID: session_1752410814767386264_1nkJhJM4)
-
-Select workspace (press Enter to skip): 
-No workspace selected. Use 'redb-cli select workspace <name>' to select one later.
-redb@redb-demo:~$ 
-
-# Creating your first workspace
-redb@redb-demo:~$ ./bin/redb-cli workspaces add
-Workspace Name: demo
-Description (optional): reDB demo workspace
-Successfully created workspace 'demo' (ID: ws_0000019803D4CBCEBCA9C6AB2D)
-redb@redb-demo:~$
-
-# Selecting the current workspace
-redb@redb-demo:~$ ./bin/redb-cli select workspace demo
-Selected workspace: demo (ID: ws_0000019803D4CBCEBCA9C6AB2D)
-redb@redb-demo:~$
+./bin/redb-cli auth login
 ```
 
-## Architecture Overview
+## Architecture (short)
 
-The reDB Node consists of 12 microservices orchestrated by a supervisor service, providing a comprehensive platform for managing heterogeneous database environments.
+Supervisor orchestrates microservices for Security, Core, Unified Model, Anchor, Transformation, Integration, Mesh, Client API, Webhook, MCP Server, and clients (CLI, Dashboard). Ports and deeper details in `docs/ARCHITECTURE.md`.
 
-## Microservices Overview
+## Database support
 
-### Foundation Services
+Adapters cover relational, document, graph, vector, search, key-value, columnar, wide-column, and object storage. See `docs/DATABASE_SUPPORT.md` for the current matrix and how to add adapters.
 
-#### **Supervisor Service** (`cmd/supervisor/`) - Internal gRPC Port 50000
-Central service orchestrator managing lifecycle, health monitoring, and configuration distribution for all microservices.
+## CLI
 
-#### **Security Service** (`services/security/`) - Internal gRPC Port 50051
-Authentication and authorization hub providing JWT tokens, session management, RBAC, and multi-tenant security.
+See `docs/CLI_REFERENCE.md` for command groups and examples.
 
-#### **Core Service** (`services/core/`) - Internal gRPC Port 50055
-Central business logic hub managing tenants, workspaces, databases, repositories, mappings, and policies.
+## Unified Model
 
-### Data Services
+Shared schema layer and microservice for cross-paradigm representation, comparison, analytics, conversion, and detection. See `docs/UNIFIED_MODEL.md`.
 
-#### **Unified Model Service** (`services/unifiedmodel/`) - Internal gRPC Port 50052
-Database abstraction layer with 16+ database adapters, schema translation, and cross-database type conversion.
-
-#### **Anchor Service** (`services/anchor/`) - Internal gRPC Port 50057
-Database connectivity service managing direct connections, schema monitoring, and data replication across all supported databases.
-
-#### **Transformation Service** (`services/transformation/`) - Internal gRPC Port 50054
-Data processing service providing internal transformation functions (e.g., formatting, hashing, encoding) and schema-aware mutations.
-
-#### **Integration Service** (`services/integration/`) - Internal gRPC Port 50058
-Manages external integrations such as LLMs, RAG systems, and third-party processors. Provides CRUD for integration definitions and an execution endpoint to invoke integrations over gRPC.
-
-### Network Services
-
-#### **Mesh Service** (`services/mesh/`) - Internal gRPC Port 50056
-Distributed coordination service handling inter-node communication, consensus management, and message routing via WebSocket.
-
-### API Services
-
-#### **Client API** (`services/clientapi/`) - Internal gRPC Port 50059, External HTTP Port 8080
-Primary REST API providing 50+ endpoints for resource management, serving CLI and web clients.
-
-### Integration Services
-
-#### **Webhook Service** (`services/webhook/`) - Internal gRPC Port 50053
-External system integration via webhooks for sending events to external systems.
-
-#### **MCP Server Service** (`services/mcpserver/`) - Internal gRPC Port 50060
-Model Context Protocol server enabling AI/LLM integration with database resources, tools, and prompt templates.
-
-### Client Applications
-
-#### **CLI** (`cmd/cli/`)
-Command-line interface for system management, database operations, and administrative tasks.
-
-#### **Client Dashboard** (`web/client-dashboard/`) - External HTTP Port 3000
-Multi-tenant web dashboard providing comprehensive operational management across three architectural levels:
-
-- **Tenant Level**: Organization-wide operations including workspace management, mesh infrastructure monitoring, user access control, and integration management (RAG, LLM, Webhooks)
-- **Workspace Level**: Environment-specific operations including database instance monitoring, schema repository management, data relationships, job tracking, and performance analytics  
-- **Mesh Level**: Network infrastructure management including satellite nodes, anchor nodes, regional distribution, and topology visualization
-
-**Key Features:**
-- **Operational Dashboards**: Real-time monitoring with health indicators, performance metrics, and activity tracking
-- **Dual-Sidebar Navigation**: Icon-based tenant navigation with contextual aside menus for workspace and mesh operations
-- **Multi-Environment Support**: Production, staging, development, and analytics workspace management
-- **Schema Version Control**: Git-like repository management for database schemas with branching and merging
-- **Data Relationship Monitoring**: Active replication and migration tracking with performance analytics
-- **User Profile Management**: Complete account management with security settings, preferences, and activity history
-- **Theme Support**: Dark/light mode with system preference detection
-
-**Technology Stack:** Next.js 15, React 19, TypeScript 5, Tailwind CSS
-
-## Database Support Matrix
-
-The Anchor Service supports 27+ database types across 8 paradigms through specialized adapters:
-
-### Database Categorization by Paradigm
-
-#### **RELATIONAL**
-**Core Characteristics**: Row-based storage, normalized structure, SQL queries, ACID transactions
-
-- **PostgreSQL** (postgres)
-- **MySQL** (mysql)
-- **Microsoft SQL Server** (mssql)
-- **Oracle Database** (oracle)
-- **MariaDB** (mariadb)
-- **IBM Db2** (db2)
-- **CockroachDB** (cockroachdb) - Distributed SQL but fundamentally relational
-- **Snowflake** (snowflake) - Cloud data warehouse but SQL-based relational
-- **DuckDB** (duckdb) - Analytical but fundamentally relational with SQL
-
-#### **DOCUMENT**
-**Core Characteristics**: Document-based storage, flexible schema, nested structures
-
-- **MongoDB** (mongodb)
-- **Azure CosmosDB** (cosmosdb) - Multi-model but primarily document-oriented
-
-#### **GRAPH**
-**Core Characteristics**: Graph-based storage, relationships as first-class citizens, traversal queries
-
-- **Neo4j** (neo4j)
-- **EdgeDB** (edgedb) - Object-relational but with graph capabilities and object modeling
-
-#### **VECTOR**
-**Core Characteristics**: High-dimensional vector storage, similarity search, embedding-focused
-
-- **Chroma** (chroma)
-- **Milvus** (milvus) - Includes Zilliz (managed milvus)
-- **Pinecone** (pinecone)
-- **LanceDB** (lancedb)
-- **Weaviate** (weaviate)
-
-#### **COLUMNAR**
-**Core Characteristics**: Column-oriented storage, optimized for analytical queries, time-series focus
-
-- **ClickHouse** (clickhouse)
-- **Apache Cassandra** (cassandra) - Wide-column store, partition-key based
-
-#### **KEY_VALUE**
-**Core Characteristics**: Simple key-value pairs, in-memory focus, limited query capabilities
-
-- **Redis** (redis)
-
-#### **SEARCH**
-**Core Characteristics**: Inverted index storage, full-text search optimization, document scoring
-
-- **Elasticsearch** (elasticsearch)
-
-#### **WIDE_COLUMN**
-**Core Characteristics**: Flexible schema, partition-based, NoSQL query patterns
-
-- **Amazon DynamoDB** (dynamodb)
-
-#### **OBJECT_STORAGE**
-**Core Characteristics**: File/blob storage, hierarchical key structure, metadata-based organization
-
-- **Amazon S3** (s3)
-- **Google Cloud Storage** (gcs)
-- **Azure Blob Storage** (azure_blob)
-- **MinIO** (minio)
-
-### Summary by Category
-
-| Category | Count | Databases |
-|----------|-------|-----------|
-| **RELATIONAL** | 9 | postgres, mysql, mssql, oracle, mariadb, db2, cockroachdb, snowflake, duckdb |
-| **DOCUMENT** | 2 | mongodb, cosmosdb |
-| **GRAPH** | 2 | neo4j, edgedb |
-| **VECTOR** | 5 | chroma, milvus, pinecone, lancedb, weaviate |
-| **COLUMNAR** | 2 | clickhouse, cassandra |
-| **KEY_VALUE** | 1 | redis |
-| **SEARCH** | 1 | elasticsearch |
-| **WIDE_COLUMN** | 1 | dynamodb |
-| **OBJECT_STORAGE** | 4 | s3, gcs, azure_blob, minio |
-
-**Total**: 27 databases across 8 paradigms
-
-## CLI Command Interface
-
-The CLI provides commands organized into functional categories:
-
-### Core Resource Management
-- **Authentication**: `auth login`, `auth logout`, `auth profile`, `auth status`, `auth password`
-- **Tenants & Users**: `tenants list`, `tenants show`, `tenants add`, `tenants modify`, `tenants delete`
-- **Workspaces & Environments**: `workspaces list`, `workspaces show`, `workspaces add`, `workspaces modify`, `workspaces delete`
-- **Regions**: `regions list`, `regions show`, `regions add`, `regions modify`, `regions delete`
-
-### Database Operations
-- **Instances**: `instances connect`, `instances list`, `instances show`, `instances modify`
-- **Databases**: `databases connect`, `databases list`, `databases wipe`, `databases clone table-data`
-- **Schema Management**: Database schema inspection and modification
-
-### Version Control & Schema
-- **Repositories**: `repos list`, `repos show`, `repos add`, `repos modify`
-- **Branches**: `branches show`, `branches attach`, `branches detach`
-- **Commits**: `commits show`, schema version management
-
-### Data Integration
-- **Mappings**: `mappings list`, `mappings add table-mapping`, column-to-column relationship definitions
-- **Relationships**: Replication and migration relationship management
-- **Transformations**: Data transformation and obfuscation functions
-
-### Mesh & Network
-- **Mesh Operations**: `mesh seed`, `mesh join`, `mesh show topology`, node management
-- **Satellites & Anchors**: Specialized node type management
-- **Routes**: Network topology and routing configuration
-
-### AI Integration
-- **MCP Servers**: Model Context Protocol server management
-- **MCP Resources**: AI-accessible data resource configuration
-- **MCP Tools**: AI tool and function definitions
-
-## Shared Package Libraries
-
-The `pkg/` directory contains reusable components shared across all microservices:
-
-- **`pkg/config/`** - Centralized configuration management and validation
-- **`pkg/database/`** - Database connection utilities (PostgreSQL, Redis)
-- **`pkg/encryption/`** - Cryptographic operations and secure key management
-- **`pkg/grpc/`** - gRPC client/server utilities and middleware
-- **`pkg/health/`** - Health check framework and service monitoring
-- **`pkg/keyring/`** - Secure key storage and cryptographic key management
-- **`pkg/logger/`** - Structured logging framework used across all services
-- **`pkg/models/`** - Common data models and shared structures
-- **`pkg/service/`** - BaseService framework for standardized microservice lifecycle
-- **`pkg/syslog/`** - System logging integration and configuration
-
-## Project Structure Overview
+## Project structure
 
 ```
 redb-open/
-├── cmd/                    # Command-line applications
-│   ├── cli/               # CLI client (200+ commands)
-│   └── supervisor/        # Service orchestrator
-├── services/              # Core microservices
+├── cmd/                  # Command-line applications
+│   ├── cli/              # CLI client (200+ commands)
+│   └── supervisor/       # Service orchestrator
+├── services/             # Core microservices
 │   ├── anchor/           # Database connectivity (16+ adapters)
 │   ├── clientapi/        # Primary REST API (50+ endpoints)
 │   ├── core/             # Central business logic hub
 │   ├── mcpserver/        # AI/LLM integration (MCP protocol)
-│   ├── mesh/             # Distributed coordination and consensus
+│   ├── mesh/             # Mesh protocol and networking
 │   ├── queryapi/         # Database query execution interface
 │   ├── security/         # Authentication and authorization
 │   ├── serviceapi/       # Administrative and service management
@@ -379,7 +86,7 @@ redb-open/
 │   ├── integration/      # External integrations (LLMs, RAG, custom)
 │   ├── unifiedmodel/     # Database abstraction and schema translation
 │   └── webhook/          # External system integration
-├── pkg/                   # Shared libraries and utilities
+├── pkg/                  # Shared libraries and utilities
 │   ├── config/           # Configuration management
 │   ├── database/         # Database connection utilities
 │   ├── encryption/       # Cryptographic operations
@@ -390,89 +97,46 @@ redb-open/
 │   ├── models/           # Common data models
 │   ├── service/          # BaseService lifecycle framework
 │   └── syslog/           # System logging integration
+├── web/dashboard/        # Web dashboard
 ├── api/proto/            # Protocol Buffer definitions
 └── scripts/              # Database schemas and deployment
 ```
 
-## Key Architectural Principles
+## Docs
 
-### 1. **Shared gRPC Server Pattern**
-All services use a standardized gRPC communication pattern eliminating port conflicts and ensuring proper service registration through the BaseService framework.
-
-### 2. **Microservice Lifecycle Management**
-The BaseService framework (`pkg/service/`) provides standardized service initialization, health monitoring, graceful shutdown, and dependency management across all services.
-
-### 3. **Database Abstraction Layer**
-The Unified Model Service provides a common interface for multiple database types, enabling cross-database operations, schema translation, and type conversion without vendor lock-in.
-
-### 4. **Distributed Mesh Architecture**
-The Mesh Service enables multi-node deployments with peer-to-peer communication, consensus algorithms, and distributed state synchronization for high availability.
-
-### 5. **Security-First Design**
-All requests are authenticated through the Security Service using JWT tokens, session management, and role-based access control (RBAC) with multi-tenant isolation.
-
-### 6. **Event-Driven Integration**
-The Webhook Service provides reliable event delivery to external systems with retry logic and delivery guarantees for real-time notifications.
-
-### 7. **AI-Native Architecture**
-Built-in Model Context Protocol (MCP) server enables seamless AI/LLM integration with database resources, tools, and prompt templates.
+- Architecture: `docs/ARCHITECTURE.md`
+- Install & run: `docs/INSTALL.md`
+- Database support: `docs/DATABASE_SUPPORT.md`
+- CLI reference: `docs/CLI_REFERENCE.md`
+- Dashboard: `docs/DASHBOARD.md`
+ - Anchor service: `docs/ANCHOR.md`
 
 ## Contributing
 
-We welcome contributions from the open source community! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details on how to:
-
-- Set up your development environment
-- Submit bug reports and feature requests
-- Contribute code and documentation
-- Follow our coding standards
-- Participate in our community
-
-### Current Governance Phase
-
-This project is currently in **Phase 1: Single Maintainer** governance. This means:
-- 1 approval required for pull requests
-- Basic CI/CD checks (build, test, lint, security)
-- Maintainer bypass available for emergencies
-- Simple CODEOWNERS structure
-
-As the community grows, governance will evolve through phases. See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete governance evolution plan.
+We welcome issues and PRs. Read `CONTRIBUTING.md` for guidelines and our simple governance.
 
 ## License
 
-This project is dual-licensed:
+AGPL-3.0 for open-source use (`LICENSE`). Commercial license available (`LICENSE-COMMERCIAL.md`).
 
-- **Open Source**: [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0)
-- **Commercial**: Available under a commercial license for proprietary use
+## Getting started (recap)
 
-### AGPL-3.0 License Summary
-
-The AGPL-3.0 license requires that:
-- Any modifications to the software must be made available to users
-- If you run a modified version on a server and let other users communicate with it there, you must make the modified source code available to them
-- The source code must be accessible to all users who interact with the software over a network
-
-For commercial licensing options, please see [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) or contact us directly.
-
-## Getting Started
-
-1. **Install Prerequisites**: Go 1.23+, PostgreSQL 17, Redis Server
-2. **Build the System**: `make local` or `make build`
-3. **Initialize**: `./bin/redb-node --initialize`
-4. **Start Services**: `./bin/redb-node`
-5. **Access CLI**: `./bin/redb-cli auth login`
-
-For detailed installation instructions, see the Installation Instructions section above.
+1) Install: Go 1.23+, Rust, protoc, PostgreSQL 17, Redis
+2) Build: `make local`
+3) Initialize: `./bin/redb-node --initialize`
+4) Start: `./bin/redb-node`
+5) Login: `./bin/redb-cli auth login`
 
 ---
 
 **reDB Node** provides a comprehensive open source platform for managing heterogeneous database environments with advanced features including schema version control, cross-database replication, data transformation pipelines, distributed mesh networking, and AI-powered database operations.
 
-## Support
+## Community
 
-- **Documentation**: [Project Wiki](https://github.com/redbco/redb-open/wiki)
-- **Issues**: [GitHub Issues](https://github.com/redbco/redb-open/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/redbco/redb-open/discussions)
-- **Community**: [Discord] https://discord.gg/K3UkDYXG77
+- Documentation: [Project Wiki](https://github.com/redbco/redb-open/wiki)
+- Issues: [GitHub Issues](https://github.com/redbco/redb-open/issues)
+- Discussions: [GitHub Discussions](https://github.com/redbco/redb-open/discussions)
+- Discord: [Join us](https://discord.gg/K3UkDYXG77)
 
 ---
 

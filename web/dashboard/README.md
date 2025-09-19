@@ -15,7 +15,7 @@ The dashboard follows a three-tier architectural pattern:
 - **Mesh Level**: Network infrastructure management (satellites, anchors, regions)
 
 ```
-web/client-dashboard/
+web/dashboard/
 ├── src/
 │   ├── app/                           # Next.js 15 App Router
 │   │   ├── [tenant]/                  # Tenant-scoped routes
@@ -257,7 +257,7 @@ NEXT_PUBLIC_QUERY_API_URL=http://localhost:8082
 
 # Authentication (Required)
 NEXT_PUBLIC_SESSION_NAME=reDB Client Dashboard
-NEXT_PUBLIC_USER_AGENT=redb-client-dashboard/1.0.0
+NEXT_PUBLIC_USER_AGENT=redb-dashboard/1.0.0
 
 # Optional Development Settings
 NODE_ENV=development
