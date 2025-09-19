@@ -48,3 +48,6 @@ chrono = { workspace = true, features = ["serde", "clock"] }
 
 # Supervisor integration dependencies  
 tonic-reflection.workspace = true
+
+[dev-dependencies]
+tempfile = "3.8"
