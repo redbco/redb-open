@@ -17,8 +17,10 @@ import (
 
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	supervisorv1 "github.com/redbco/redb-open/api/proto/supervisor/v1"
+	"github.com/redbco/redb-open/cmd/supervisor/internal/database"
 	"github.com/redbco/redb-open/cmd/supervisor/internal/logger"
 	"github.com/redbco/redb-open/cmd/supervisor/internal/superconfig"
+	pkgdatabase "github.com/redbco/redb-open/pkg/database"
 )
 
 type ServiceInfo struct {
@@ -41,6 +43,7 @@ type ServiceManager struct {
 	services map[string]*ServiceInfo
 	logger   logger.LoggerInterface
 	config   *superconfig.Config
+	db       *pkgdatabase.PostgreSQL
 }
 
 func New(log logger.LoggerInterface, config *superconfig.Config) *ServiceManager {
@@ -48,7 +51,13 @@ func New(log logger.LoggerInterface, config *superconfig.Config) *ServiceManager
 		services: make(map[string]*ServiceInfo),
 		logger:   log,
 		config:   config,
+		db:       nil, // Will be set later via SetDatabase
 	}
+}
+
+// SetDatabase sets the database connection for the service manager
+func (m *ServiceManager) SetDatabase(db *pkgdatabase.PostgreSQL) {
+	m.db = db
 }
 
 func (m *ServiceManager) RegisterService(ctx context.Context, info *commonv1.ServiceInfo, capabilities *supervisorv1.ServiceCapabilities) (string, *supervisorv1.ServiceConfiguration, error) {
@@ -149,6 +158,17 @@ func (m *ServiceManager) StartService(ctx context.Context, name string, config s
 		}
 	}
 	m.mu.RUnlock()
+
+	// For mesh service, fetch node_id and mesh_id from database and update configuration
+	if name == "mesh" && m.db != nil {
+		updatedConfig, err := m.enhanceMeshConfig(ctx, config)
+		if err != nil {
+			m.logger.Warnf("Failed to fetch database values for mesh service, using config defaults: %v", err)
+			// Continue with original config if database fetch fails
+		} else {
+			config = updatedConfig
+		}
+	}
 
 	// Start service process
 	process := NewServiceProcess(name, config)
@@ -556,4 +576,50 @@ func (m *ServiceManager) GetConfiguredServiceStatus() map[string]string {
 	}
 
 	return status
+}
+
+// enhanceMeshConfig fetches node_id and mesh_id from database and updates mesh service configuration
+func (m *ServiceManager) enhanceMeshConfig(ctx context.Context, config superconfig.ServiceConfig) (superconfig.ServiceConfig, error) {
+	if m.db == nil {
+		return config, fmt.Errorf("database connection not available")
+	}
+
+	// Fetch node identity from database
+	identity, err := database.GetLocalNodeIdentity(ctx, m.db)
+	if err != nil {
+		return config, fmt.Errorf("failed to get local node identity: %w", err)
+	}
+
+	// Validate that the node exists in the nodes table
+	if err := database.ValidateNodeExists(ctx, m.db, identity.NodeID); err != nil {
+		return config, fmt.Errorf("node validation failed: %w", err)
+	}
+
+	m.logger.Infof("Fetched from database - Node ID: %s, Routing ID: %d, Mesh ID: %s", identity.NodeID, identity.RoutingID, identity.MeshID)
+
+	// Create a copy of the config to avoid modifying the original
+	updatedConfig := config
+
+	// Initialize config map if it doesn't exist
+	if updatedConfig.Config == nil {
+		updatedConfig.Config = make(map[string]string)
+	}
+
+	// Update the configuration with database values
+	updatedConfig.Config["services.mesh.node_id"] = identity.NodeID
+	updatedConfig.Config["services.mesh.routing_id"] = fmt.Sprintf("%d", identity.RoutingID)
+	updatedConfig.Config["services.mesh.mesh_id"] = identity.MeshID
+
+	// Also add as environment variables for the mesh service
+	if updatedConfig.Environment == nil {
+		updatedConfig.Environment = make(map[string]string)
+	}
+	updatedConfig.Environment["MESH_NODE_ID"] = identity.NodeID
+	updatedConfig.Environment["MESH_ROUTING_ID"] = fmt.Sprintf("%d", identity.RoutingID)
+	updatedConfig.Environment["MESH_MESH_ID"] = identity.MeshID
+
+	m.logger.Infof("Enhanced mesh configuration with database values: node_id=%s, routing_id=%d, mesh_id=%s",
+		identity.NodeID, identity.RoutingID, identity.MeshID)
+
+	return updatedConfig, nil
 }

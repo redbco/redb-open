@@ -26,6 +26,7 @@ use supervisor::{SupervisorClient, SupervisorConfig, create_service_controller_s
 use config::MeshConfig;
 use logging::RedbLogFormatter;
 
+
 // Component logging macros are defined in logging.rs and available via #[macro_export]
 
 #[cfg(feature = "tls")]
@@ -35,9 +36,9 @@ use mesh_session::{accept_tls, make_client_config, make_server_config, tls_accep
 #[derive(Parser, Debug)]
 #[command(name = "mesh", version, about = "Mesh network node with optional mTLS")]
 struct Args {
-    /// Node ID (u64)
-    #[arg(long, default_value_t = 1)]
-    node_id: u64,
+    /// Node ID (string format from database)
+    #[arg(long, default_value = "node_default")]
+    node_id: String,
 
     /// Listen address, e.g. 0.0.0.0:9000
     #[arg(long)]
@@ -185,12 +186,16 @@ async fn main() -> anyhow::Result<()> {
     // Load configuration from file
     let mesh_config = MeshConfig::load_from_file(&args.config)?;
     
-    // Override with command line arguments if provided
-    let node_id = if args.node_id == 1 { // Default value
-        mesh_config.node_id
+    // Get node identifiers from config
+    let node_id_str = if args.node_id == "node_default" { // Default value
+        mesh_config.node_id.clone()
     } else {
-        args.node_id
+        args.node_id.clone()
     };
+    
+    // Use routing_id from config for internal mesh operations
+    let routing_id = mesh_config.routing_id;
+    
     let grpc_bind = if args.grpc_bind.port() == 50051 { // Default port
         format!("{}:{}", args.grpc_bind.ip(), mesh_config.grpc_port).parse()?
     } else {
@@ -202,7 +207,7 @@ async fn main() -> anyhow::Result<()> {
         args.supervisor.clone()
     };
 
-    info!("Starting mesh node with ID: {} (from config: {})", node_id, mesh_config.node_id);
+    info!("Starting mesh node with ID: {} (string: {}, from config: {})", routing_id, node_id_str, mesh_config.node_id);
 
     // Validate TLS arguments
     if args.tls {
@@ -237,7 +242,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create session configuration
     let config = SessionConfig {
-        my_node_id: node_id,
+        my_node_id: routing_id,
         ping_interval: Duration::from(args.ping_interval),
         idle_timeout: Duration::from(args.idle_timeout),
         verify_node_id: args.tls_verify_node_id,
@@ -331,8 +336,8 @@ async fn main() -> anyhow::Result<()> {
     let (tls_server, tls_client_config): (Option<Arc<()>>, Option<TlsClientConfig>) = (None, None);
 
     // Initialize routing table and topology database
-    let routing_table = Arc::new(RoutingTable::new(args.node_id));
-    let topology_db = TopologyDatabase::new(args.node_id);
+    let routing_table = Arc::new(RoutingTable::new(routing_id));
+    let topology_db = TopologyDatabase::new(routing_id);
     let topology_db = Arc::new(tokio::sync::RwLock::new(topology_db));
     
     // Add neighbor routes if specified (for initial bootstrap)
@@ -402,7 +407,7 @@ async fn main() -> anyhow::Result<()> {
         
         // Create SessionManager
         let mut session_manager = SessionManager::new(
-            args.node_id,
+            routing_id,
             routing_table.clone(),
             manager_event_rx,
         );
@@ -421,7 +426,7 @@ async fn main() -> anyhow::Result<()> {
         // Build the mesh gRPC server components
         let (mesh_grpc_server, incoming_message_tx) = MeshGrpcServerBuilder::new()
             .bind_addr(args.grpc_bind)
-            .node_id(args.node_id)
+            .node_id(routing_id)
             .delivery_queue(delivery_queue.clone())
             .outbound_channel(outbound_tx)
             .routing_table(routing_table.clone())
@@ -460,7 +465,7 @@ async fn main() -> anyhow::Result<()> {
             }
         });
         
-        info!("Starting session manager for node {}", args.node_id);
+        info!("Starting session manager for node {}", routing_id);
         let manager_handle = tokio::spawn(async move {
             if let Err(e) = session_manager.run().await {
                 warn!("Session manager error: {}", e);
@@ -687,7 +692,7 @@ async fn main() -> anyhow::Result<()> {
                         if let Some(ref session_registry) = session_registry {
                             let registry = session_registry.read().await;
                             if let Some(session_info) = registry.get(&peer_node_id) {
-                                let termination_msg = OutboundMessage::create_termination_message(args.node_id, peer_node_id);
+                                let termination_msg = OutboundMessage::create_termination_message(routing_id, peer_node_id);
                                 if let Err(e) = session_info.message_tx.send(termination_msg) {
                                     warn!("Failed to send termination message to node {}: {}", peer_node_id, e);
                                 } else {

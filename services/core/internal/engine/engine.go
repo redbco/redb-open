@@ -13,6 +13,7 @@ import (
 	"github.com/redbco/redb-open/pkg/config"
 	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/logger"
+	"github.com/redbco/redb-open/services/core/internal/mesh"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -27,6 +28,8 @@ type Engine struct {
 	anchorClient      anchorv1.AnchorServiceClient
 	meshControlClient meshv1.MeshControlClient
 	meshDataClient    meshv1.MeshDataClient
+	meshManager       *mesh.MeshCommunicationManager
+	nodeID            uint64
 	state             struct {
 		sync.Mutex
 		isRunning         bool
@@ -170,6 +173,42 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.meshControlClient = meshv1.NewMeshControlClient(meshConn)
 	e.meshDataClient = meshv1.NewMeshDataClient(meshConn)
 
+	// Get node ID from database first, then fallback to config
+	if nodeID, err := e.getNodeIDFromDatabase(ctx); err == nil {
+		e.nodeID = nodeID
+		e.logger.Infof("Using node ID from database: %d", nodeID)
+	} else {
+		e.logger.Warnf("Failed to get node ID from database, using config: %v", err)
+		// Fallback to config
+		nodeIDStr := e.config.Get("services.mesh.node_id")
+		if nodeIDStr == "" {
+			e.nodeID = 1 // Default node ID, should be configured properly
+			e.logger.Warn("No node ID in config, using default: 1")
+		} else {
+			// Parse node ID from config
+			if nodeID, err := parseNodeID(nodeIDStr); err == nil {
+				e.nodeID = nodeID
+				e.logger.Infof("Using node ID from config: %d", nodeID)
+			} else {
+				e.nodeID = 1 // Fallback
+				e.logger.Warnf("Failed to parse node ID from config, using default: 1")
+			}
+		}
+	}
+
+	// Initialize mesh communication manager
+	e.meshManager = mesh.NewMeshCommunicationManager(
+		e.meshDataClient,
+		e.meshControlClient,
+		e.logger,
+		e.nodeID,
+	)
+
+	// Start mesh communication manager
+	if err := e.meshManager.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start mesh communication manager: %w", err)
+	}
+
 	return nil
 }
 
@@ -181,6 +220,15 @@ func (e *Engine) Stop(ctx context.Context) error {
 	}
 	e.state.isRunning = false
 	e.state.Unlock()
+
+	// Stop mesh communication manager
+	if e.meshManager != nil {
+		if err := e.meshManager.Stop(); err != nil {
+			if e.logger != nil {
+				e.logger.Errorf("Failed to stop mesh communication manager: %v", err)
+			}
+		}
+	}
 
 	// Note: We don't stop the gRPC server here since it's shared
 	// The BaseService will handle stopping the server
@@ -269,4 +317,49 @@ func (e *Engine) GetMeshControlClient() meshv1.MeshControlClient {
 
 func (e *Engine) GetMeshDataClient() meshv1.MeshDataClient {
 	return e.meshDataClient
+}
+
+// GetMeshManager returns the mesh communication manager
+func (e *Engine) GetMeshManager() *mesh.MeshCommunicationManager {
+	return e.meshManager
+}
+
+// parseNodeID parses a node ID from string to uint64
+func parseNodeID(nodeIDStr string) (uint64, error) {
+	// Simple implementation - in production, this should be more robust
+	if nodeIDStr == "" {
+		return 0, fmt.Errorf("empty node ID")
+	}
+
+	// For now, just use a simple conversion
+	// In production, this could parse from various formats
+	var nodeID uint64
+	if _, err := fmt.Sscanf(nodeIDStr, "%d", &nodeID); err != nil {
+		return 0, fmt.Errorf("invalid node ID format: %w", err)
+	}
+
+	return nodeID, nil
+}
+
+// getNodeIDFromDatabase retrieves the local node ID from the database
+func (e *Engine) getNodeIDFromDatabase(ctx context.Context) (uint64, error) {
+	if e.db == nil {
+		return 0, fmt.Errorf("database connection not available")
+	}
+
+	// Query the routing ID directly from the database
+	var routingID int64
+	query := `
+		SELECT n.routing_id 
+		FROM nodes n
+		JOIN localidentity li ON n.node_id = li.identity_id
+		LIMIT 1
+	`
+
+	err := e.db.Pool().QueryRow(ctx, query).Scan(&routingID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query local routing ID: %w", err)
+	}
+
+	return uint64(routingID), nil
 }

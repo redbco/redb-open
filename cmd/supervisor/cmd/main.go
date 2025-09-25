@@ -154,6 +154,12 @@ type Supervisor struct {
 func (s *Supervisor) Run(ctx context.Context) error {
 	s.logger.Info("Starting reDB Node Supervisor")
 
+	// Initialize database connection for service manager
+	if err := s.initializeDatabaseConnection(ctx); err != nil {
+		s.logger.Warnf("Failed to initialize database connection: %v", err)
+		s.logger.Warn("Services will start with configuration file values instead of database values")
+	}
+
 	// Create a separate context for background routines that we can cancel during shutdown
 	s.backgroundCtx, s.backgroundCancel = context.WithCancel(context.Background())
 
@@ -473,6 +479,27 @@ func validateDatabaseSetup(databaseName string) error {
 	if !localNodeExists {
 		return fmt.Errorf("database schema exists but local node is not configured - please run --initialize first to configure the local node")
 	}
+
+	return nil
+}
+
+// initializeDatabaseConnection sets up the database connection for the service manager
+func (s *Supervisor) initializeDatabaseConnection(ctx context.Context) error {
+	// Get database configuration
+	dbConfig := database.FromGlobalConfig(nil) // Use nil to get config from environment
+	if dbConfig.Database == "" {
+		dbConfig.Database = s.config.Database.Name
+	}
+
+	// Initialize database connection
+	db, err := database.New(ctx, dbConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create database connection: %w", err)
+	}
+
+	// Set the database connection on the service manager
+	s.serviceManager.SetDatabase(db)
+	s.logger.Info("Database connection initialized for service manager")
 
 	return nil
 }

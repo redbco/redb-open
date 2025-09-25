@@ -12,8 +12,10 @@ use tracing::{info, warn};
 /// Mesh service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshConfig {
-    /// Node ID for this mesh node
-    pub node_id: u64,
+    /// Node ID for this mesh node (string format from database)
+    pub node_id: String,
+    /// Routing ID for internal mesh operations (u64 format)
+    pub routing_id: u64,
     /// External port for mesh communication
     pub external_port: u16,
     /// gRPC server port
@@ -57,7 +59,8 @@ impl Default for TlsConfig {
 impl Default for MeshConfig {
     fn default() -> Self {
         Self {
-            node_id: 1001,
+            node_id: "node_default".to_string(),
+            routing_id: 1001,
             external_port: 10001,
             grpc_port: 50056,
             supervisor_addr: "localhost:50000".to_string(),
@@ -112,8 +115,8 @@ impl MeshConfig {
         // Override with environment variables
         config.apply_environment_overrides();
         
-        info!("Final mesh configuration: node_id={}, external_port={}, grpc_port={}, supervisor={}", 
-              config.node_id, config.external_port, config.grpc_port, config.supervisor_addr);
+        info!("Final mesh configuration: node_id={}, routing_id={}, external_port={}, grpc_port={}, supervisor={}", 
+              config.node_id, config.routing_id, config.external_port, config.grpc_port, config.supervisor_addr);
         
         Ok(config)
     }
@@ -157,8 +160,11 @@ impl MeshConfig {
             for (key, value) in config_map {
                 match key.as_str() {
                     "services.mesh.node_id" => {
-                        if let Ok(node_id) = value.parse::<u64>() {
-                            self.node_id = node_id;
+                        self.node_id = value;
+                    }
+                    "services.mesh.routing_id" => {
+                        if let Ok(routing_id) = value.parse::<u64>() {
+                            self.routing_id = routing_id;
                         }
                     }
                     "services.mesh.external_port" => {
@@ -203,10 +209,20 @@ impl MeshConfig {
     fn apply_environment_overrides(&mut self) {
         // Check for environment variable overrides
         if let Ok(node_id) = std::env::var("MESH_NODE_ID") {
-            if let Ok(id) = node_id.parse::<u64>() {
-                self.node_id = id;
-                info!("Node ID overridden by environment: {}", id);
+            self.node_id = node_id.clone();
+            info!("Node ID overridden by environment (from database): {}", node_id);
+        }
+        
+        if let Ok(routing_id) = std::env::var("MESH_ROUTING_ID") {
+            if let Ok(id) = routing_id.parse::<u64>() {
+                self.routing_id = id;
+                info!("Routing ID overridden by environment (from database): {}", id);
             }
+        }
+        
+        if let Ok(mesh_id) = std::env::var("MESH_MESH_ID") {
+            self.mesh_id = mesh_id;
+            info!("Mesh ID overridden by environment (from database): {}", self.mesh_id);
         }
         
         if let Ok(external_port) = std::env::var("MESH_EXTERNAL_PORT") {
@@ -239,7 +255,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = MeshConfig::default();
-        assert_eq!(config.node_id, 1001);
+        assert_eq!(config.node_id, "node_default");
+        assert_eq!(config.routing_id, 1001);
         assert_eq!(config.external_port, 10001);
         assert_eq!(config.grpc_port, 50056);
         assert_eq!(config.supervisor_addr, "localhost:50000");
@@ -259,7 +276,8 @@ services:
       - --port=50056
       - --supervisor=localhost:50000
     config:
-      services.mesh.node_id: "2001"
+      services.mesh.node_id: "node_test_2001"
+      services.mesh.routing_id: "2001"
       services.mesh.external_port: "20001"
       services.mesh.mesh_id: "test-mesh"
       services.mesh.tls.enabled: "true"
@@ -270,7 +288,8 @@ services:
         
         let config = MeshConfig::load_from_file(temp_file.path()).unwrap();
         
-        assert_eq!(config.node_id, 2001);
+        assert_eq!(config.node_id, "node_test_2001");
+        assert_eq!(config.routing_id, 2001);
         assert_eq!(config.external_port, 20001);
         assert_eq!(config.grpc_port, 50056);
         assert_eq!(config.mesh_id, "test-mesh");

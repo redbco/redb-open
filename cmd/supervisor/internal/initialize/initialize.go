@@ -819,6 +819,39 @@ func (i *Initializer) createDatabaseSchema(ctx context.Context, creds *DatabaseC
 	return nil
 }
 
+// generateRoutingID generates a consistent routing ID from a node ID string
+// This uses the same algorithm as the mesh service to ensure consistency
+func (i *Initializer) generateRoutingID(nodeID string) int64 {
+	if nodeID == "" {
+		return 1001 // Default fallback
+	}
+
+	// Remove the "node_" prefix if present
+	cleanID := nodeID
+	if len(nodeID) > 5 && nodeID[:5] == "node_" {
+		cleanID = nodeID[5:]
+	}
+
+	// Use the same hash function as the mesh service to ensure consistent mapping
+	var hash uint64
+	for i, c := range cleanID {
+		if i >= 16 { // Limit to first 16 characters to avoid overflow
+			break
+		}
+		hash = hash*31 + uint64(c)
+	}
+
+	// Ensure we have a reasonable range (avoid 0 and very large numbers)
+	if hash == 0 {
+		hash = 1001 // Default fallback
+	}
+
+	// Keep it in a reasonable range for mesh operations (1000-999999)
+	hash = hash%999000 + 1000
+
+	return int64(hash)
+}
+
 // getLocalIPAddress attempts to get the local machine's IP address
 func (i *Initializer) getLocalIPAddress() (string, error) {
 	// Use a timeout to prevent hanging when there's no internet connection
@@ -861,14 +894,15 @@ func (i *Initializer) createLocalNode(ctx context.Context, creds *DatabaseCreden
 
 	// Check if local node already exists
 	var existingNodeID string
+	var existingRoutingID *int64 // Use pointer to handle NULL values
 	err = pool.QueryRow(ctx, `
-		SELECT li.identity_id 
+		SELECT li.identity_id, n.routing_id
 		FROM localidentity li
 		JOIN nodes n ON n.node_id = li.identity_id
 		LIMIT 1
-	`).Scan(&existingNodeID)
+	`).Scan(&existingNodeID, &existingRoutingID)
 	if err == nil {
-		// Local node already exists, use existing node info
+		// Local node already exists, check if it has routing_id
 		var existingNodeName string
 		err = pool.QueryRow(ctx, `
 			SELECT node_name FROM nodes WHERE node_id = $1
@@ -877,9 +911,22 @@ func (i *Initializer) createLocalNode(ctx context.Context, creds *DatabaseCreden
 			return fmt.Errorf("failed to get existing node info: %w", err)
 		}
 
+		// If routing_id is missing, update the existing node
+		if existingRoutingID == nil {
+			routingID := i.generateRoutingID(existingNodeID)
+			_, err = pool.Exec(ctx, `
+				UPDATE nodes SET routing_id = $1 WHERE node_id = $2
+			`, routingID, existingNodeID)
+			if err != nil {
+				return fmt.Errorf("failed to update existing node with routing_id: %w", err)
+			}
+			i.logger.Infof("Updated existing node '%s' with routing ID '%d'", existingNodeName, routingID)
+		} else {
+			i.logger.Infof("Local node already exists: '%s' with ID '%s' and routing ID '%d'", existingNodeName, existingNodeID, *existingRoutingID)
+		}
+
 		nodeInfo.NodeID = existingNodeID
 		nodeInfo.NodeName = existingNodeName
-		i.logger.Infof("Local node already exists: '%s' with ID '%s'", existingNodeName, existingNodeID)
 		return nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("failed to check for existing local node: %w", err)
@@ -903,11 +950,14 @@ func (i *Initializer) createLocalNode(ctx context.Context, creds *DatabaseCreden
 	nodeIDSuffix := nodeID[len(nodeID)-8:]
 	nodeName := fmt.Sprintf("node-%s", nodeIDSuffix)
 
+	// Generate routing ID for the node
+	routingID := i.generateRoutingID(nodeID)
+
 	// Insert node into nodes table
 	_, err = tx.Exec(ctx, `
-		INSERT INTO nodes (node_id, node_name, node_description, ip_address, port, status)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, nodeID, nodeName, "Local node", nodeInfo.IPAddress, nodeInfo.Port, "STATUS_ACTIVE")
+		INSERT INTO nodes (node_id, node_name, node_description, routing_id, ip_address, port, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, nodeID, nodeName, "Local node", routingID, nodeInfo.IPAddress, nodeInfo.Port, "STATUS_ACTIVE")
 	if err != nil {
 		return fmt.Errorf("failed to insert node: %w", err)
 	}
@@ -928,7 +978,7 @@ func (i *Initializer) createLocalNode(ctx context.Context, creds *DatabaseCreden
 	nodeInfo.NodeID = nodeID
 	nodeInfo.NodeName = nodeName
 
-	i.logger.Infof("Successfully created local node '%s' with ID '%s'", nodeName, nodeID)
+	i.logger.Infof("Successfully created local node '%s' with ID '%s' and routing ID '%d'", nodeName, nodeID, routingID)
 	return nil
 }
 

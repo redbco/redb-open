@@ -129,6 +129,7 @@ CREATE TABLE nodes (
     node_platform VARCHAR(100) DEFAULT '',
     node_version VARCHAR(100) DEFAULT '',
     region_id ulid REFERENCES regions(region_id) ON DELETE SET NULL,
+    routing_id BIGINT UNIQUE NOT NULL,
     ip_address INET,
     port INTEGER,
     status status_enum DEFAULT 'STATUS_CREATED',
