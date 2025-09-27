@@ -41,10 +41,14 @@ func (m *Middleware) AuthenticationMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Extract tenant_url from path
+		// Extract tenant_url from path (for tenant-specific endpoints)
 		vars := mux.Vars(r)
 		tenantURL := vars["tenant_url"]
-		if tenantURL == "" {
+
+		// Check if this is a global endpoint (no tenant_url required)
+		isGlobalEndpoint := m.isGlobalEndpoint(r)
+
+		if !isGlobalEndpoint && tenantURL == "" {
 			m.writeErrorResponse(w, http.StatusBadRequest, "tenant_url is required", "")
 			return
 		}
@@ -62,7 +66,7 @@ func (m *Middleware) AuthenticationMiddleware(next http.Handler) http.Handler {
 
 		// Call security service to authenticate
 		authReq := &securityv1.AuthenticationRequest{
-			TenantUrl: tenantURL,
+			TenantUrl: tenantURL, // Will be empty for global endpoints
 			TokenType: "Bearer",
 			Token:     token,
 		}
@@ -153,6 +157,33 @@ func (m *Middleware) shouldSkipAuth(r *http.Request) bool {
 
 	// Skip authentication for OPTIONS requests (CORS preflight)
 	if method == http.MethodOptions {
+		return true
+	}
+
+	// Skip authentication for setup endpoint (no auth required)
+	if strings.HasPrefix(path, "/api/v1/setup") {
+		return true
+	}
+
+	return false
+}
+
+// isGlobalEndpoint determines if the endpoint is a global endpoint (no tenant_url required)
+func (m *Middleware) isGlobalEndpoint(r *http.Request) bool {
+	path := r.URL.Path
+
+	// Global mesh endpoints
+	if strings.HasPrefix(path, "/api/v1/mesh") {
+		return true
+	}
+
+	// Global node status endpoint
+	if strings.HasPrefix(path, "/api/v1/node") {
+		return true
+	}
+
+	// Global tenant endpoints
+	if strings.HasPrefix(path, "/api/v1/tenants") {
 		return true
 	}
 

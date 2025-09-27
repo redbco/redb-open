@@ -9,8 +9,7 @@ import (
 // Server is the main gRPC server that implements all v2 service interfaces
 type Server struct {
 	// Embed all v2 unimplemented servers to satisfy interface requirements
-	// Note: MeshService is deprecated - mesh operations now handled by dedicated mesh service
-	// corev1.UnimplementedMeshServiceServer
+	corev1.UnimplementedMeshServiceServer
 	corev1.UnimplementedWorkspaceServiceServer
 	corev1.UnimplementedSatelliteServiceServer
 	corev1.UnimplementedAnchorServiceServer

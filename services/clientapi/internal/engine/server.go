@@ -115,12 +115,23 @@ func (s *Server) setupRoutes() {
 	globalTenants.HandleFunc("/{tenant_id}", s.tenantHandler.ModifyTenant).Methods(http.MethodPut)
 	globalTenants.HandleFunc("/{tenant_id}", s.tenantHandler.DeleteTenant).Methods(http.MethodDelete)
 
-	// Global mesh endpoints (no tenant_url prefix) - from API
+	// Global mesh endpoints (no tenant_url prefix) - New mesh management API
 	globalMesh := globalApiV1.PathPrefix("/mesh").Subrouter()
 	globalMesh.HandleFunc("/seed", s.meshHandler.SeedMesh).Methods(http.MethodPost)
 	globalMesh.HandleFunc("/join", s.meshHandler.JoinMesh).Methods(http.MethodPost)
-	globalMesh.HandleFunc("/{mesh_id}", s.meshHandler.ShowMesh).Methods(http.MethodGet)
-	globalMesh.HandleFunc("/{mesh_id}/nodes", s.meshHandler.ListNodes).Methods(http.MethodGet)
+	globalMesh.HandleFunc("/extend", s.meshHandler.ExtendMesh).Methods(http.MethodPost)
+	globalMesh.HandleFunc("/leave", s.meshHandler.LeaveMesh).Methods(http.MethodPost)
+	globalMesh.HandleFunc("/evict", s.meshHandler.EvictNode).Methods(http.MethodPost)
+	globalMesh.HandleFunc("", s.meshHandler.ShowMesh).Methods(http.MethodGet)
+	globalMesh.HandleFunc("/nodes", s.meshHandler.ListNodes).Methods(http.MethodGet)
+	globalMesh.HandleFunc("/nodes/{node_id}", s.meshHandler.ShowNode).Methods(http.MethodGet)
+	globalMesh.HandleFunc("/nodes", s.meshHandler.ShowNode).Methods(http.MethodGet) // Current node
+	globalMesh.HandleFunc("/connections", s.meshHandler.ListConnections).Methods(http.MethodGet)
+	globalMesh.HandleFunc("/connections", s.meshHandler.AddConnection).Methods(http.MethodPost)
+	globalMesh.HandleFunc("/connections/{peer_node_id}", s.meshHandler.DropConnection).Methods(http.MethodDelete)
+
+	// Global node status endpoint
+	globalApiV1.HandleFunc("/node/status", s.meshHandler.GetNodeStatus).Methods(http.MethodGet)
 
 	// Global OPTIONS handler for CORS preflight requests
 	// This must be registered before other routes to catch all OPTIONS requests
@@ -180,21 +191,9 @@ func (s *Server) setupRoutes() {
 	regions.HandleFunc("/{region_name}", s.regionHandler.ModifyRegion).Methods(http.MethodPut)
 	regions.HandleFunc("/{region_name}", s.regionHandler.DeleteRegion).Methods(http.MethodDelete)
 
-	// Mesh endpoints (tenant-level)
-	meshes := tenantRouter.PathPrefix("/meshes").Subrouter()
-	meshes.HandleFunc("/seed", s.meshHandler.SeedMesh).Methods(http.MethodPost)
-	meshes.HandleFunc("/{mesh_id}/join", s.meshHandler.JoinMesh).Methods(http.MethodPost)
-	meshes.HandleFunc("/{mesh_id}/leave", s.meshHandler.LeaveMesh).Methods(http.MethodPost)
-	meshes.HandleFunc("/{mesh_id}", s.meshHandler.ShowMesh).Methods(http.MethodGet)
-	meshes.HandleFunc("/{mesh_id}", s.meshHandler.ModifyMesh).Methods(http.MethodPut)
-	meshes.HandleFunc("/{mesh_id}/nodes", s.meshHandler.ListNodes).Methods(http.MethodGet)
-	meshes.HandleFunc("/{mesh_id}/nodes/{node_id}", s.meshHandler.ShowNode).Methods(http.MethodGet)
-	meshes.HandleFunc("/{mesh_id}/nodes/{node_id}", s.meshHandler.ModifyNode).Methods(http.MethodPut)
-	meshes.HandleFunc("/{mesh_id}/nodes/{node_id}/evict", s.meshHandler.EvictNode).Methods(http.MethodPost)
-	meshes.HandleFunc("/{mesh_id}/topology", s.meshHandler.ShowTopology).Methods(http.MethodGet)
-	meshes.HandleFunc("/{mesh_id}/routes", s.meshHandler.AddMeshRoute).Methods(http.MethodPost)
-	meshes.HandleFunc("/{mesh_id}/routes/{source_node_id}/{target_node_id}", s.meshHandler.ModifyMeshRoute).Methods(http.MethodPut)
-	meshes.HandleFunc("/{mesh_id}/routes/{source_node_id}/{target_node_id}", s.meshHandler.DeleteMeshRoute).Methods(http.MethodDelete)
+	// Legacy mesh endpoints (tenant-level) - DEPRECATED
+	// Mesh management is now handled globally via /api/v1/mesh endpoints
+	// These endpoints are kept for backward compatibility but should be removed in future versions
 
 	// Satellite endpoints (tenant-level)
 	satellites := tenantRouter.PathPrefix("/satellites").Subrouter()

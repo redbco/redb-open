@@ -136,7 +136,7 @@ AGPL-3.0 for open-source use (`LICENSE`). Commercial license available (`LICENSE
 - Documentation: [Project Wiki](https://github.com/redbco/redb-open/wiki)
 - Issues: [GitHub Issues](https://github.com/redbco/redb-open/issues)
 - Discussions: [GitHub Discussions](https://github.com/redbco/redb-open/discussions)
-- Discord: [Join us](https://discord.gg/K3UkDYXG77)
+- Discord: [Join us](https://discord.gg/rV4WBZAw5D)
 
 ---
 

@@ -10,19 +10,23 @@ import "api/proto/common/v1/common.proto";
 
 // Mesh service for mesh management
 service MeshService {
+  // Core mesh operations
   rpc SeedMesh(SeedMeshRequest) returns (SeedMeshResponse);
   rpc JoinMesh(JoinMeshRequest) returns (JoinMeshResponse);
+  rpc ExtendMesh(ExtendMeshRequest) returns (ExtendMeshResponse);
   rpc LeaveMesh(LeaveMeshRequest) returns (LeaveMeshResponse);
+  rpc EvictNode(EvictNodeRequest) returns (EvictNodeResponse);
+  
+  // Connection management
+  rpc AddConnection(AddConnectionRequest) returns (AddConnectionResponse);
+  rpc DropConnection(DropConnectionRequest) returns (DropConnectionResponse);
+  rpc ListConnections(ListConnectionsRequest) returns (ListConnectionsResponse);
+  
+  // Information and status
   rpc ShowMesh(ShowMeshRequest) returns (ShowMeshResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   rpc ShowNode(ShowNodeRequest) returns (ShowNodeResponse);
-  rpc ShowTopology(ShowTopologyRequest) returns (ShowTopologyResponse);
-  rpc ModifyMesh(ModifyMeshRequest) returns (ModifyMeshResponse);
-  rpc ModifyNode(ModifyNodeRequest) returns (ModifyNodeResponse);
-  rpc EvictNode(EvictNodeRequest) returns (EvictNodeResponse);
-  rpc AddMeshRoute(AddMeshRouteRequest) returns (AddMeshRouteResponse);
-  rpc ModifyMeshRoute(ModifyMeshRouteRequest) returns (ModifyMeshRouteResponse);
-  rpc DeleteMeshRoute(DeleteMeshRouteRequest) returns (DeleteMeshRouteResponse);
+  rpc GetNodeStatus(GetNodeStatusRequest) returns (GetNodeStatusResponse);
 }
 
 // Workspace service for workspace management
@@ -337,15 +341,44 @@ service ImportExportService {
 
 // Mesh messages
 
+// Joining strategies for mesh operations
+enum JoinStrategy {
+    JOIN_STRATEGY_UNSPECIFIED = 0;
+    JOIN_STRATEGY_INHERIT = 1;      // Default: inherit configuration from mesh
+    JOIN_STRATEGY_MERGE = 2;        // Merge configurations
+    JOIN_STRATEGY_OVERWRITE = 3;    // Overwrite mesh configuration
+}
+
+// Node status enumeration
+enum NodeStatus {
+    NODE_STATUS_UNSPECIFIED = 0;
+    NODE_STATUS_CLEAN = 1;          // Node has identity but no mesh membership
+    NODE_STATUS_JOINING = 2;        // Node is joining a mesh
+    NODE_STATUS_ACTIVE = 3;         // Node is active in mesh
+    NODE_STATUS_LEAVING = 4;        // Node is leaving mesh
+    NODE_STATUS_OFFLINE = 5;        // Node is offline but still in mesh
+}
+
+// Connection status enumeration
+enum ConnectionStatus {
+    CONNECTION_STATUS_UNSPECIFIED = 0;
+    CONNECTION_STATUS_CONNECTING = 1;
+    CONNECTION_STATUS_CONNECTED = 2;
+    CONNECTION_STATUS_DISCONNECTING = 3;
+    CONNECTION_STATUS_FAILED = 4;
+}
+
 // The mesh object
 message Mesh {
     string mesh_id = 1;
     string mesh_name = 2;
     string mesh_description = 3;
-    string public_key = 4;
-    bool allow_join = 5;
-    int32 node_count = 6;
+    bool allow_join = 4;
+    int32 node_count = 5;
+    int32 connection_count = 6;
     redbco.redbopen.common.v1.Status status = 7;
+    int64 created_at = 8;
+    int64 updated_at = 9;
 }
 
 // The node object
@@ -357,37 +390,33 @@ message Node {
     string node_version = 5;
     string region_id = 6;
     string region_name = 7;
-    string public_key = 8;
-    string private_key = 9;
-    string ip_address = 10;
-    int32 port = 11;
-    redbco.redbopen.common.v1.Status status = 12;
+    string ip_address = 8;
+    int32 port = 9;
+    NodeStatus node_status = 10;
+    optional string mesh_id = 11;      // Only set if node is part of a mesh
+    int64 created_at = 12;
+    int64 updated_at = 13;
 }
 
-// The topology object (route)
-message Topology {
-    string route_id = 1;
-    string source_node_id = 2;
-    string source_node_name = 3;
-    string source_region_name = 4;
-    string target_node_id = 5;
-    string target_node_name = 6;
-    string target_region_name = 7;
-    bool route_bidirectional = 8;
-    double route_latency = 9;
-    double route_bandwidth = 10;
-    int32 route_cost = 11;
-    redbco.redbopen.common.v1.Status status = 12;
+// Connection between two nodes
+message Connection {
+    uint64 peer_node_id = 1;
+    string peer_node_name = 2;
+    string remote_addr = 3;
+    ConnectionStatus status = 4;
+    uint64 rtt_microseconds = 5;
+    uint64 bytes_sent = 6;
+    uint64 bytes_received = 7;
+    bool is_tls = 8;
+    int64 connected_at = 9;
 }
+
+// === Core Mesh Operations ===
 
 // Seed a new mesh request
 message SeedMeshRequest {
     string mesh_name = 1;
     optional string mesh_description = 2;
-    optional string node_name = 3;
-    optional string node_description = 4;
-    optional bool allow_join = 5;
-    optional string join_key = 6;
 }
 
 // Seed a new mesh response
@@ -400,10 +429,9 @@ message SeedMeshResponse {
 
 // Join an existing mesh request
 message JoinMeshRequest {
-    string mesh_id = 1;
-    string node_name = 2;
-    optional string node_description = 3;
-    optional string join_key = 4;
+    string target_address = 1;         // Address of node in target mesh
+    optional JoinStrategy strategy = 2; // Default: INHERIT
+    optional uint32 timeout_seconds = 3; // Connection timeout
 }
 
 // Join an existing mesh response
@@ -411,160 +439,134 @@ message JoinMeshResponse {
     string message = 1;
     bool success = 2;
     Mesh mesh = 3;
+    uint64 peer_node_id = 4;           // Node ID we connected to
+    string remote_addr = 5;            // Actual address connected to
+    redbco.redbopen.common.v1.Status status = 6;
+}
+
+// Extend mesh to a clean node request
+message ExtendMeshRequest {
+    string target_address = 1;         // Address of clean node to extend to
+    optional JoinStrategy strategy = 2; // Default: INHERIT (reverse)
+    optional uint32 timeout_seconds = 3; // Connection timeout
+}
+
+// Extend mesh to a clean node response
+message ExtendMeshResponse {
+    string message = 1;
+    bool success = 2;
+    uint64 peer_node_id = 3;           // Node ID we connected to
+    string remote_addr = 4;            // Actual address connected to
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// Leave mesh request
+message LeaveMeshRequest {
+    bool force = 1;                    // Force leave even if connections exist
+}
+
+// Leave mesh response
+message LeaveMeshResponse {
+    string message = 1;
+    bool success = 2;
+    int32 connections_dropped = 3;     // Number of connections that were dropped
     redbco.redbopen.common.v1.Status status = 4;
 }
 
-// Leave a mesh request
-message LeaveMeshRequest {
-    string mesh_id = 1;
-    string node_id = 2;
+// Evict node from mesh request
+message EvictNodeRequest {
+    uint64 target_node_id = 1;         // Node to evict
+    bool clean_target = 2;             // Whether to clean the target node's configuration
 }
 
-// Leave a mesh response
-message LeaveMeshResponse {
+// Evict node from mesh response
+message EvictNodeResponse {
+    string message = 1;
+    bool success = 2;
+    bool target_cleaned = 3;           // Whether target node was cleaned
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// === Connection Management ===
+
+// Add connection request
+message AddConnectionRequest {
+    uint64 target_node_id = 1;         // Node ID to connect to
+    optional uint32 timeout_seconds = 2; // Connection timeout
+}
+
+// Add connection response
+message AddConnectionResponse {
+    string message = 1;
+    bool success = 2;
+    Connection connection = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Drop connection request
+message DropConnectionRequest {
+    uint64 peer_node_id = 1;           // Node ID to disconnect from
+}
+
+// Drop connection response
+message DropConnectionResponse {
     string message = 1;
     bool success = 2;
     redbco.redbopen.common.v1.Status status = 3;
 }
 
-// Show a mesh request
-message ShowMeshRequest {
-    string mesh_id = 1;
+// List connections request
+message ListConnectionsRequest {
+    // No parameters - lists all connections for current node
 }
 
-// Show a mesh response
+// List connections response
+message ListConnectionsResponse {
+    repeated Connection connections = 1;
+}
+
+// === Information and Status ===
+
+// Show mesh request
+message ShowMeshRequest {
+    // No parameters - shows current mesh if node is in one
+}
+
+// Show mesh response
 message ShowMeshResponse {
     Mesh mesh = 1;
 }
 
-// Show all nodes in a mesh request
+// List nodes request
 message ListNodesRequest {
-    string mesh_id = 1;
+    // No parameters - lists all nodes in current mesh
 }
 
-// Show all nodes in a mesh response
+// List nodes response
 message ListNodesResponse {
     repeated Node nodes = 1;
 }
 
-// Show a node in a mesh request
+// Show node request
 message ShowNodeRequest {
-    string mesh_id = 1;
-    string node_id = 2;
+    optional uint64 node_id = 1;       // If not provided, shows current node
 }
 
-// Show a node in a mesh response
+// Show node response
 message ShowNodeResponse {
     Node node = 1;
 }
 
-// Show the topology of a mesh request
-message ShowTopologyRequest {
-    string mesh_id = 1;
+// Get node status request
+message GetNodeStatusRequest {
+    // No parameters - gets status of current node
 }
 
-// Show the topology of a mesh response
-message ShowTopologyResponse {
-    repeated Topology topologies = 1;
-}
-
-// Modify a mesh request
-message ModifyMeshRequest {
-    string mesh_id = 1;
-    optional string mesh_name = 2;
-    optional string mesh_description = 3;
-    optional bool allow_join = 4;
-    optional string join_key = 5;
-}
-
-// Modify a mesh response
-message ModifyMeshResponse {
-    string message = 1;
-    bool success = 2;
-    Mesh mesh = 3;
-    redbco.redbopen.common.v1.Status status = 4;
-}
-
-// Modify a node request
-message ModifyNodeRequest {
-    string mesh_id = 1;
-    string node_id = 2;
-    optional string node_name = 3;
-    optional string node_description = 4;
-    optional string region_id = 5;
-}
-
-// Modify a node response
-message ModifyNodeResponse {
-    string message = 1;
-    bool success = 2;
-    Node node = 3;
-    redbco.redbopen.common.v1.Status status = 4;
-}
-
-// Evict a node request
-message EvictNodeRequest {
-    string mesh_id = 1;
-    string node_id = 2;
-}
-
-// Evict a node response
-message EvictNodeResponse {
-    string message = 1;
-    bool success = 2;
-    redbco.redbopen.common.v1.Status status = 3;
-}
-
-// Add a mesh route request
-message AddMeshRouteRequest {
-    string mesh_id = 1;
-    string source_node_id = 2;
-    string target_node_id = 3;
-    bool route_bidirectional = 4;
-    optional double route_latency = 5;
-    optional double route_bandwidth = 6;
-    optional int32 route_cost = 7;
-}
-
-// Add a mesh route response
-message AddMeshRouteResponse {
-    string message = 1;
-    bool success = 2;
-    Topology route = 3;
-    redbco.redbopen.common.v1.Status status = 4;
-}
-
-// Modify a mesh route request
-message ModifyMeshRouteRequest {
-    string mesh_id = 1;
-    string source_node_id = 2;
-    string target_node_id = 3;
-    optional bool route_bidirectional = 4;
-    optional double route_latency = 5;
-    optional double route_bandwidth = 6;
-    optional int32 route_cost = 7;
-}
-
-// Modify a mesh route response
-message ModifyMeshRouteResponse {
-    string message = 1;
-    bool success = 2;
-    Topology route = 3;
-    redbco.redbopen.common.v1.Status status = 4;
-}
-
-// Delete a mesh route request
-message DeleteMeshRouteRequest {
-    string mesh_id = 1;
-    string source_node_id = 2;
-    string target_node_id = 3;
-}
-
-// Delete a mesh route response
-message DeleteMeshRouteResponse {
-    string message = 1;
-    bool success = 2;
-    redbco.redbopen.common.v1.Status status = 3;
+// Get node status response
+message GetNodeStatusResponse {
+    Node node = 1;
+    repeated Connection connections = 2;
+    optional Mesh mesh = 3;            // Only set if node is in a mesh
 }
 
 // Workspace messages

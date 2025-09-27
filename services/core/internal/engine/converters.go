@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
@@ -55,10 +56,30 @@ func (s *Server) meshToProto(m *mesh.Mesh) *corev1.Mesh {
 	}
 }
 
-// nodeToProto converts a node service model to protobuf
+// nodeToProto converts a node service model to protobuf (legacy format)
 func (s *Server) nodeToProto(n *mesh.Node) *corev1.Node {
+	// Convert string node ID to uint64
+	nodeID, _ := strconv.ParseUint(n.ID, 10, 64)
+
+	// Map status to NodeStatus enum
+	var nodeStatus corev1.NodeStatus
+	switch n.Status {
+	case "STATUS_CLEAN":
+		nodeStatus = corev1.NodeStatus_NODE_STATUS_CLEAN
+	case "STATUS_JOINING":
+		nodeStatus = corev1.NodeStatus_NODE_STATUS_JOINING
+	case "STATUS_ACTIVE":
+		nodeStatus = corev1.NodeStatus_NODE_STATUS_ACTIVE
+	case "STATUS_LEAVING":
+		nodeStatus = corev1.NodeStatus_NODE_STATUS_LEAVING
+	case "STATUS_OFFLINE":
+		nodeStatus = corev1.NodeStatus_NODE_STATUS_OFFLINE
+	default:
+		nodeStatus = corev1.NodeStatus_NODE_STATUS_UNSPECIFIED
+	}
+
 	return &corev1.Node{
-		NodeId:          n.ID,
+		NodeId:          strconv.FormatUint(nodeID, 10),
 		NodeName:        n.Name,
 		NodeDescription: n.Description,
 		NodePlatform:    n.Platform,
@@ -67,7 +88,9 @@ func (s *Server) nodeToProto(n *mesh.Node) *corev1.Node {
 		RegionName:      n.RegionName,
 		IpAddress:       n.IPAddress,
 		Port:            n.Port,
-		Status:          statusStringToProto(n.Status),
+		NodeStatus:      nodeStatus,
+		CreatedAt:       n.Created.Unix(),
+		UpdatedAt:       n.Updated.Unix(),
 	}
 }
 

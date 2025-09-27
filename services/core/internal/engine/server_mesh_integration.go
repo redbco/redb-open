@@ -8,6 +8,7 @@ import (
 
 	meshv1 "github.com/redbco/redb-open/api/proto/mesh/v1"
 	"github.com/redbco/redb-open/services/core/internal/mesh"
+	meshsvc "github.com/redbco/redb-open/services/core/internal/services/mesh"
 )
 
 // MeshIntegrationMethods provides mesh-aware implementations for core service operations
@@ -286,4 +287,117 @@ func (s *Server) QueryDatabaseAcrossNodes(ctx context.Context, databaseID, query
 	}
 
 	return results, nil
+}
+
+// AddMeshSession adds a new session to the mesh network
+func (s *Server) AddMeshSession(ctx context.Context, addr string, timeoutSeconds uint32) (*meshv1.AddSessionResponse, error) {
+	if s.engine.meshControlClient == nil {
+		return nil, fmt.Errorf("mesh control client not available")
+	}
+
+	// Use default timeout if not specified
+	if timeoutSeconds == 0 {
+		timeoutSeconds = 30
+	}
+
+	req := &meshv1.AddSessionRequest{
+		Addr:           addr,
+		TimeoutSeconds: timeoutSeconds,
+	}
+
+	resp, err := s.engine.meshControlClient.AddSession(ctx, req)
+	if err != nil {
+		s.engine.logger.Errorf("Failed to add mesh session to %s: %v", addr, err)
+		return nil, fmt.Errorf("failed to add mesh session: %w", err)
+	}
+
+	if resp.Success {
+		s.engine.logger.Infof("Successfully added mesh session to %s (peer_node_id: %d)", addr, resp.PeerNodeId)
+	} else {
+		s.engine.logger.Warnf("Failed to add mesh session to %s: %s (error_code: %s)", addr, resp.Message, resp.ErrorCode)
+	}
+
+	return resp, nil
+}
+
+// DropMeshSession drops an existing session from the mesh network
+func (s *Server) DropMeshSession(ctx context.Context, peerNodeID uint64) (*meshv1.DropSessionResponse, error) {
+	if s.engine.meshControlClient == nil {
+		return nil, fmt.Errorf("mesh control client not available")
+	}
+
+	req := &meshv1.DropSessionRequest{
+		PeerNodeId: peerNodeID,
+	}
+
+	resp, err := s.engine.meshControlClient.DropSession(ctx, req)
+	if err != nil {
+		s.engine.logger.Errorf("Failed to drop mesh session with node %d: %v", peerNodeID, err)
+		return nil, fmt.Errorf("failed to drop mesh session: %w", err)
+	}
+
+	if resp.Success {
+		s.engine.logger.Infof("Successfully dropped mesh session with node %d", peerNodeID)
+	} else {
+		s.engine.logger.Warnf("Failed to drop mesh session with node %d: %s (error_code: %s)", peerNodeID, resp.Message, resp.ErrorCode)
+	}
+
+	return resp, nil
+}
+
+// ConnectToMeshNodes connects to existing nodes in a mesh
+func (s *Server) ConnectToMeshNodes(ctx context.Context, meshID string) error {
+	// Get mesh service to find existing nodes
+	meshService := meshsvc.NewService(s.engine.db, s.engine.logger)
+
+	// Get all nodes in the mesh
+	nodes, err := meshService.GetNodes(ctx, meshID)
+	if err != nil {
+		return fmt.Errorf("failed to get nodes in mesh %s: %w", meshID, err)
+	}
+
+	s.engine.logger.Infof("Found %d nodes in mesh %s, attempting to connect", len(nodes), meshID)
+
+	// Connect to each node
+	var connectionErrors []string
+	successfulConnections := 0
+
+	for _, node := range nodes {
+		// Skip connecting to ourselves (convert nodeID to string for comparison)
+		if node.ID == fmt.Sprintf("%d", s.engine.nodeID) {
+			continue
+		}
+
+		// Construct address from node information
+		addr := fmt.Sprintf("%s:%d", node.IPAddress, node.Port)
+
+		s.engine.logger.Infof("Attempting to connect to node %s at %s", node.Name, addr)
+
+		// Attempt connection with 30 second timeout
+		resp, err := s.AddMeshSession(ctx, addr, 30)
+		if err != nil {
+			errMsg := fmt.Sprintf("failed to connect to node %s at %s: %v", node.Name, addr, err)
+			s.engine.logger.Warnf(errMsg)
+			connectionErrors = append(connectionErrors, errMsg)
+			continue
+		}
+
+		if resp.Success {
+			successfulConnections++
+			s.engine.logger.Infof("Successfully connected to node %s (peer_node_id: %d)", node.Name, resp.PeerNodeId)
+		} else {
+			errMsg := fmt.Sprintf("failed to connect to node %s: %s", node.Name, resp.Message)
+			s.engine.logger.Warnf(errMsg)
+			connectionErrors = append(connectionErrors, errMsg)
+		}
+	}
+
+	s.engine.logger.Infof("Mesh connection summary: %d successful, %d failed", successfulConnections, len(connectionErrors))
+
+	// Return error if no connections were successful
+	if successfulConnections == 0 && len(connectionErrors) > 0 {
+		return fmt.Errorf("failed to connect to any nodes in mesh: %v", connectionErrors)
+	}
+
+	return nil
 }

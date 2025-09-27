@@ -10,7 +10,7 @@ use mesh_storage::StorageMode;
 use mesh_routing::{RoutingTable};
 use mesh_topology::TopologyDatabase;
 use mesh_wire::{NeighborInfo, TopologyUpdate};
-use mesh_grpc::{DeliveryQueue, MeshGrpcServerBuilder, SessionCommand};
+use mesh_grpc::{DeliveryQueue, MeshGrpcServerBuilder, SessionCommand, SessionOperationResult};
 use mesh_grpc::proto::mesh::v1::{Received, Header};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
@@ -643,22 +643,73 @@ async fn main() -> anyhow::Result<()> {
                 }
             } => {
                 match command {
-                    SessionCommand::AddSession { addr } => {
-                        info!("Adding new session to {}", addr);
+                    SessionCommand::AddSession { addr, timeout_seconds, response_tx } => {
+                        info!("Adding new session to {} with timeout {}s", addr, timeout_seconds);
                         
                         let tx_connect = event_tx.clone();
                         let config_connect = config.clone();
                         let tls_client_config_clone = tls_client_config.clone();
+                        let session_registry_clone = session_registry.clone();
 
                         let task_handle = tokio::spawn(async move {
                             // Create message channel for outbound session
                             let (message_tx, message_rx) = mpsc::unbounded_channel::<OutboundMessage>();
                             
-                            if let Err(e) =
+                            // Apply timeout to the connection attempt
+                            let connection_result = tokio::time::timeout(
+                                Duration::from_secs(timeout_seconds as u64),
                                 Session::run_outbound_with_messages(config_connect, addr, tls_client_config_clone, tx_connect, Some((message_tx, message_rx)))
-                                    .await
-                            {
-                                warn!("Outbound session error to {}: {:#}", addr, e);
+                            ).await;
+                            
+                            let result = match connection_result {
+                                Ok(Ok(())) => {
+                                    // Connection successful, try to get the peer node ID from the session registry
+                                    // Wait a bit for the session to be registered
+                                    tokio::time::sleep(Duration::from_millis(100)).await;
+                                    
+                                    let peer_node_id = if let Some(ref registry) = session_registry_clone {
+                                        let sessions = registry.read().await;
+                                        // Find the session with matching remote address
+                                        sessions.iter()
+                                            .find(|(_, info)| info.remote_addr == addr)
+                                            .map(|(node_id, _)| *node_id)
+                                    } else {
+                                        None
+                                    };
+                                    
+                                    SessionOperationResult {
+                                        success: true,
+                                        message: format!("Successfully connected to {}", addr),
+                                        error_code: None,
+                                        peer_node_id,
+                                        remote_addr: Some(addr.to_string()),
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    warn!("Outbound session error to {}: {:#}", addr, e);
+                                    SessionOperationResult {
+                                        success: false,
+                                        message: format!("Connection failed: {}", e),
+                                        error_code: Some("CONNECTION_FAILED".to_string()),
+                                        peer_node_id: None,
+                                        remote_addr: None,
+                                    }
+                                }
+                                Err(_) => {
+                                    warn!("Connection to {} timed out after {}s", addr, timeout_seconds);
+                                    SessionOperationResult {
+                                        success: false,
+                                        message: format!("Connection timed out after {}s", timeout_seconds),
+                                        error_code: Some("TIMEOUT".to_string()),
+                                        peer_node_id: None,
+                                        remote_addr: None,
+                                    }
+                                }
+                            };
+                            
+                            // Send the result back
+                            if let Err(_) = response_tx.send(result) {
+                                warn!("Failed to send AddSession response - receiver dropped");
                             }
                         });
                         
@@ -666,8 +717,12 @@ async fn main() -> anyhow::Result<()> {
                         outbound_session_tasks.insert(addr, task_handle);
                         info!("Tracking outbound session task for {}", addr);
                     }
-                    SessionCommand::DropSession { peer_node_id } => {
+                    SessionCommand::DropSession { peer_node_id, response_tx } => {
                         info!("Dropping session with peer node {}", peer_node_id);
+                        
+                        let mut success = false;
+                        let message: String;
+                        let mut error_code: Option<String> = None;
                         
                         // First, find the address for this peer node
                         let peer_addr = if let Some(ref session_registry) = session_registry {
@@ -677,38 +732,59 @@ async fn main() -> anyhow::Result<()> {
                             None
                         };
                         
-                        // Cancel the outbound session task if it exists
                         if let Some(addr) = peer_addr {
+                            // Cancel the outbound session task if it exists
                             if let Some(task_handle) = outbound_session_tasks.remove(&addr) {
                                 info!("Cancelling outbound session task for {}", addr);
                                 task_handle.abort();
                                 info!("Outbound session task cancelled for {}", addr);
-                            } else {
-                                info!("No outbound session task found for {} (may be inbound or --connect session)", addr);
                             }
-                        }
-                        
-                        // Send termination message to the session
-                        if let Some(ref session_registry) = session_registry {
-                            let registry = session_registry.read().await;
-                            if let Some(session_info) = registry.get(&peer_node_id) {
-                                let termination_msg = OutboundMessage::create_termination_message(routing_id, peer_node_id);
-                                if let Err(e) = session_info.message_tx.send(termination_msg) {
-                                    warn!("Failed to send termination message to node {}: {}", peer_node_id, e);
+                            
+                            // Send termination message to the session
+                            if let Some(ref session_registry) = session_registry {
+                                let registry = session_registry.read().await;
+                                if let Some(session_info) = registry.get(&peer_node_id) {
+                                    let termination_msg = OutboundMessage::create_termination_message(routing_id, peer_node_id);
+                                    if let Err(e) = session_info.message_tx.send(termination_msg) {
+                                        warn!("Failed to send termination message to node {}: {}", peer_node_id, e);
+                                        message = format!("Failed to send termination message: {}", e);
+                                        error_code = Some("TERMINATION_FAILED".to_string());
+                                    } else {
+                                        info!("Sent termination message to node {}", peer_node_id);
+                                        success = true;
+                                        message = format!("Successfully dropped session with node {}", peer_node_id);
+                                    }
                                 } else {
-                                    info!("Sent termination message to node {}", peer_node_id);
+                                    warn!("No active session found for node {}", peer_node_id);
+                                    message = format!("No active session found for node {}", peer_node_id);
+                                    error_code = Some("SESSION_NOT_FOUND".to_string());
                                 }
                             } else {
-                                warn!("No active session found for node {}", peer_node_id);
+                                message = "Session registry not available".to_string();
+                                error_code = Some("REGISTRY_UNAVAILABLE".to_string());
                             }
+                            
+                            // Remove from connected neighbors (will be cleaned up by session disconnection event)
+                            if let Some(addr) = connected_neighbors.remove(&peer_node_id) {
+                                info!("Removed neighbor {} at {} from local tracking", peer_node_id, addr);
+                            }
+                        } else {
+                            message = format!("No session found for node {}", peer_node_id);
+                            error_code = Some("SESSION_NOT_FOUND".to_string());
                         }
                         
-                        // Remove from connected neighbors (will be cleaned up by session disconnection event)
-                        if let Some(addr) = connected_neighbors.remove(&peer_node_id) {
-                            info!("Removed neighbor {} at {} from local tracking", peer_node_id, addr);
-                        }
+                        let result = SessionOperationResult {
+                            success,
+                            message,
+                            error_code,
+                            peer_node_id: None,
+                            remote_addr: None,
+                        };
                         
-                        // Note: Session registry cleanup will happen automatically when the session terminates
+                        // Send the result back
+                        if let Err(_) = response_tx.send(result) {
+                            warn!("Failed to send DropSession response - receiver dropped");
+                        }
                     }
                 }
             }

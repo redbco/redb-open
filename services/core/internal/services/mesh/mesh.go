@@ -473,6 +473,164 @@ func (s *Service) SetNodeAsJoining(ctx context.Context, nodeID string) error {
 	return s.UpdateNodeStatus(ctx, nodeID, "STATUS_JOINING")
 }
 
+// GetMeshesByNodeID retrieves all meshes that a node belongs to
+func (s *Service) GetMeshesByNodeID(ctx context.Context, nodeID string) ([]*Mesh, error) {
+	s.logger.Infof("Getting meshes for node ID: %s", nodeID)
+
+	// Check if the node exists and get its status
+	var nodeStatus string
+	nodeQuery := `SELECT status FROM nodes WHERE node_id = $1`
+	err := s.db.Pool().QueryRow(ctx, nodeQuery, nodeID).Scan(&nodeStatus)
+	if err != nil {
+		s.logger.Errorf("Failed to get node status: %v", err)
+		return nil, fmt.Errorf("node not found: %w", err)
+	}
+
+	s.logger.Infof("Node %s has status: %s", nodeID, nodeStatus)
+
+	// For now, we'll use a simple approach - if node exists and has been part of mesh operations,
+	// return all available meshes. In a full implementation, this would query a node_mesh_membership table
+	// We'll consider a node part of a mesh if:
+	// 1. The node exists (which we verified above)
+	// 2. There are meshes in the system
+	// 3. The node status indicates it has been involved in mesh operations
+	var query string
+	var args []interface{}
+
+	if nodeStatus == "STATUS_CLEAN" {
+		// Clean nodes are not part of any mesh
+		s.logger.Infof("Node %s is clean, not part of any mesh", nodeID)
+		return []*Mesh{}, nil
+	} else {
+		// Node has been involved in mesh operations, return available meshes
+		query = `
+			SELECT m.mesh_id, m.mesh_name, m.mesh_description, m.allow_join, m.status, m.created, m.updated
+			FROM mesh m
+			ORDER BY m.created DESC
+		`
+		args = []interface{}{}
+	}
+
+	rows, err := s.db.Pool().Query(ctx, query, args...)
+	if err != nil {
+		s.logger.Errorf("Failed to get meshes for node: %v", err)
+		return nil, fmt.Errorf("database query error: %w", err)
+	}
+	defer rows.Close()
+
+	var meshes []*Mesh
+	for rows.Next() {
+		var mesh Mesh
+		err := rows.Scan(
+			&mesh.ID,
+			&mesh.Name,
+			&mesh.Description,
+			&mesh.AllowJoin,
+			&mesh.Status,
+			&mesh.Created,
+			&mesh.Updated,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Get node count for each mesh
+		mesh.NodeCount, _ = s.getNodeCount(ctx)
+		meshes = append(meshes, &mesh)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return meshes, nil
+}
+
+// AddNodeToMesh adds a node to a mesh
+func (s *Service) AddNodeToMesh(ctx context.Context, meshID, nodeID string) error {
+	s.logger.Infof("Adding node %s to mesh %s", nodeID, meshID)
+
+	// For now, we'll just update the node status to indicate mesh membership
+	// In a full implementation, this would insert into a node_mesh_membership table
+	_, err := s.db.Pool().Exec(ctx, `
+		UPDATE nodes 
+		SET status = 'STATUS_ACTIVE', updated = CURRENT_TIMESTAMP
+		WHERE node_id = $1
+	`, nodeID)
+	if err != nil {
+		s.logger.Errorf("Failed to add node to mesh: %v", err)
+		return fmt.Errorf("failed to add node to mesh: %w", err)
+	}
+
+	s.logger.Infof("Successfully added node %s to mesh %s", nodeID, meshID)
+	return nil
+}
+
+// RemoveNodeFromMesh removes a node from a mesh
+func (s *Service) RemoveNodeFromMesh(ctx context.Context, meshID, nodeID string) error {
+	s.logger.Infof("Removing node %s from mesh %s", nodeID, meshID)
+
+	// For now, we'll just update the node status to clean
+	// In a full implementation, this would delete from a node_mesh_membership table
+	_, err := s.db.Pool().Exec(ctx, `
+		UPDATE nodes 
+		SET status = 'STATUS_CLEAN', updated = CURRENT_TIMESTAMP
+		WHERE node_id = $1
+	`, nodeID)
+	if err != nil {
+		s.logger.Errorf("Failed to remove node from mesh: %v", err)
+		return fmt.Errorf("failed to remove node from mesh: %w", err)
+	}
+
+	s.logger.Infof("Successfully removed node %s from mesh %s", nodeID, meshID)
+	return nil
+}
+
+// GetNodeByID retrieves a node by its ID
+func (s *Service) GetNodeByID(ctx context.Context, nodeID string) (*Node, error) {
+	s.logger.Infof("Retrieving node from database with ID: %s", nodeID)
+	query := `
+		SELECT n.node_id, n.node_name, n.node_description, n.node_platform, n.node_version, 
+		       n.region_id, COALESCE(r.region_name, ''), n.ip_address, n.port, n.status, n.created, n.updated
+		FROM nodes n
+		LEFT JOIN regions r ON n.region_id = r.region_id
+		WHERE n.node_id = $1
+	`
+
+	var node Node
+	var regionIDScan *string
+	err := s.db.Pool().QueryRow(ctx, query, nodeID).Scan(
+		&node.ID,
+		&node.Name,
+		&node.Description,
+		&node.Platform,
+		&node.Version,
+		&regionIDScan,
+		&node.RegionName,
+		&node.IPAddress,
+		&node.Port,
+		&node.Status,
+		&node.Created,
+		&node.Updated,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("node not found")
+		}
+		s.logger.Errorf("Failed to get node: %v", err)
+		return nil, err
+	}
+
+	// Handle the region_id field properly
+	if regionIDScan != nil {
+		node.RegionID = *regionIDScan
+	} else {
+		node.RegionID = ""
+	}
+
+	return &node, nil
+}
+
 // Helper function to get node count for a mesh
 func (s *Service) getNodeCount(ctx context.Context) (int32, error) {
 	query := "SELECT COUNT(*) FROM nodes WHERE status = 'STATUS_ACTIVE'"

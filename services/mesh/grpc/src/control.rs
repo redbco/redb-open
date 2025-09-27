@@ -1,7 +1,7 @@
 //! MeshControl gRPC service implementation
 
 use crate::proto::mesh::v1::{
-    mesh_control_server::MeshControl, AddSessionRequest, DropSessionRequest, GetMessageMetricsRequest,
+    mesh_control_server::MeshControl, AddSessionRequest, AddSessionResponse, DropSessionRequest, DropSessionResponse, GetMessageMetricsRequest,
     GetMessageMetricsResponse, GetRoutingTableRequest, GetRoutingTableResponse, GetSessionsRequest,
     GetSessionsResponse, GetTopologyRequest, GetTopologyResponse, InjectNeighborRequest,
     RouteEntry, SessionInfo, SetPolicyRequest, TopologySnapshot, NeighborInfo,
@@ -17,18 +17,39 @@ use tokio::sync::{mpsc, RwLock};
 use tonic::{Request, Response, Result, Status};
 use tracing::{debug, info, warn};
 
-/// Commands for session management
+/// Result of a session operation
 #[derive(Debug, Clone)]
+pub struct SessionOperationResult {
+    /// Whether the operation was successful
+    pub success: bool,
+    /// Human-readable message describing the result
+    pub message: String,
+    /// Optional error code for failed operations
+    pub error_code: Option<String>,
+    /// Node ID of the peer (for successful AddSession operations)
+    pub peer_node_id: Option<u64>,
+    /// Remote address that was connected to (for successful AddSession operations)
+    pub remote_addr: Option<String>,
+}
+
+/// Commands for session management with response channels
+#[derive(Debug)]
 pub enum SessionCommand {
     /// Add a new session to the specified address
     AddSession { 
         /// The socket address to connect to
-        addr: SocketAddr 
+        addr: SocketAddr,
+        /// Connection timeout in seconds
+        timeout_seconds: u32,
+        /// Channel to send the result back
+        response_tx: tokio::sync::oneshot::Sender<SessionOperationResult>,
     },
     /// Drop an existing session with the specified node
     DropSession { 
         /// The node ID of the peer to disconnect from
-        peer_node_id: u64 
+        peer_node_id: u64,
+        /// Channel to send the result back
+        response_tx: tokio::sync::oneshot::Sender<SessionOperationResult>,
     },
 }
 
@@ -235,14 +256,17 @@ impl MeshControl for MeshControlService {
     async fn drop_session(
         &self,
         request: Request<DropSessionRequest>,
-    ) -> Result<Response<()>> {
+    ) -> Result<Response<DropSessionResponse>> {
         let req = request.into_inner();
         
         info!("Dropping session with peer node {}", req.peer_node_id);
         
         if let Some(ref session_command_tx) = self.session_command_tx {
+            let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+            
             let command = SessionCommand::DropSession {
                 peer_node_id: req.peer_node_id,
+                response_tx,
             };
             
             if let Err(e) = session_command_tx.send(command) {
@@ -250,19 +274,36 @@ impl MeshControl for MeshControlService {
                 return Err(Status::internal("Failed to process drop session request"));
             }
             
-            info!("Drop session command sent for peer node {}", req.peer_node_id);
+            // Wait for the result with a timeout
+            let result = match tokio::time::timeout(std::time::Duration::from_secs(30), response_rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => {
+                    warn!("Drop session command response channel closed");
+                    return Err(Status::internal("Internal communication error"));
+                }
+                Err(_) => {
+                    warn!("Drop session command timed out");
+                    return Err(Status::deadline_exceeded("Operation timed out"));
+                }
+            };
+            
+            info!("Drop session operation completed for peer node {}: success={}", req.peer_node_id, result.success);
+            
+            Ok(Response::new(DropSessionResponse {
+                success: result.success,
+                message: result.message,
+                error_code: result.error_code.unwrap_or_default(),
+            }))
         } else {
             warn!("Session management not available - no command channel configured");
-            return Err(Status::unavailable("Session management not available"));
+            Err(Status::unavailable("Session management not available"))
         }
-        
-        Ok(Response::new(()))
     }
     
     async fn add_session(
         &self,
         request: Request<AddSessionRequest>,
-    ) -> Result<Response<()>> {
+    ) -> Result<Response<AddSessionResponse>> {
         let req = request.into_inner();
         
         info!("Adding session to address: {}", req.addr);
@@ -271,21 +312,50 @@ impl MeshControl for MeshControlService {
         let addr: SocketAddr = req.addr.parse()
             .map_err(|e| Status::invalid_argument(format!("Invalid address format: {}", e)))?;
         
+        // Use default timeout if not specified
+        let timeout_seconds = if req.timeout_seconds == 0 { 30 } else { req.timeout_seconds };
+        
         if let Some(ref session_command_tx) = self.session_command_tx {
-            let command = SessionCommand::AddSession { addr };
+            let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+            
+            let command = SessionCommand::AddSession { 
+                addr,
+                timeout_seconds,
+                response_tx,
+            };
             
             if let Err(e) = session_command_tx.send(command) {
                 warn!("Failed to send add session command: {}", e);
                 return Err(Status::internal("Failed to process add session request"));
             }
             
-            info!("Add session command sent for address {}", addr);
+            // Wait for the result with a timeout (add some buffer to the specified timeout)
+            let wait_timeout = std::time::Duration::from_secs((timeout_seconds + 10) as u64);
+            let result = match tokio::time::timeout(wait_timeout, response_rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => {
+                    warn!("Add session command response channel closed");
+                    return Err(Status::internal("Internal communication error"));
+                }
+                Err(_) => {
+                    warn!("Add session command timed out");
+                    return Err(Status::deadline_exceeded("Operation timed out"));
+                }
+            };
+            
+            info!("Add session operation completed for address {}: success={}", addr, result.success);
+            
+            Ok(Response::new(AddSessionResponse {
+                success: result.success,
+                message: result.message,
+                error_code: result.error_code.unwrap_or_default(),
+                peer_node_id: result.peer_node_id.unwrap_or(0),
+                remote_addr: result.remote_addr.unwrap_or_default(),
+            }))
         } else {
             warn!("Session management not available - no command channel configured");
-            return Err(Status::unavailable("Session management not available"));
+            Err(Status::unavailable("Session management not available"))
         }
-        
-        Ok(Response::new(()))
     }
     
     async fn inject_neighbor(

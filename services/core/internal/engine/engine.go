@@ -112,6 +112,7 @@ func (e *Engine) RegisterCoreServices() error {
 	corev1.RegisterTemplateServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterAuditServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterImportExportServiceServer(e.grpcServer, e.coreSvc)
+	corev1.RegisterMeshServiceServer(e.grpcServer, e.coreSvc)
 
 	return nil
 }
@@ -209,6 +210,18 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start mesh communication manager: %w", err)
 	}
 
+	// Set local node status to active after successful initialization
+	if err := e.updateLocalNodeStatus(ctx, "STATUS_ACTIVE"); err != nil {
+		e.logger.Warnf("Failed to set local node status to active: %v", err)
+		// Don't fail startup for this, but log the warning
+	}
+
+	// Set mesh status to active from this node's perspective
+	if err := e.updateLocalMeshStatus(ctx, "STATUS_ACTIVE"); err != nil {
+		e.logger.Warnf("Failed to set mesh status to active: %v", err)
+		// Don't fail startup for this, but log the warning
+	}
+
 	return nil
 }
 
@@ -220,6 +233,22 @@ func (e *Engine) Stop(ctx context.Context) error {
 	}
 	e.state.isRunning = false
 	e.state.Unlock()
+
+	// Set local node status to stopped before shutdown
+	if err := e.updateLocalNodeStatus(ctx, "STATUS_STOPPED"); err != nil {
+		if e.logger != nil {
+			e.logger.Warnf("Failed to set local node status to stopped: %v", err)
+		}
+		// Don't fail shutdown for this, but log the warning
+	}
+
+	// Set mesh status to disconnected from this node's perspective
+	if err := e.updateLocalMeshStatus(ctx, "STATUS_DISCONNECTED"); err != nil {
+		if e.logger != nil {
+			e.logger.Warnf("Failed to set mesh status to disconnected: %v", err)
+		}
+		// Don't fail shutdown for this, but log the warning
+	}
 
 	// Stop mesh communication manager
 	if e.meshManager != nil {
@@ -362,4 +391,75 @@ func (e *Engine) getNodeIDFromDatabase(ctx context.Context) (uint64, error) {
 	}
 
 	return uint64(routingID), nil
+}
+
+// updateLocalNodeStatus updates the status of the local node in the database
+func (e *Engine) updateLocalNodeStatus(ctx context.Context, status string) error {
+	if e.db == nil {
+		return fmt.Errorf("database connection not available")
+	}
+
+	// Update the status of the local node using the localidentity table
+	query := `
+		UPDATE nodes 
+		SET status = $1, updated = CURRENT_TIMESTAMP
+		WHERE node_id = (SELECT identity_id FROM localidentity LIMIT 1)
+	`
+
+	result, err := e.db.Pool().Exec(ctx, query, status)
+	if err != nil {
+		return fmt.Errorf("failed to update local node status: %w", err)
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("no local node found to update")
+	}
+
+	if e.logger != nil {
+		e.logger.Infof("Updated local node status to: %s", status)
+	}
+
+	return nil
+}
+
+// updateLocalMeshStatus updates the status of the mesh that the local node belongs to
+func (e *Engine) updateLocalMeshStatus(ctx context.Context, status string) error {
+	if e.db == nil {
+		return fmt.Errorf("database connection not available")
+	}
+
+	// Get the local node ID first
+	var localNodeID string
+	nodeQuery := `SELECT identity_id FROM localidentity LIMIT 1`
+	err := e.db.Pool().QueryRow(ctx, nodeQuery).Scan(&localNodeID)
+	if err != nil {
+		return fmt.Errorf("failed to get local node ID: %w", err)
+	}
+
+	// Update the status of meshes - since each node can only be part of one mesh,
+	// we update all meshes when the local node exists and has been involved in mesh operations
+	// In a full implementation with proper node-mesh membership tables, this would be more specific
+	query := `
+		UPDATE mesh 
+		SET status = $1, updated = CURRENT_TIMESTAMP
+		WHERE EXISTS (
+			SELECT 1 FROM nodes n 
+			WHERE n.node_id = $2 AND n.status != 'STATUS_CLEAN'
+		)
+	`
+
+	result, err := e.db.Pool().Exec(ctx, query, status, localNodeID)
+	if err != nil {
+		return fmt.Errorf("failed to update mesh status: %w", err)
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected > 0 && e.logger != nil {
+		e.logger.Infof("Updated mesh status to: %s (%d meshes affected)", status, rowsAffected)
+	} else if e.logger != nil {
+		e.logger.Debugf("No meshes updated - local node may not be part of any mesh or is clean")
+	}
+
+	return nil
 }

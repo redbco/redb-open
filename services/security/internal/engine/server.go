@@ -363,11 +363,6 @@ func (s *SecurityServer) Authenticate(ctx context.Context, req *securityv1.Authe
 		return nil, status.Error(codes.InvalidArgument, "token is required")
 	}
 
-	if req.TenantUrl == "" {
-		s.engine.IncrementErrors()
-		return nil, status.Error(codes.InvalidArgument, "tenant URL is required")
-	}
-
 	// Get database connection
 	db := s.engine.GetDatabase()
 	if db == nil {
@@ -375,11 +370,35 @@ func (s *SecurityServer) Authenticate(ctx context.Context, req *securityv1.Authe
 		return nil, status.Error(codes.Internal, "authentication service temporarily unavailable")
 	}
 
-	// Resolve tenant_url to tenant_id
-	tenantID, err := s.getTenantIDByURL(ctx, db, req.TenantUrl)
-	if err != nil {
-		s.engine.IncrementErrors()
-		return nil, status.Error(codes.Unauthenticated, "invalid tenant")
+	var tenantID string
+	var err error
+
+	// For global operations, tenant_url may be empty
+	// In this case, we'll extract tenant ID from the JWT token itself
+	if req.TenantUrl == "" {
+		// Parse token to extract tenant ID (without full validation)
+		token, _ := jwt.ParseWithClaims(req.Token, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+			// We don't validate the signature here, just extract claims
+			return nil, errors.New("parsing for tenant ID only")
+		})
+
+		if token != nil {
+			if claims, ok := token.Claims.(*JWTClaims); ok && claims.TenantID != "" {
+				tenantID = claims.TenantID
+			}
+		}
+
+		if tenantID == "" {
+			s.engine.IncrementErrors()
+			return nil, status.Error(codes.InvalidArgument, "tenant information not found in token")
+		}
+	} else {
+		// Resolve tenant_url to tenant_id for tenant-specific operations
+		tenantID, err = s.getTenantIDByURL(ctx, db, req.TenantUrl)
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Error(codes.Unauthenticated, "invalid tenant")
+		}
 	}
 
 	// Parse and validate the JWT token

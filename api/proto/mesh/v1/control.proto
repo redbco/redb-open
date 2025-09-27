@@ -73,9 +73,26 @@ message DropSessionRequest {
     uint64 peer_node_id = 1;
 }
 
+// Response for dropping a session
+message DropSessionResponse {
+    bool success = 1;
+    string message = 2;
+    string error_code = 3;  // Optional error code if success is false
+}
+
 // Request to add a new session
 message AddSessionRequest {
     string addr = 1;
+    uint32 timeout_seconds = 2;  // Connection timeout in seconds (default: 30)
+}
+
+// Response for adding a session
+message AddSessionResponse {
+    bool success = 1;
+    string message = 2;
+    string error_code = 3;      // Optional error code if success is false
+    uint64 peer_node_id = 4;    // Node ID of the connected peer (if successful)
+    string remote_addr = 5;     // Actual remote address connected to
 }
 
 // Request to add a neighbor
@@ -113,8 +130,8 @@ service MeshControl {
     rpc GetSessions(GetSessionsRequest) returns (GetSessionsResponse);
     rpc GetRoutingTable(GetRoutingTableRequest) returns (GetRoutingTableResponse);
     rpc GetTopology(GetTopologyRequest) returns (GetTopologyResponse);
-    rpc DropSession(DropSessionRequest) returns (google.protobuf.Empty);
-    rpc AddSession(AddSessionRequest) returns (google.protobuf.Empty);
+    rpc DropSession(DropSessionRequest) returns (DropSessionResponse);
+    rpc AddSession(AddSessionRequest) returns (AddSessionResponse);
     rpc InjectNeighbor(InjectNeighborRequest) returns (google.protobuf.Empty);
     rpc SetPolicy(SetPolicyRequest) returns (google.protobuf.Empty);
     rpc GetMessageMetrics(GetMessageMetricsRequest) returns (GetMessageMetricsResponse);
