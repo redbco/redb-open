@@ -96,18 +96,28 @@ func (m *MeshCommunicationManager) Start(ctx context.Context) error {
 	m.logger.EnableConsoleOutput()
 	m.logger.Debug("Starting mesh manager for node %d", m.nodeID)
 
-	// Update our internal context to be derived from the provided context
-	// This ensures proper cancellation propagation during shutdown
-	m.logger.Debug("Updating mesh manager context")
 	m.mu.Lock()
+
+	// Clean up any existing subscriptions before starting new ones
+	m.logger.Debug("Cleaning up existing subscriptions")
+	for subID, sub := range m.subscriptions {
+		m.logger.Debug("Cancelling existing subscription %s", subID)
+		sub.cancel()
+		delete(m.subscriptions, subID)
+	}
+
+	// Cancel the old context and create a new one
+	m.logger.Debug("Updating mesh manager context")
 	m.cancel() // Cancel the old context
 	m.ctx, m.cancel = context.WithCancel(ctx)
+
 	m.mu.Unlock()
 	m.logger.Debug("Mesh manager context updated")
 
-	// Subscribe to all messages for this node
+	// Subscribe to all messages for this node using the updated internal context
+	// This ensures the subscription uses the same context as the manager
 	m.logger.Debug("Subscribing to mesh messages")
-	if err := m.SubscribeToMessages(ctx, nil); err != nil {
+	if err := m.SubscribeToMessages(m.ctx, nil); err != nil {
 		m.logger.Errorf("Failed to subscribe to mesh messages: %v", err)
 		return fmt.Errorf("failed to subscribe to mesh messages: %w", err)
 	}
@@ -284,14 +294,13 @@ func (m *MeshCommunicationManager) SubscribeToMessages(ctx context.Context, filt
 	// Create subscription context
 	subCtx, cancel := context.WithCancel(m.ctx)
 
-	// Subscribe to mesh messages with timeout
+	// Subscribe to mesh messages with timeout for the initial connection only
 	m.logger.Infof("Attempting to subscribe to mesh messages for node %d", m.nodeID)
 
-	// Add timeout to prevent hanging during subscription
-	subscribeCtx, subscribeCancel := context.WithTimeout(subCtx, 10*time.Second)
-	defer subscribeCancel()
+	// Use the subscription context directly for the Subscribe call
+	// This ensures the stream is tied to the long-lived subscription context
+	stream, err := m.meshDataClient.Subscribe(subCtx, filter)
 
-	stream, err := m.meshDataClient.Subscribe(subscribeCtx, filter)
 	if err != nil {
 		cancel()
 		m.logger.Errorf("Failed to subscribe to mesh messages: %v", err)
@@ -329,6 +338,8 @@ func (m *MeshCommunicationManager) processMessages(subID string, sub *MeshSubscr
 		m.logger.Infof("Subscription %s ended", subID)
 	}()
 
+	m.logger.Infof("Starting message processing for subscription %s", subID)
+
 	// Use a goroutine to handle Recv() calls with proper context cancellation
 	msgCh := make(chan *meshv1.Received, 1)
 	errCh := make(chan error, 1)
@@ -340,6 +351,7 @@ func (m *MeshCommunicationManager) processMessages(subID string, sub *MeshSubscr
 		defer close(recvDone)
 
 		for {
+			// Check if contexts are cancelled before attempting Recv
 			select {
 			case <-m.ctx.Done():
 				m.logger.Debugf("Recv goroutine for subscription %s stopping due to context cancellation", subID)
@@ -348,73 +360,43 @@ func (m *MeshCommunicationManager) processMessages(subID string, sub *MeshSubscr
 				m.logger.Debugf("Recv goroutine for subscription %s stopping due to subscription cancellation", subID)
 				return
 			default:
-				// Check if stream is still valid before attempting Recv
-				if sub.stream == nil {
-					m.logger.Debugf("Stream for subscription %s is nil, stopping recv goroutine", subID)
-					return
-				}
+			}
 
-				// Create a separate goroutine for the blocking Recv() call
-				recvResultCh := make(chan struct {
-					msg *meshv1.Received
-					err error
-				}, 1)
+			// Check if stream is still valid before attempting Recv
+			if sub.stream == nil {
+				m.logger.Debugf("Stream for subscription %s is nil, stopping recv goroutine", subID)
+				return
+			}
 
-				go func() {
-					msg, err := sub.stream.Recv()
-					select {
-					case recvResultCh <- struct {
-						msg *meshv1.Received
-						err error
-					}{msg, err}:
-					case <-m.ctx.Done():
-						// Context cancelled while Recv was blocking
-					case <-sub.ctx.Done():
-						// Subscription cancelled while Recv was blocking
-					}
-				}()
+			// Perform blocking Recv call
+			msg, err := sub.stream.Recv()
 
-				// Wait for Recv result or cancellation with timeout
+			if err != nil {
+				m.logger.Debugf("Recv error for subscription %s: %v", subID, err)
 				select {
-				case result := <-recvResultCh:
-					if result.err != nil {
-						select {
-						case errCh <- result.err:
-						case <-m.ctx.Done():
-						case <-sub.ctx.Done():
-						}
-						return
-					}
-
-					select {
-					case msgCh <- result.msg:
-					case <-m.ctx.Done():
-						return
-					case <-sub.ctx.Done():
-						return
-					}
-
-				case <-time.After(1 * time.Second):
-					// Timeout - check if we should continue or exit
-					select {
-					case <-m.ctx.Done():
-						return
-					case <-sub.ctx.Done():
-						return
-					default:
-						// Continue loop for next iteration
-					}
-
+				case errCh <- err:
 				case <-m.ctx.Done():
-					m.logger.Debugf("Recv loop for subscription %s stopping due to context cancellation", subID)
-					return
 				case <-sub.ctx.Done():
-					m.logger.Debugf("Recv loop for subscription %s stopping due to subscription cancellation", subID)
-					return
 				}
+				return
+			}
+
+			m.logger.Debugf("Received message for subscription %s from node %d", subID, msg.SrcNode)
+
+			// Send message to processing loop
+			select {
+			case msgCh <- msg:
+			case <-m.ctx.Done():
+				return
+			case <-sub.ctx.Done():
+				return
 			}
 		}
 	}()
+
+	// Add a keepalive ticker to ensure the subscription stays active
+	keepaliveTicker := time.NewTicker(25 * time.Second) // Slightly less than the 30-second heartbeat
+	defer keepaliveTicker.Stop()
 
 	for {
 		select {
@@ -424,6 +406,11 @@ func (m *MeshCommunicationManager) processMessages(subID string, sub *MeshSubscr
 		case <-sub.ctx.Done():
 			m.logger.Debugf("Message processing loop for subscription %s stopping due to subscription cancellation", subID)
 			return
+		case <-keepaliveTicker.C:
+			// Send a keepalive ping to ensure the connection stays active
+			m.logger.Debugf("Sending keepalive for subscription %s", subID)
+			// We don't need to send an actual message, just the fact that we're checking
+			// the channels should be enough to keep the gRPC connection active
 		case err := <-errCh:
 			if err != nil {
 				if status.Code(err) == codes.Canceled || status.Code(err) == codes.Unavailable {

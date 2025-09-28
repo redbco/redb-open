@@ -24,6 +24,7 @@ mesh-routing = { path = "../routing" }
 once_cell = "1.19"
 serde_cbor = "0.11"
 ciborium = "0.2"
+dashmap = "6.1"
 
 # TLS dependencies (optional)
 rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std"] }

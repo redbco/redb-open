@@ -119,6 +119,18 @@ services:
       services.mesh.tls.key_file: "./node-1001-key.pem"
       services.mesh.tls.ca_file: "./mesh-ca-cert.pem"
 
+  anchor:
+    enabled: true
+    required: true
+    executable: ./redb-anchor
+    args:
+      - --port=50057
+      - --supervisor=localhost:50000
+    dependencies:
+      - mesh
+    environment:
+      SERVICE_NAME: anchor
+
   core:
     enabled: true
     required: true
@@ -128,21 +140,9 @@ services:
       - --supervisor=localhost:50000
     dependencies:
       - mesh
+      - anchor
     environment:
       SERVICE_NAME: core
-
-  anchor:
-    enabled: true
-    required: true
-    executable: ./redb-anchor
-    args:
-      - --port=50057
-      - --supervisor=localhost:50000
-    dependencies:
-      - core
-      - mesh
-    environment:
-      SERVICE_NAME: anchor
 
   # API Services
   integration:

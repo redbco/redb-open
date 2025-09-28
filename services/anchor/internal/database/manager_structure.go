@@ -38,7 +38,7 @@ import (
 
 // GetDatabaseStructure returns the structure of a database as a UnifiedModel or legacy format
 func (dm *DatabaseManager) GetDatabaseStructure(id string) (interface{}, error) {
-	dm.safeLog("info", "Getting database structure for %s", id)
+	dm.safeLog("debug", "Getting database structure for %s", id)
 	client, err := dm.GetDatabaseClient(id)
 	if err != nil {
 		return nil, err

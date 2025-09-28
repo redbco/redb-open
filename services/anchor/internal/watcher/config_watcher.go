@@ -118,7 +118,7 @@ func (w *ConfigWatcher) processDatabaseConfigs(ctx context.Context, nodeID strin
 
 		// Skip if already connected
 		if _, err := dbManager.GetDatabaseClient(clientID); err == nil {
-			w.logger.Info("Database %s already connected, skipping", clientID)
+			w.logger.Debug("Database %s already connected, skipping", clientID)
 			continue
 		}
 
@@ -195,7 +195,7 @@ func (w *ConfigWatcher) processInstanceConfigs(ctx context.Context, nodeID strin
 
 		// Skip if already connected
 		if _, err := dbManager.GetInstanceClient(clientID); err == nil {
-			w.logger.Info("Instance %s already connected, skipping", clientID)
+			w.logger.Debug("Instance %s already connected, skipping", clientID)
 			continue
 		}
 

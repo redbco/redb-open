@@ -54,6 +54,8 @@ pub struct MeshDataService {
     node_id: u64,
     /// Message ID generator
     msg_id_gen: MessageIdGenerator,
+    /// Broadcast ID generator
+    broadcast_id_gen: std::sync::atomic::AtomicU64,
     /// Local delivery queue
     delivery_queue: Arc<DeliveryQueue>,
     /// Channel to send outbound messages to the mesh
@@ -96,6 +98,7 @@ impl MeshDataService {
         Self {
             node_id,
             msg_id_gen: MessageIdGenerator::new(),
+            broadcast_id_gen: std::sync::atomic::AtomicU64::new(1),
             delivery_queue,
             outbound_tx,
             acked_messages: Arc::new(DashMap::new()),
@@ -365,6 +368,9 @@ impl MeshDataService {
             corr_id: 0, // Use 0 for internal messages
             msg_id: None, // Don't track delivery status messages
             require_ack: false,
+            broadcast_id: None, // Not a broadcast message
+            broadcast_ttl: None, // Not a broadcast message
+            is_broadcast: false, // Not a broadcast message
         };
         
         // Send the delivery status back to source node
@@ -408,6 +414,78 @@ impl MeshDataService {
         }
     }
     
+    /// Generate the next broadcast ID
+    fn generate_broadcast_id(&self) -> u64 {
+        self.broadcast_id_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+    
+    /// Handle a broadcast send request
+    async fn handle_broadcast_send(&self, req: SendRequest) -> Result<Response<SendResponse>> {
+        let broadcast_id = self.generate_broadcast_id();
+        let msg_id = self.msg_id_gen.next();
+        
+        debug!(
+            "Broadcast send request: broadcast_id={}, mode={:?}, timeout={}s, payload_len={}",
+            broadcast_id,
+            req.mode(),
+            req.timeout_seconds,
+            req.payload.len()
+        );
+        
+        // Track message as queued initially
+        self.message_tracker.track_message(
+            msg_id,
+            MessageStatus::Queued,
+            "Broadcast message queued for delivery".to_string(),
+            false, // Broadcasts don't require ack
+        );
+        
+        // Convert headers
+        let headers: HashMap<String, Vec<u8>> = req
+            .headers
+            .into_iter()
+            .map(|h| (h.key, h.value))
+            .collect();
+        
+        // Create outbound broadcast message
+        let outbound_msg = OutboundMessage {
+            src_node: self.node_id,
+            dst_node: 0, // Broadcast destination
+            payload: req.payload,
+            headers,
+            corr_id: req.corr_id,
+            msg_id: Some(msg_id),
+            require_ack: false, // Broadcasts don't require ack
+            broadcast_id: Some(broadcast_id),
+            broadcast_ttl: Some(32), // Default TTL for broadcasts
+            is_broadcast: true,
+        };
+        
+        // Send to session manager for broadcast handling
+        if let Err(e) = self.outbound_tx.send(outbound_msg) {
+            error!("Failed to send broadcast message: {}", e);
+            
+            self.message_tracker.update_status(
+                msg_id,
+                MessageStatus::Undeliverable,
+                format!("Failed to send broadcast message: {}", e),
+            );
+            
+            return Err(Status::internal("Failed to send broadcast message"));
+        }
+        
+        info!("Broadcast message {} queued for delivery (broadcast_id: {})", msg_id, broadcast_id);
+        
+        // For broadcast messages, we return immediately with queued status
+        // since we can't wait for delivery confirmation from all nodes
+        Ok(Response::new(SendResponse {
+            msg_id,
+            status: MessageStatus::Queued as i32,
+            status_message: "Broadcast message queued for delivery".to_string(),
+            require_ack: false,
+        }))
+    }
+    
     /// Get statistics about the service
     pub fn get_stats(&self) -> MeshDataStats {
         MeshDataStats {
@@ -443,12 +521,13 @@ impl MeshData for MeshDataService {
         );
         
         // Validate request
-        if req.dst_node == 0 {
-            return Err(Status::invalid_argument("dst_node cannot be 0"));
-        }
-        
         if req.payload.is_empty() {
             return Err(Status::invalid_argument("payload cannot be empty"));
+        }
+        
+        // Check if this is a broadcast request (dst_node == 0)
+        if req.dst_node == 0 {
+            return self.handle_broadcast_send(req).await;
         }
         
         // Check if destination node is known in the topology
@@ -504,6 +583,9 @@ impl MeshData for MeshDataService {
             corr_id: req.corr_id,
             msg_id: Some(msg_id), // Include message ID for tracking
             require_ack, // Include acknowledgment requirement
+            broadcast_id: None, // Not a broadcast message
+            broadcast_ttl: None, // Not a broadcast message
+            is_broadcast: false, // Not a broadcast message
         };
         
         // Handle different send modes
@@ -759,6 +841,9 @@ impl MeshData for MeshDataService {
             corr_id: req.corr_id,
             msg_id: Some(msg_id),
             require_ack,
+            broadcast_id: None, // Not a broadcast message
+            broadcast_ttl: None, // Not a broadcast message
+            is_broadcast: false, // Not a broadcast message
         };
         
         // Queue message with status streaming
@@ -959,6 +1044,9 @@ impl MeshData for MeshDataService {
             corr_id: 0, // Use 0 for broadcast messages
             msg_id: None, // Don't track broadcast messages
             require_ack: false, // Broadcasts don't require acknowledgment
+            broadcast_id: Some(self.generate_broadcast_id()), // Generate broadcast ID
+            broadcast_ttl: Some(16), // Lower TTL for state events
+            is_broadcast: true, // This is a broadcast message
         };
         
         // Send the broadcast message
@@ -1017,6 +1105,9 @@ impl MeshData for MeshDataService {
             corr_id: 0,
             msg_id: None,
             require_ack: false,
+            broadcast_id: Some(self.generate_broadcast_id()), // Generate broadcast ID
+            broadcast_ttl: Some(8), // Lower TTL for sync requests
+            is_broadcast: true, // This is a broadcast message
         };
         
         // Send the sync request

@@ -229,25 +229,13 @@ func (e *Engine) Start(ctx context.Context) error {
 	if e.meshDataClient != nil && e.meshControlClient != nil {
 		e.logger.Debug("Starting mesh manager")
 
-		// Use a timeout to prevent hanging during mesh manager startup
-		meshStartCtx, meshStartCancel := context.WithTimeout(ctx, 10*time.Second)
-		defer meshStartCancel()
-
-		done := make(chan error, 1)
-		go func() {
-			done <- e.meshManager.Start(meshStartCtx)
-		}()
-
-		select {
-		case err := <-done:
-			if err != nil {
-				e.logger.Warnf("Failed to start mesh communication manager: %v", err)
-				// Continue without mesh communication - this is a degraded mode
-			} else {
-				e.logger.Info("Mesh communication manager started successfully")
-			}
-		case <-time.After(10 * time.Second):
-			e.logger.Warnf("Mesh manager start timed out, continuing without mesh")
+		// Start mesh manager with the main context (not a timeout context)
+		// The mesh manager needs a long-lived context for its subscriptions
+		if err := e.meshManager.Start(ctx); err != nil {
+			e.logger.Warnf("Failed to start mesh communication manager: %v", err)
+			// Continue without mesh communication - this is a degraded mode
+		} else {
+			e.logger.Info("Mesh communication manager started successfully")
 		}
 	} else {
 		e.logger.Warnf("Mesh clients not available, running in degraded mode without mesh communication")

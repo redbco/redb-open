@@ -10,10 +10,11 @@ use mesh_wire::{FrameBuilder, FrameType, TopologyUpdate};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 use once_cell::sync::Lazy;
+use dashmap::DashMap;
 use anyhow;
 
 /// Trait for handling mesh events
@@ -51,6 +52,12 @@ pub struct OutboundMessage {
     pub msg_id: Option<u64>,
     /// Whether client acknowledgment is required
     pub require_ack: bool,
+    /// Unique ID for broadcast messages (None for unicast)
+    pub broadcast_id: Option<u64>,
+    /// TTL for broadcast messages to prevent infinite forwarding
+    pub broadcast_ttl: Option<u8>,
+    /// Flag to identify broadcast messages
+    pub is_broadcast: bool,
 }
 
 impl OutboundMessage {
@@ -67,6 +74,9 @@ impl OutboundMessage {
             corr_id: 0xFFFFFFFFFFFFFFFE, // Reserved corr_id for session termination
             msg_id: None, // Don't track termination messages
             require_ack: false, // Termination messages don't require ack
+            broadcast_id: None, // Not a broadcast message
+            broadcast_ttl: None, // Not a broadcast message
+            is_broadcast: false, // Not a broadcast message
         }
     }
     
@@ -88,6 +98,62 @@ pub struct SessionInfo {
     pub remote_addr: SocketAddr,
     /// Channel to send messages to this session
     pub message_tx: mpsc::UnboundedSender<OutboundMessage>,
+}
+
+/// Broadcast message cache for duplicate detection
+#[derive(Debug)]
+pub struct BroadcastCache {
+    /// Cache mapping (src_node, broadcast_id) -> timestamp
+    cache: Arc<DashMap<(u64, u64), u64>>,
+    /// Cleanup interval for expired entries
+    cleanup_interval: Duration,
+}
+
+impl BroadcastCache {
+    /// Create a new broadcast cache
+    pub fn new() -> Self {
+        Self {
+            cache: Arc::new(DashMap::new()),
+            cleanup_interval: Duration::from_secs(60), // Clean up every minute
+        }
+    }
+    
+    /// Check if a broadcast message has been seen before
+    pub fn contains(&self, src_node: u64, broadcast_id: u64) -> bool {
+        self.cache.contains_key(&(src_node, broadcast_id))
+    }
+    
+    /// Insert a broadcast message into the cache
+    pub fn insert(&self, src_node: u64, broadcast_id: u64) {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.cache.insert((src_node, broadcast_id), timestamp);
+    }
+    
+    /// Clean up expired entries (older than 5 minutes)
+    pub fn cleanup_expired(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let expire_time = 300; // 5 minutes
+        
+        self.cache.retain(|_, timestamp| {
+            now.saturating_sub(*timestamp) < expire_time
+        });
+    }
+    
+    /// Get the cache for direct access
+    pub fn get_cache(&self) -> Arc<DashMap<(u64, u64), u64>> {
+        Arc::clone(&self.cache)
+    }
+    
+    /// Get cleanup interval
+    pub fn get_cleanup_interval(&self) -> Duration {
+        self.cleanup_interval
+    }
 }
 
 /// Session manager that coordinates multiple sessions and routing
@@ -115,6 +181,8 @@ pub struct SessionManager {
     event_handler: Option<Arc<dyn MeshEventHandler>>,
     /// Routing failure tracker for detecting session interruptions
     failure_tracker: Arc<RoutingFailureTracker>,
+    /// Broadcast message cache for duplicate detection
+    broadcast_cache: BroadcastCache,
 }
 
 /// Message received from the mesh
@@ -166,6 +234,7 @@ impl SessionManager {
             routing_feedback_tx: None,
             event_handler: None,
             failure_tracker: Arc::new(RoutingFailureTracker::new(3, Duration::from_secs(30))),
+            broadcast_cache: BroadcastCache::new(),
         }
     }
 
@@ -205,6 +274,9 @@ impl SessionManager {
     /// Run the session manager
     pub async fn run(mut self) -> anyhow::Result<()> {
         info!("Starting session manager for node {}", self.local_node_id);
+
+        // Start broadcast cache cleanup task
+        self.start_broadcast_cache_cleanup();
 
         let mut outbound_rx = self.outbound_rx.take()
             .ok_or_else(|| anyhow::anyhow!("Outbound receiver not set"))?;
@@ -252,6 +324,11 @@ impl SessionManager {
     /// Handle an outbound message from gRPC
     async fn handle_outbound_message(&self, message: OutboundMessage) -> anyhow::Result<()> {
         debug!("Handling outbound message to node {}", message.dst_node);
+
+        // Check if this is a broadcast message (dst_node == 0)
+        if message.dst_node == 0 || message.is_broadcast {
+            return self.handle_broadcast_message(message).await;
+        }
 
         // Check if destination is local
         if message.dst_node == self.local_node_id {
@@ -356,6 +433,121 @@ impl SessionManager {
         Ok(())
     }
     
+    /// Handle a broadcast message using controlled flooding
+    async fn handle_broadcast_message(&self, message: OutboundMessage) -> anyhow::Result<()> {
+        debug!("Handling broadcast message from node {} (broadcast_id: {:?})", 
+               message.src_node, message.broadcast_id);
+        
+        // Check broadcast cache for duplicates if broadcast_id is present
+        if let Some(broadcast_id) = message.broadcast_id {
+            // Only check cache for non-zero broadcast IDs to avoid issues with default values
+            if broadcast_id != 0 && self.broadcast_cache.contains(message.src_node, broadcast_id) {
+                debug!("Dropping duplicate broadcast message from node {} (ID: {})", 
+                       message.src_node, broadcast_id);
+                return Ok(());
+            }
+            
+            // Add to cache to prevent future duplicates (only for non-zero IDs)
+            if broadcast_id != 0 {
+                self.broadcast_cache.insert(message.src_node, broadcast_id);
+            }
+        }
+        
+        // Check TTL if present
+        if let Some(ttl) = message.broadcast_ttl {
+            if ttl == 0 {
+                debug!("Dropping broadcast message due to TTL expiry");
+                return Ok(());
+            }
+        }
+        
+        // Deliver locally first
+        let local_message = InboundMessage {
+            src_node: message.src_node,
+            dst_node: self.local_node_id, // Set to local node for delivery
+            payload: message.payload.clone(),
+            headers: message.headers.clone(),
+            corr_id: message.corr_id,
+            msg_id: message.msg_id,
+            require_ack: message.require_ack,
+        };
+        
+        if let Err(e) = self.deliver_locally(local_message).await {
+            error!("Failed to deliver broadcast message locally: {}", e);
+            // Continue with forwarding even if local delivery fails
+        } else {
+            debug!("Successfully delivered broadcast message locally");
+        }
+        
+        // Forward to all connected sessions (except the sender)
+        // Clone the session info to avoid holding the lock while sending messages
+        let session_targets: Vec<(u64, mpsc::UnboundedSender<OutboundMessage>)> = {
+            let sessions = self.sessions.read().await;
+            sessions.iter()
+                .filter(|(node_id, _)| **node_id != message.src_node)
+                .map(|(node_id, session_info)| (*node_id, session_info.message_tx.clone()))
+                .collect()
+        };
+        
+        let mut forwarded_count = 0;
+        
+        for (node_id, message_tx) in session_targets {
+            // Create forwarded message with decremented TTL
+            let mut forwarded_message = message.clone();
+            forwarded_message.dst_node = node_id; // Set specific destination for forwarding
+            
+            // Decrement TTL if present
+            if let Some(ttl) = forwarded_message.broadcast_ttl {
+                forwarded_message.broadcast_ttl = Some(ttl.saturating_sub(1));
+            }
+            
+            // Send to session
+            if let Err(e) = message_tx.send(forwarded_message) {
+                warn!("Failed to forward broadcast to node {}: {}", node_id, e);
+            } else {
+                forwarded_count += 1;
+                debug!("Forwarded broadcast message to node {}", node_id);
+            }
+        }
+        
+        info!("Broadcast message from node {} delivered locally and forwarded to {} nodes", 
+              message.src_node, forwarded_count);
+        
+        Ok(())
+    }
+    
+    /// Start the broadcast cache cleanup task
+    fn start_broadcast_cache_cleanup(&self) {
+        let cache = self.broadcast_cache.get_cache();
+        let cleanup_interval = self.broadcast_cache.get_cleanup_interval();
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(cleanup_interval);
+            loop {
+                interval.tick().await;
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let expire_time = 300; // 5 minutes
+                
+                // Only perform cleanup if cache is getting large to avoid unnecessary overhead
+                let initial_count = cache.len();
+                if initial_count > 100 {
+                    cache.retain(|_, timestamp| {
+                        now.saturating_sub(*timestamp) < expire_time
+                    });
+                    let final_count = cache.len();
+                    
+                    if initial_count > final_count {
+                        debug!("Cleaned up {} expired broadcast cache entries ({} -> {})", 
+                               initial_count - final_count, initial_count, final_count);
+                    }
+                }
+            }
+        });
+    }
+    
     /// Send routing feedback for message status tracking
     async fn send_routing_feedback(&self, msg_id: u64, decision: RoutingDecision) {
         if let Some(ref tx) = self.routing_feedback_tx {
@@ -454,6 +646,9 @@ impl SessionManager {
                         corr_id: message.corr_id,
                         msg_id: message.msg_id, // Preserve message ID for forwarded messages too
                         require_ack: message.require_ack, // Preserve acknowledgment requirement
+                        broadcast_id: None, // Forwarded messages are not broadcasts
+                        broadcast_ttl: None, // Forwarded messages are not broadcasts
+                        is_broadcast: false, // Forwarded messages are not broadcasts
                     };
                     self.handle_outbound_message(outbound).await?;
                 }
@@ -532,6 +727,9 @@ impl SessionManager {
                 corr_id: 0xFFFFFFFFFFFFFFFF, // Reserved corr_id for topology updates
                 msg_id: None, // Don't track topology update messages
                 require_ack: false, // Topology updates don't require ack
+                broadcast_id: None, // Not a broadcast message
+                broadcast_ttl: None, // Not a broadcast message
+                is_broadcast: false, // Not a broadcast message
             };
 
             if let Err(e) = session_info.message_tx.send(outbound_msg) {

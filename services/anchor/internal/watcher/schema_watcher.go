@@ -317,6 +317,16 @@ func (w *SchemaWatcher) Start(ctx context.Context) {
 }
 
 // Helper method to safely log with nil check
+func (w *SchemaWatcher) logDebug(msg string, args ...interface{}) {
+	if w.logger != nil {
+		if len(args) > 0 {
+			w.logger.Debugf(msg, args...)
+		} else {
+			w.logger.Debug(msg)
+		}
+	}
+}
+
 func (w *SchemaWatcher) logInfo(msg string, args ...interface{}) {
 	if w.logger != nil {
 		if len(args) > 0 {
@@ -401,7 +411,7 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 			}
 
 			// Call UnifiedModel service to compare schemas using UnifiedModel objects
-			w.logInfo("Comparing schemas for database %s", clientID)
+			w.logDebug("Comparing schemas for database %s", clientID)
 			compareResp, err := w.umClient.CompareUnifiedModels(ctx, &pb.CompareUnifiedModelsRequest{
 				PreviousUnifiedModel: previousUM.ToProto(),
 				CurrentUnifiedModel:  currentUM.ToProto(),
@@ -426,7 +436,7 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 					continue
 				}
 			} else {
-				w.logInfo("No schema changes detected for database %s", clientID)
+				w.logDebug("No schema changes detected for database %s", clientID)
 			}
 
 			// Log any warnings
@@ -434,10 +444,10 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 				w.logWarn("Schema comparison warning for %s: %s", clientID, warning)
 			}
 		} else {
-			w.logInfo("No previous schema found for database %s, checking for existing commits", clientID)
+			w.logDebug("No previous schema found for database %s, checking for existing commits", clientID)
 
 			// Try to get the latest commit for this database
-			w.logInfo("Fetching latest commit for database %s", clientID)
+			w.logDebug("Fetching latest commit for database %s", clientID)
 
 			// Create a timeout context for the GetLatestCommitForDatabase call
 			timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -514,7 +524,7 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 						continue
 					}
 				} else {
-					w.logInfo("No schema changes detected for database %s", clientID)
+					w.logDebug("No schema changes detected for database %s", clientID)
 				}
 
 				// Log any warnings
