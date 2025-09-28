@@ -77,11 +77,12 @@ pub mod manager;
 pub mod reliability;
 pub mod session;
 pub mod transport;
+pub mod failure_tracker;
 
 // Re-export main types
 pub use handshake::{parse_hello_meta, recv_any_frame, send_hello, Hello};
 pub use keepalive::{build_ping, build_pong, calc_rtt_from_corr, now_corr_id};
-pub use manager::{InboundMessage, OutboundMessage, SessionManager, build_data_frame, register_session_with_registry, unregister_session_with_registry, register_global_session_channel, unregister_global_session_channel, get_global_session_channel};
+pub use manager::{InboundMessage, OutboundMessage, SessionManager, MeshEventHandler, build_data_frame, register_session_with_registry, unregister_session_with_registry, register_global_session_channel, unregister_global_session_channel, get_global_session_channel};
 pub use reliability::{AckMeta, RecvState, ReliabilityManager, ResumeMeta, SendState};
 pub use session::{
     Session, SessionConfig, SessionEvent, SessionHandle, SessionStats, TlsClientConfig,

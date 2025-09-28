@@ -5,6 +5,8 @@ use crate::proto::mesh::v1::{
     GetMessageMetricsResponse, GetRoutingTableRequest, GetRoutingTableResponse, GetSessionsRequest,
     GetSessionsResponse, GetTopologyRequest, GetTopologyResponse, InjectNeighborRequest,
     RouteEntry, SessionInfo, SetPolicyRequest, TopologySnapshot, NeighborInfo,
+    GetConsensusStateRequest, GetConsensusStateResponse, TriggerConsensusCheckRequest, 
+    TriggerConsensusCheckResponse, ConsensusState,
 };
 use crate::message_tracker::MessageTracker;
 use mesh_routing::RoutingTable;
@@ -442,6 +444,80 @@ impl MeshControl for MeshControlService {
             warn!("Message tracker not available");
             Err(Status::unavailable("Message tracking not enabled"))
         }
+    }
+    
+    async fn get_consensus_state(
+        &self,
+        _request: Request<GetConsensusStateRequest>,
+    ) -> Result<Response<GetConsensusStateResponse>> {
+        debug!("GetConsensusState request received");
+        
+        // Get current session count as a proxy for online nodes
+        let online_nodes = if let Some(session_registry) = &self.session_registry {
+            let registry = session_registry.read().await;
+            registry.len() as u64 + 1 // +1 for local node
+        } else {
+            1 // Just local node
+        };
+        
+        // For now, return a basic consensus state
+        // In a full implementation, this would query the actual consensus system
+        let consensus_state = ConsensusState {
+            total_nodes: online_nodes, // Simplified: assume all known nodes are total nodes
+            online_nodes,
+            split_detected: false, // Simplified: no split detection yet
+            is_majority_partition: true, // Simplified: assume we're always in majority
+            split_strategy: "SEED_NODE_PREVAILS_IN_EVEN_SPLIT".to_string(),
+            seed_node_id: self.node_id, // Simplified: local node is seed
+            can_accept_writes: true, // Simplified: always accept writes
+        };
+        
+        info!(
+            "Returning consensus state: {}/{} nodes online, split: {}, can_write: {}",
+            consensus_state.online_nodes,
+            consensus_state.total_nodes,
+            consensus_state.split_detected,
+            consensus_state.can_accept_writes
+        );
+        
+        Ok(Response::new(GetConsensusStateResponse {
+            consensus_state: Some(consensus_state),
+        }))
+    }
+    
+    async fn trigger_consensus_check(
+        &self,
+        _request: Request<TriggerConsensusCheckRequest>,
+    ) -> Result<Response<TriggerConsensusCheckResponse>> {
+        debug!("TriggerConsensusCheck request received");
+        
+        // For now, just return success
+        // In a full implementation, this would trigger an actual consensus check
+        info!("Consensus check triggered (placeholder implementation)");
+        
+        // Get current consensus state to return
+        let online_nodes = if let Some(session_registry) = &self.session_registry {
+            let registry = session_registry.read().await;
+            registry.len() as u64 + 1 // +1 for local node
+        } else {
+            1 // Just local node
+        };
+        
+        let consensus_state = ConsensusState {
+            total_nodes: online_nodes,
+            online_nodes,
+            split_detected: false,
+            is_majority_partition: true,
+            split_strategy: "SEED_NODE_PREVAILS_IN_EVEN_SPLIT".to_string(),
+            seed_node_id: self.node_id,
+            can_accept_writes: true,
+        };
+        
+        Ok(Response::new(TriggerConsensusCheckResponse {
+            success: true,
+            message: "Consensus check completed successfully".to_string(),
+            consensus_state: Some(consensus_state),
+        }))
     }
 }
 

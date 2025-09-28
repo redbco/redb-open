@@ -82,28 +82,81 @@ func (s *Service) Initialize(ctx context.Context, cfg *config.Config) error {
 }
 
 func (s *Service) Start(ctx context.Context) error {
+	if s.logger != nil {
+		s.logger.Info("Starting core service")
+	}
+
 	// Start the engine
 	if s.engine != nil {
+		if s.logger != nil {
+			s.logger.Debug("Starting core engine")
+		}
 		if err := s.engine.Start(ctx); err != nil {
+			if s.logger != nil {
+				s.logger.Errorf("Core engine start failed: %v", err)
+			}
 			return fmt.Errorf("failed to start core engine: %w", err)
 		}
 		if s.logger != nil {
-			s.logger.Infof("Core engine started successfully")
+			s.logger.Info("Core engine started successfully")
 		}
+	}
+
+	if s.logger != nil {
+		s.logger.Info("Core service started successfully")
 	}
 	return nil
 }
 
 func (s *Service) Stop(ctx context.Context, gracePeriod time.Duration) error {
+	if s.logger != nil {
+		s.logger.Info("Stopping core service")
+	}
+
 	if s.engine != nil {
-		if err := s.engine.Stop(ctx); err != nil {
-			return err
+		if s.logger != nil {
+			s.logger.Info("Stopping core engine")
+		}
+
+		// Use a shorter timeout context to prevent hanging the entire shutdown
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Run engine stop in a goroutine with timeout
+		done := make(chan error, 1)
+		go func() {
+			done <- s.engine.Stop(stopCtx)
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				if s.logger != nil {
+					s.logger.Errorf("Failed to stop core engine: %v", err)
+				}
+			} else if s.logger != nil {
+				s.logger.Info("Core engine stopped successfully")
+			}
+		case <-time.After(8 * time.Second):
+			if s.logger != nil {
+				s.logger.Warnf("Core engine stop timed out, forcing shutdown")
+			}
 		}
 	}
 
 	// Close database connection
 	if s.db != nil {
+		if s.logger != nil {
+			s.logger.Info("Closing database connection")
+		}
 		s.db.Close()
+		if s.logger != nil {
+			s.logger.Info("Database connection closed")
+		}
+	}
+
+	if s.logger != nil {
+		s.logger.Info("Stop command completed")
 	}
 
 	return nil

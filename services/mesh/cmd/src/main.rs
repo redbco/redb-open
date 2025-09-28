@@ -4,13 +4,13 @@
 //! handshake protocol, keepalive functionality, and mTLS authentication.
 
 use clap::Parser;
-use mesh_session::{InboundMessage, listen_tcp, IoStream, Session, SessionConfig, SessionEvent, SessionManager, TlsClientConfig, OutboundMessage};
+use mesh_session::{InboundMessage, listen_tcp, IoStream, Session, SessionConfig, SessionEvent, SessionManager, TlsClientConfig, OutboundMessage, MeshEventHandler as SessionMeshEventHandler};
 use mesh_session::manager::RoutingFeedback;
 use mesh_storage::StorageMode;
 use mesh_routing::{RoutingTable};
 use mesh_topology::TopologyDatabase;
 use mesh_wire::{NeighborInfo, TopologyUpdate};
-use mesh_grpc::{DeliveryQueue, MeshGrpcServerBuilder, SessionCommand, SessionOperationResult};
+use mesh_grpc::{DeliveryQueue, MeshGrpcServerBuilder, SessionCommand, SessionOperationResult, MeshEventNotifier, start_event_processor};
 use mesh_grpc::proto::mesh::v1::{Received, Header};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
@@ -419,6 +419,45 @@ async fn main() -> anyhow::Result<()> {
         
         // Get shared session registry for session registration
         let session_registry = session_manager.get_session_registry();
+        
+        // Create event notifier and processor for mesh state events
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let event_notifier = Arc::new(MeshEventNotifier::new(routing_id, event_tx));
+        
+        // Create adapter to bridge the two trait definitions
+        #[derive(Debug)]
+        struct EventHandlerAdapter {
+            notifier: Arc<MeshEventNotifier>,
+        }
+        
+        impl SessionMeshEventHandler for EventHandlerAdapter {
+            fn notify_session_added(&self, peer_node_id: u64, remote_addr: String) {
+                self.notifier.notify_session_added(peer_node_id, remote_addr);
+            }
+            
+            fn notify_session_removed(&self, peer_node_id: u64, reason: String) {
+                self.notifier.notify_session_removed(peer_node_id, reason);
+            }
+            
+            fn notify_session_interrupted(&self, peer_node_id: u64, reason: String) {
+                self.notifier.notify_session_interrupted(peer_node_id, reason);
+            }
+            
+            fn notify_session_recovered(&self, peer_node_id: u64) {
+                self.notifier.notify_session_recovered(peer_node_id);
+            }
+            
+            fn notify_routing_failure(&self, dst_node: u64, reason: String, consecutive_failures: u32) {
+                self.notifier.notify_routing_failure(dst_node, reason, consecutive_failures);
+            }
+        }
+        
+        let adapter = Arc::new(EventHandlerAdapter {
+            notifier: event_notifier.clone(),
+        });
+        
+        // Set event handler in session manager
+        session_manager.set_event_handler(adapter);
 
         // Create ServiceController service for supervisor integration
         let service_controller = create_service_controller_service(shutdown_tx.clone(), shutdown_complete_rx).await;
@@ -439,6 +478,10 @@ async fn main() -> anyhow::Result<()> {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build gRPC server: {}", e))?;
 
+        // Start the event processor
+        let data_service = mesh_grpc_server.get_data_service();
+        let _event_processor_handle = tokio::spawn(start_event_processor(event_rx, data_service));
+        
         info!("Starting combined gRPC server (mesh + supervisor) on {}", args.grpc_bind);
         let server_handle = tokio::spawn(async move {
             if let Err(e) = mesh_grpc_server.serve_with_supervisor(service_controller).await {

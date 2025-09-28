@@ -368,6 +368,82 @@ enum ConnectionStatus {
     CONNECTION_STATUS_FAILED = 4;
 }
 
+// =============================================================================
+// MESH STATE SYNCHRONIZATION MESSAGES
+// =============================================================================
+
+// Mesh state event types for synchronization
+enum MeshEventType {
+    MESH_EVENT_UNSPECIFIED = 0;
+    // Planned events
+    MESH_EVENT_NODE_JOINED = 1;
+    MESH_EVENT_NODE_LEFT = 2;
+    MESH_EVENT_NODE_EVICTED = 3;
+    MESH_EVENT_SESSION_ADDED = 4;
+    MESH_EVENT_SESSION_REMOVED = 5;
+    MESH_EVENT_NODE_SHUTDOWN = 6;
+    MESH_EVENT_NODE_STARTED = 7;
+    // Unplanned events
+    MESH_EVENT_SESSION_INTERRUPTED = 8;
+    MESH_EVENT_SESSION_RECOVERED = 9;
+    MESH_EVENT_NODE_OFFLINE = 10;
+    MESH_EVENT_NODE_RECOVERED = 11;
+    // Consensus events
+    MESH_EVENT_SPLIT_DETECTED = 12;
+    MESH_EVENT_SPLIT_RESOLVED = 13;
+}
+
+// Mesh state event for synchronization (received from mesh service)
+message MeshStateEvent {
+    MeshEventType event_type = 1;
+    uint64 originator_node = 2;
+    uint64 affected_node = 3;
+    uint64 sequence_number = 4;
+    uint64 timestamp = 5;
+    map<string, string> metadata = 6;
+    bytes payload = 7; // Serialized event-specific data
+}
+
+// Request to handle a state event (called by mesh service)
+message HandleStateEventRequest {
+    MeshStateEvent event = 1;
+    uint64 source_node = 2; // Node that sent this event to us
+}
+
+// Response for handling a state event
+message HandleStateEventResponse {
+    bool success = 1;
+    string message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Database synchronization request (received from mesh service)
+message HandleDatabaseSyncRequestMessage {
+    string table_name = 1;
+    uint64 last_known_version = 2;
+    repeated string node_ids = 3; // For filtering node-specific data
+    uint64 requesting_node = 4; // Node that requested the sync
+}
+
+// Database record for synchronization
+message DatabaseRecord {
+    string operation = 1; // INSERT, UPDATE, DELETE
+    map<string, string> data = 2;
+    uint64 version = 3;
+    uint64 timestamp = 4;
+}
+
+// Response for database synchronization request
+message HandleDatabaseSyncResponse {
+    string table_name = 1;
+    uint64 current_version = 2;
+    repeated DatabaseRecord records = 3;
+    bool has_more = 4;
+    bool success = 5;
+    string message = 6;
+    redbco.redbopen.common.v1.Status status = 7;
+}
+
 // The mesh object
 message Mesh {
     string mesh_id = 1;

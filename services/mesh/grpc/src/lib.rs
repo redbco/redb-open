@@ -13,6 +13,7 @@ pub mod delivery;
 pub mod message_tracker;
 pub mod message_queue;
 pub mod metrics;
+pub mod event_notifier;
 
 pub use data::*;
 pub use control::*;
@@ -21,6 +22,7 @@ pub use delivery::*;
 pub use message_tracker::*;
 pub use message_queue::*;
 pub use metrics::*;
+pub use event_notifier::*;
 
 /// Generated protobuf code and gRPC service definitions
 pub mod proto {

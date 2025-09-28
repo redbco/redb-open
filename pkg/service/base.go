@@ -205,7 +205,9 @@ func (s *BaseService) Run(ctx context.Context) error {
 	}
 
 	// Graceful shutdown
+	s.Logger.Debug("Setting service state to stopping")
 	s.setState(commonv1.ServiceState_SERVICE_STATE_STOPPING)
+	s.Logger.Debug("Initiating graceful shutdown")
 	return s.shutdown(ctx)
 }
 
@@ -672,8 +674,11 @@ func (s *BaseService) shutdown(ctx context.Context) error {
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), gracePeriod)
 	defer stopCancel()
 
+	s.Logger.Debug("Stopping service implementation")
 	if err := s.impl.Stop(stopCtx, gracePeriod); err != nil {
 		s.Logger.Errorf("Service implementation shutdown error: %v", err)
+	} else {
+		s.Logger.Info("Service implementation stopped successfully")
 	}
 
 	// Give supervisor time to send stop commands to all services before unregistering

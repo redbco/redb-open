@@ -7,7 +7,37 @@ supervisor:
 license:
   distribution: "open-source"
 
+# Global configuration for the reDB system
+global:
+  multi_tenancy:
+    # Mode: "single-tenant" for open-source version, "multi-tenant" for enterprise
+    mode: "single-tenant"
+    # Default tenant settings for single-tenant mode
+    default_tenant_id: "default-tenant"
+    default_tenant_name: "Default Tenant"
+    default_tenant_url: "default"
+
+# Keyring configuration for storing secrets
+keyring:
+  # Backend: "auto" (try system first, fallback to file), "system", or "file"
+  backend: "auto"
+  # Path for file-based keyring (optional, uses default if not specified)
+  # path: "/custom/path/to/keyring.json"
+  # Master key for file-based keyring encryption (use REDB_KEYRING_PASSWORD env var in production)
+  # master_key: "your-secure-master-key"
+  # Service name prefix for system keyring entries
+  service_name: "redb"
+
+# Instance group configuration for running multiple instances on the same machine
+instance_group:
+  # Unique identifier for this instance group (change for each instance)
+  group_id: "default"
+  # Port offset to avoid conflicts (0 = no offset, 1000 = add 1000 to all ports)
+  port_offset: 0
+
+# Internal PostgreSQL database configuration
 database:
+  # Database name
   name: redb
 
 logging:
@@ -61,21 +91,6 @@ services:
       max_memory_mb: 2048
       max_cpu_percent: 100
 
-  core:
-    enabled: true
-    required: true
-    executable: ./redb-core
-    args:
-      - --port=50055
-      - --supervisor=localhost:50000
-    dependencies:
-      - security
-      - webhook
-      - unifiedmodel
-      - transformation
-    environment:
-      SERVICE_NAME: core
-
   mesh:
     enabled: true
     required: true
@@ -87,7 +102,10 @@ services:
       - --supervisor=localhost:50000
       - --config=config.yaml
     dependencies:
-      - core
+      - security
+      - webhook
+      - unifiedmodel
+      - transformation
     environment:
       SERVICE_NAME: mesh
     config:
@@ -100,6 +118,18 @@ services:
       services.mesh.tls.cert_file: "./node-1001-cert.pem"
       services.mesh.tls.key_file: "./node-1001-key.pem"
       services.mesh.tls.ca_file: "./mesh-ca-cert.pem"
+
+  core:
+    enabled: true
+    required: true
+    executable: ./redb-core
+    args:
+      - --port=50055
+      - --supervisor=localhost:50000
+    dependencies:
+      - mesh
+    environment:
+      SERVICE_NAME: core
 
   anchor:
     enabled: true

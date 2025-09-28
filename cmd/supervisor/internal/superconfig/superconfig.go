@@ -3,16 +3,21 @@ package superconfig
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Supervisor SupervisorConfig         `yaml:"supervisor"`
-	Database   DatabaseConfig           `yaml:"database"`
-	Services   map[string]ServiceConfig `yaml:"services"`
-	Logging    LoggingConfig            `yaml:"logging"`
+	Supervisor    SupervisorConfig         `yaml:"supervisor"`
+	Database      DatabaseConfig           `yaml:"database"`
+	Services      map[string]ServiceConfig `yaml:"services"`
+	Logging       LoggingConfig            `yaml:"logging"`
+	License       LicenseConfig            `yaml:"license"`
+	Global        GlobalConfig             `yaml:"global"`
+	Keyring       KeyringConfig            `yaml:"keyring"`
+	InstanceGroup InstanceGroupConfig      `yaml:"instance_group"`
 }
 
 type SupervisorConfig struct {
@@ -43,6 +48,33 @@ type LoggingConfig struct {
 	MaxSizeMB     int64  `yaml:"max_size_mb"`
 }
 
+type LicenseConfig struct {
+	Distribution string `yaml:"distribution"`
+}
+
+type GlobalConfig struct {
+	MultiTenancy MultiTenancyConfig `yaml:"multi_tenancy"`
+}
+
+type MultiTenancyConfig struct {
+	Mode              string `yaml:"mode"`                // "single-tenant" or "multi-tenant"
+	DefaultTenantID   string `yaml:"default_tenant_id"`   // Used in single-tenant mode
+	DefaultTenantName string `yaml:"default_tenant_name"` // Used in single-tenant mode
+	DefaultTenantURL  string `yaml:"default_tenant_url"`  // Used in single-tenant mode
+}
+
+type KeyringConfig struct {
+	Backend     string `yaml:"backend"`      // "system" or "file"
+	Path        string `yaml:"path"`         // Path for file-based keyring
+	MasterKey   string `yaml:"master_key"`   // Master key for encryption (use env var in production)
+	ServiceName string `yaml:"service_name"` // Service name prefix for system keyring
+}
+
+type InstanceGroupConfig struct {
+	GroupID    string `yaml:"group_id"`    // Unique identifier for this instance group
+	PortOffset int    `yaml:"port_offset"` // Port offset to avoid conflicts
+}
+
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -68,6 +100,38 @@ func Load(path string) (*Config, error) {
 		config.Supervisor.ShutdownTimeout = 60 * time.Second
 	}
 
+	// Set defaults for new configuration sections
+	if config.License.Distribution == "" {
+		config.License.Distribution = "open-source"
+	}
+
+	if config.Global.MultiTenancy.Mode == "" {
+		config.Global.MultiTenancy.Mode = "single-tenant"
+	}
+	if config.Global.MultiTenancy.DefaultTenantID == "" {
+		config.Global.MultiTenancy.DefaultTenantID = "default-tenant"
+	}
+	if config.Global.MultiTenancy.DefaultTenantName == "" {
+		config.Global.MultiTenancy.DefaultTenantName = "Default Tenant"
+	}
+	if config.Global.MultiTenancy.DefaultTenantURL == "" {
+		config.Global.MultiTenancy.DefaultTenantURL = "default"
+	}
+
+	if config.Keyring.Backend == "" {
+		config.Keyring.Backend = "auto" // auto-detect system keyring, fallback to file
+	}
+	if config.Keyring.ServiceName == "" {
+		config.Keyring.ServiceName = "redb"
+	}
+
+	if config.InstanceGroup.GroupID == "" {
+		config.InstanceGroup.GroupID = "default"
+	}
+	if config.InstanceGroup.PortOffset == 0 {
+		config.InstanceGroup.PortOffset = 0 // Default no offset
+	}
+
 	// Validate required configuration
 	if config.Database.Name == "" {
 		return nil, fmt.Errorf("database.name is required in configuration file")
@@ -79,28 +143,101 @@ func Load(path string) (*Config, error) {
 func (c *Config) GetServiceStartupOrder() []string {
 	// Build dependency graph and return topologically sorted order
 	visited := make(map[string]bool)
+	visiting := make(map[string]bool) // Track services currently being visited (for cycle detection)
 	order := []string{}
 
-	var visit func(string)
-	visit = func(service string) {
+	var visit func(string) bool
+	visit = func(service string) bool {
 		if visited[service] {
-			return
+			return true // Already processed
 		}
-		visited[service] = true
+		if visiting[service] {
+			// Circular dependency detected
+			fmt.Printf("Warning: Circular dependency detected involving service '%s'\n", service)
+			return false
+		}
+
+		visiting[service] = true
 
 		if svcConfig, exists := c.Services[service]; exists {
-			for _, dep := range svcConfig.Dependencies {
-				visit(dep)
+			// Only process enabled services
+			if svcConfig.Enabled {
+				for _, dep := range svcConfig.Dependencies {
+					if !visit(dep) {
+						fmt.Printf("Warning: Failed to resolve dependency '%s' for service '%s'\n", dep, service)
+					}
+				}
 			}
 		}
 
-		order = append(order, service)
+		visiting[service] = false
+		visited[service] = true
+
+		// Only add enabled services to the startup order
+		if svcConfig, exists := c.Services[service]; exists && svcConfig.Enabled {
+			order = append(order, service)
+		}
+
+		return true
 	}
 
-	// Visit all services
-	for service := range c.Services {
-		visit(service)
+	// Visit all enabled services
+	for service, config := range c.Services {
+		if config.Enabled {
+			visit(service)
+		}
 	}
 
 	return order
+}
+
+// IsSingleTenant returns true if the system is configured for single-tenant mode
+func (c *Config) IsSingleTenant() bool {
+	return c.Global.MultiTenancy.Mode == "single-tenant"
+}
+
+// GetDefaultTenantID returns the default tenant ID for single-tenant mode
+func (c *Config) GetDefaultTenantID() string {
+	if c.IsSingleTenant() {
+		return c.Global.MultiTenancy.DefaultTenantID
+	}
+	return ""
+}
+
+// GetKeyringPath returns the keyring path with instance group isolation
+func (c *Config) GetKeyringPath() string {
+	if c.Keyring.Path != "" {
+		// If a custom path is specified, use it with group ID suffix
+		if c.InstanceGroup.GroupID != "default" {
+			return fmt.Sprintf("%s-%s", c.Keyring.Path, c.InstanceGroup.GroupID)
+		}
+		return c.Keyring.Path
+	}
+
+	// Use default path with group ID isolation
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		if c.InstanceGroup.GroupID != "default" {
+			return fmt.Sprintf("/tmp/redb-keyring-%s.json", c.InstanceGroup.GroupID)
+		}
+		return "/tmp/redb-keyring.json"
+	}
+
+	if c.InstanceGroup.GroupID != "default" {
+		return filepath.Join(homeDir, ".local", "share", "redb", fmt.Sprintf("keyring-%s.json", c.InstanceGroup.GroupID))
+	}
+	return filepath.Join(homeDir, ".local", "share", "redb", "keyring.json")
+}
+
+// GetKeyringServiceName returns the keyring service name with instance group isolation
+func (c *Config) GetKeyringServiceName(service string) string {
+	if c.InstanceGroup.GroupID != "default" {
+		return fmt.Sprintf("%s-%s-%s", c.Keyring.ServiceName, c.InstanceGroup.GroupID, service)
+	}
+	return fmt.Sprintf("%s-%s", c.Keyring.ServiceName, service)
+}
+
+// ApplyPortOffset applies the port offset to a base port for multi-instance support
+func (c *Config) ApplyPortOffset(basePort int) int {
+	return basePort + c.InstanceGroup.PortOffset
 }

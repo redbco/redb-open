@@ -170,8 +170,8 @@ func (m *ServiceManager) StartService(ctx context.Context, name string, config s
 		}
 	}
 
-	// Start service process
-	process := NewServiceProcess(name, config)
+	// Start service process with global config for port offset support
+	process := NewServiceProcessWithGlobalConfig(name, config, m.config)
 	if err := process.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start process: %w", err)
 	}
@@ -595,7 +595,13 @@ func (m *ServiceManager) enhanceMeshConfig(ctx context.Context, config superconf
 		return config, fmt.Errorf("node validation failed: %w", err)
 	}
 
-	m.logger.Infof("Fetched from database - Node ID: %s, Routing ID: %d, Mesh ID: %s", identity.NodeID, identity.RoutingID, identity.MeshID)
+	// Determine if this is a clean node (no mesh)
+	isCleanNode := identity.MeshID == ""
+	if isCleanNode {
+		m.logger.Infof("Fetched from database - Node ID: %s, Routing ID: %d, Clean Node (no mesh)", identity.NodeID, identity.RoutingID)
+	} else {
+		m.logger.Infof("Fetched from database - Node ID: %s, Routing ID: %d, Mesh ID: %s", identity.NodeID, identity.RoutingID, identity.MeshID)
+	}
 
 	// Create a copy of the config to avoid modifying the original
 	updatedConfig := config
@@ -608,7 +614,14 @@ func (m *ServiceManager) enhanceMeshConfig(ctx context.Context, config superconf
 	// Update the configuration with database values
 	updatedConfig.Config["services.mesh.node_id"] = identity.NodeID
 	updatedConfig.Config["services.mesh.routing_id"] = fmt.Sprintf("%d", identity.RoutingID)
-	updatedConfig.Config["services.mesh.mesh_id"] = identity.MeshID
+
+	// Only set mesh_id if the node is part of a mesh
+	if !isCleanNode {
+		updatedConfig.Config["services.mesh.mesh_id"] = identity.MeshID
+	} else {
+		// For clean nodes, use a default mesh_id or leave it empty
+		updatedConfig.Config["services.mesh.mesh_id"] = "clean-node"
+	}
 
 	// Also add as environment variables for the mesh service
 	if updatedConfig.Environment == nil {
@@ -616,10 +629,16 @@ func (m *ServiceManager) enhanceMeshConfig(ctx context.Context, config superconf
 	}
 	updatedConfig.Environment["MESH_NODE_ID"] = identity.NodeID
 	updatedConfig.Environment["MESH_ROUTING_ID"] = fmt.Sprintf("%d", identity.RoutingID)
-	updatedConfig.Environment["MESH_MESH_ID"] = identity.MeshID
 
-	m.logger.Infof("Enhanced mesh configuration with database values: node_id=%s, routing_id=%d, mesh_id=%s",
-		identity.NodeID, identity.RoutingID, identity.MeshID)
+	if !isCleanNode {
+		updatedConfig.Environment["MESH_MESH_ID"] = identity.MeshID
+		m.logger.Infof("Enhanced mesh configuration with database values: node_id=%s, routing_id=%d, mesh_id=%s",
+			identity.NodeID, identity.RoutingID, identity.MeshID)
+	} else {
+		updatedConfig.Environment["MESH_MESH_ID"] = "clean-node"
+		m.logger.Infof("Enhanced mesh configuration for clean node: node_id=%s, routing_id=%d, mesh_id=clean-node",
+			identity.NodeID, identity.RoutingID)
+	}
 
 	return updatedConfig, nil
 }

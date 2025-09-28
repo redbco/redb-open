@@ -8,9 +8,7 @@ import (
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	"github.com/redbco/redb-open/services/core/internal/services/instance"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -94,23 +92,12 @@ func (s *Server) ConnectInstance(ctx context.Context, req *corev1.ConnectInstanc
 		return nil, status.Errorf(codes.Internal, "failed to create instance: %v", err)
 	}
 
-	// Call anchor service to connect to the instance
-	// TODO: make this dynamic
-	anchorAddr := "localhost:50057" // Default anchor service address
-	if s.engine.config != nil {
-		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
-			anchorAddr = addr
-		}
-	}
-
-	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
+	// Use the shared anchor client from engine
+	anchorClient := s.engine.GetAnchorClient()
+	if anchorClient == nil {
 		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.Internal, "failed to connect to anchor service at %s: %v", anchorAddr, err)
+		return nil, status.Error(codes.Internal, "anchor service client not available")
 	}
-	defer anchorConn.Close()
-
-	anchorClient := anchorv1.NewAnchorServiceClient(anchorConn)
 	anchorReq := &anchorv1.ConnectInstanceRequest{
 		TenantId:    req.TenantId,
 		WorkspaceId: createdInstance.WorkspaceID,
@@ -147,15 +134,6 @@ func (s *Server) ReconnectInstance(ctx context.Context, req *corev1.ReconnectIns
 	// Get instance service
 	instanceService := instance.NewService(s.engine.db, s.engine.logger)
 
-	// Get anchor service
-	// TODO: make this dynamic
-	anchorAddr := "localhost:50057" // Default anchor service address
-	if s.engine.config != nil {
-		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
-			anchorAddr = addr
-		}
-	}
-
 	// Get the instance
 	inst, err := instanceService.Get(ctx, req.TenantId, req.WorkspaceName, req.InstanceName)
 	if err != nil {
@@ -170,15 +148,12 @@ func (s *Server) ReconnectInstance(ctx context.Context, req *corev1.ReconnectIns
 		return nil, status.Errorf(codes.Internal, "failed to enable instance: %v", err)
 	}
 
-	// Call anchor service to reconnect the instance
-	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
+	// Use the shared anchor client from engine
+	anchorClient := s.engine.GetAnchorClient()
+	if anchorClient == nil {
 		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.Internal, "failed to connect to anchor service at %s: %v", anchorAddr, err)
+		return nil, status.Error(codes.Internal, "anchor service client not available")
 	}
-	defer anchorConn.Close()
-
-	anchorClient := anchorv1.NewAnchorServiceClient(anchorConn)
 	anchorReq := &anchorv1.ConnectInstanceRequest{
 		TenantId:    req.TenantId,
 		WorkspaceId: inst.WorkspaceID,
@@ -268,23 +243,12 @@ func (s *Server) DisconnectInstance(ctx context.Context, req *corev1.DisconnectI
 		return nil, status.Errorf(codes.NotFound, "instance not found: %v", err)
 	}
 
-	// Call anchor service to disconnect the instance
-	// TODO: make this dynamic
-	anchorAddr := "localhost:50057" // Default anchor service address
-	if s.engine.config != nil {
-		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
-			anchorAddr = addr
-		}
-	}
-
-	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
+	// Use the shared anchor client from engine
+	anchorClient := s.engine.GetAnchorClient()
+	if anchorClient == nil {
 		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.Internal, "failed to connect to anchor service at %s: %v", anchorAddr, err)
+		return nil, status.Error(codes.Internal, "anchor service client not available")
 	}
-	defer anchorConn.Close()
-
-	anchorClient := anchorv1.NewAnchorServiceClient(anchorConn)
 	anchorReq := &anchorv1.DisconnectInstanceRequest{
 		TenantId:    req.TenantId,
 		WorkspaceId: inst.WorkspaceID,

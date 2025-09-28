@@ -4,15 +4,31 @@
 //! handles routing decisions, and manages message forwarding between sessions.
 
 use crate::session::SessionEvent;
-use mesh_routing::{Router, RoutingContext, RoutingDecision, RoutingTable};
+use crate::failure_tracker::RoutingFailureTracker;
+use mesh_routing::{Router, RoutingContext, RoutingDecision, RoutingTable, DropReason};
 use mesh_wire::{FrameBuilder, FrameType, TopologyUpdate};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use anyhow;
+
+/// Trait for handling mesh events
+pub trait MeshEventHandler: Send + Sync + std::fmt::Debug {
+    /// Notify that a session was added
+    fn notify_session_added(&self, peer_node_id: u64, remote_addr: String);
+    /// Notify that a session was removed
+    fn notify_session_removed(&self, peer_node_id: u64, reason: String);
+    /// Notify that a session was interrupted
+    fn notify_session_interrupted(&self, peer_node_id: u64, reason: String);
+    /// Notify that a session was recovered
+    fn notify_session_recovered(&self, peer_node_id: u64);
+    /// Notify about routing failure
+    fn notify_routing_failure(&self, dst_node: u64, reason: String, consecutive_failures: u32);
+}
 
 /// Global session registry for message channel management
 static GLOBAL_SESSION_REGISTRY: Lazy<Arc<RwLock<HashMap<u64, mpsc::UnboundedSender<OutboundMessage>>>>> = 
@@ -95,6 +111,10 @@ pub struct SessionManager {
     received_topology_tx: Option<mpsc::UnboundedSender<TopologyUpdate>>,
     /// Channel for sending routing feedback for message status tracking
     routing_feedback_tx: Option<mpsc::UnboundedSender<RoutingFeedback>>,
+    /// Event handler for mesh state changes
+    event_handler: Option<Arc<dyn MeshEventHandler>>,
+    /// Routing failure tracker for detecting session interruptions
+    failure_tracker: Arc<RoutingFailureTracker>,
 }
 
 /// Message received from the mesh
@@ -144,6 +164,8 @@ impl SessionManager {
             topology_update_rx: None,
             received_topology_tx: None,
             routing_feedback_tx: None,
+            event_handler: None,
+            failure_tracker: Arc::new(RoutingFailureTracker::new(3, Duration::from_secs(30))),
         }
     }
 
@@ -170,6 +192,14 @@ impl SessionManager {
     /// Set the routing feedback sender
     pub fn set_routing_feedback_sender(&mut self, tx: mpsc::UnboundedSender<RoutingFeedback>) {
         self.routing_feedback_tx = Some(tx);
+    }
+    
+    /// Set the event handler for mesh state changes
+    pub fn set_event_handler<T>(&mut self, handler: Arc<T>) 
+    where 
+        T: MeshEventHandler + 'static,
+    {
+        self.event_handler = Some(handler);
     }
 
     /// Run the session manager
@@ -267,9 +297,33 @@ impl SessionManager {
                     // Send message to session
                     if let Err(e) = session_info.message_tx.send(message) {
                         error!("Failed to send message to session {}: {}", next_hop, e);
+                        
+                        // Record routing failure
+                        let (failure_count, should_notify) = self.failure_tracker.record_failure(next_hop).await;
+                        if should_notify {
+                            if let Some(ref handler) = self.event_handler {
+                                handler.notify_routing_failure(next_hop, "session_send_failed".to_string(), failure_count);
+                            }
+                        }
+                    } else {
+                        // Record successful routing
+                        let was_interrupted = self.failure_tracker.record_success(next_hop).await;
+                        if was_interrupted {
+                            if let Some(ref handler) = self.event_handler {
+                                handler.notify_session_recovered(next_hop);
+                            }
+                        }
                     }
                 } else {
                     warn!("No session found for next hop node {}", next_hop);
+                    
+                    // Record routing failure for missing session
+                    let (failure_count, should_notify) = self.failure_tracker.record_failure(next_hop).await;
+                    if should_notify {
+                        if let Some(ref handler) = self.event_handler {
+                            handler.notify_routing_failure(next_hop, "no_session".to_string(), failure_count);
+                        }
+                    }
                 }
             }
             RoutingDecision::Local => {
@@ -286,6 +340,16 @@ impl SessionManager {
             }
             RoutingDecision::Drop(reason) => {
                 warn!("Dropping message to node {}: {:?}", message.dst_node, reason);
+                
+                // Record routing failure for dropped messages
+                if matches!(reason, DropReason::NoRoute) {
+                    let (failure_count, should_notify) = self.failure_tracker.record_failure(message.dst_node).await;
+                    if should_notify {
+                        if let Some(ref handler) = self.event_handler {
+                            handler.notify_routing_failure(message.dst_node, format!("routing_drop: {}", reason), failure_count);
+                        }
+                    }
+                }
             }
         }
 
@@ -336,7 +400,11 @@ impl SessionManager {
                     info!("Auto-registered session for node {} at {} with existing channel", remote_node_id, peer);
                     drop(sessions); // Release lock before async call
                     
-                    // TODO: Send topology update to advertise new neighbor
+                    // Notify about session added
+                    if let Some(ref handler) = self.event_handler {
+                        handler.notify_session_added(remote_node_id, peer.to_string());
+                    }
+                    
                     info!("Topology changed: new neighbor {}", remote_node_id);
                 } else {
                     warn!("No message channel found for node {} in global registry", remote_node_id);
@@ -349,7 +417,11 @@ impl SessionManager {
                     sessions.remove(&node_id);
                     drop(sessions); // Release lock before async call
                     
-                    // TODO: Send topology update to advertise neighbor removal
+                    // Notify about session removed
+                    if let Some(ref handler) = self.event_handler {
+                        handler.notify_session_removed(node_id, "session_disconnected".to_string());
+                    }
+                    
                     info!("Topology changed: removed neighbor {}", node_id);
                 }
             }

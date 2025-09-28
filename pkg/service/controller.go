@@ -56,32 +56,49 @@ func (s *ControllerServer) Start(ctx context.Context, req *supervisorv1.StartReq
 }
 
 func (s *ControllerServer) Stop(ctx context.Context, req *supervisorv1.StopRequest) (*supervisorv1.StopResponse, error) {
-	s.service.Logger.Info("Received stop command")
+	s.service.Logger.Info("Controller received stop command")
 
 	gracePeriod := 30 * time.Second
 	if req.GracePeriod != nil {
 		gracePeriod = req.GracePeriod.AsDuration()
 	}
 
+	s.service.Logger.Debug("Signaling stop to service")
 	// Signal stop - use sync.Once to prevent panic from double-closing
 	s.service.stopOnce.Do(func() {
 		close(s.service.stopCh)
 	})
+	s.service.Logger.Debug("Stop signal sent")
 
 	// Wait for graceful shutdown or timeout
+	s.service.Logger.Debug("Waiting for service shutdown")
 	done := make(chan struct{})
 	go func() {
-		<-s.service.stoppedCh
-		close(done)
+		defer close(done)
+		select {
+		case <-s.service.stoppedCh:
+			// Service stopped normally
+		case <-ctx.Done():
+			// Context cancelled (e.g., supervisor shutting down)
+			s.service.Logger.Debug("Controller context cancelled during shutdown wait")
+		}
 	}()
 
 	select {
 	case <-done:
+		s.service.Logger.Info("Service shutdown completed")
 		return &supervisorv1.StopResponse{
 			Success: true,
 			Message: "Service stopped successfully",
 		}, nil
+	case <-ctx.Done():
+		s.service.Logger.Info("Controller context cancelled")
+		return &supervisorv1.StopResponse{
+			Success: true,
+			Message: "Service shutdown cancelled by supervisor",
+		}, nil
 	case <-time.After(gracePeriod):
+		s.service.Logger.Errorf("Service shutdown timed out after %v", gracePeriod)
 		return &supervisorv1.StopResponse{
 			Success: false,
 			Message: "Shutdown timeout exceeded",

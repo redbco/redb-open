@@ -40,17 +40,19 @@ func GetLocalNodeIdentity(ctx context.Context, db *database.PostgreSQL) (*NodeId
 		return nil, fmt.Errorf("failed to query local node identity: %w", err)
 	}
 
-	// Next, get the mesh ID from the mesh table
-	// We assume there's only one mesh per node for now
+	// Try to get the mesh ID from the mesh table
+	// If no mesh exists, this is a clean node
 	var meshID string
 	meshQuery := `SELECT mesh_id FROM mesh LIMIT 1`
 
 	err = db.Pool().QueryRow(ctx, meshQuery).Scan(&meshID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("mesh not found - mesh may not be initialized")
+			// No mesh found - this is a clean node
+			meshID = "" // Empty mesh ID indicates clean node
+		} else {
+			return nil, fmt.Errorf("failed to query mesh identity: %w", err)
 		}
-		return nil, fmt.Errorf("failed to query mesh identity: %w", err)
 	}
 
 	return &NodeIdentity{

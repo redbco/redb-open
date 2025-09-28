@@ -37,7 +37,47 @@ type KeyringManager struct {
 
 // NewKeyringManager creates a new keyring manager that tries system keyring first, falls back to file
 func NewKeyringManager(keyringPath, masterPassword string) *KeyringManager {
-	// Test if system keyring is available with timeout
+	return NewKeyringManagerWithBackend(keyringPath, masterPassword, "auto")
+}
+
+// NewKeyringManagerWithBackend creates a new keyring manager with a specific backend preference
+func NewKeyringManagerWithBackend(keyringPath, masterPassword, backend string) *KeyringManager {
+	// If backend is explicitly set to "file", skip system keyring test
+	if backend == "file" {
+		fk := NewFileKeyring(keyringPath, masterPassword)
+		return &KeyringManager{
+			fileKeyring: fk,
+			useFile:     true,
+		}
+	}
+
+	// If backend is explicitly set to "system", try only system keyring
+	if backend == "system" {
+		// Test system keyring availability
+		if testSystemKeyring() {
+			return &KeyringManager{useFile: false}
+		}
+		// If system keyring fails and user explicitly requested it, still try to use it
+		// This allows for better error messages when system keyring is requested but unavailable
+		return &KeyringManager{useFile: false}
+	}
+
+	// Default behavior (backend == "auto"): try system first, fallback to file
+	if testSystemKeyring() {
+		// System keyring is available
+		return &KeyringManager{useFile: false}
+	}
+
+	// Fall back to file-based keyring
+	fk := NewFileKeyring(keyringPath, masterPassword)
+	return &KeyringManager{
+		fileKeyring: fk,
+		useFile:     true,
+	}
+}
+
+// testSystemKeyring tests if system keyring is available with timeout
+func testSystemKeyring() bool {
 	testService := "redb-test"
 	testKey := "test-key"
 	testValue := "test-value"
@@ -56,20 +96,10 @@ func NewKeyringManager(keyringPath, masterPassword string) *KeyringManager {
 	// Wait for the keyring test with a 5-second timeout
 	select {
 	case err := <-done:
-		if err == nil {
-			// System keyring is available
-			return &KeyringManager{useFile: false}
-		}
-		// System keyring failed, fall through to file-based keyring
+		return err == nil
 	case <-time.After(5 * time.Second):
-		// Timeout occurred, fall back to file-based keyring
-	}
-
-	// Fall back to file-based keyring
-	fk := NewFileKeyring(keyringPath, masterPassword)
-	return &KeyringManager{
-		fileKeyring: fk,
-		useFile:     true,
+		// Timeout occurred, assume system keyring is not available
+		return false
 	}
 }
 
@@ -269,4 +299,20 @@ func GetDefaultKeyringPath() string {
 		return "/tmp/redb-keyring.json"
 	}
 	return filepath.Join(homeDir, ".local", "share", "redb", "keyring.json")
+}
+
+// GetKeyringPathWithGroup returns the keyring path with instance group isolation
+func GetKeyringPathWithGroup(basePath, groupID string) string {
+	if basePath == "" {
+		basePath = GetDefaultKeyringPath()
+	}
+
+	if groupID != "" && groupID != "default" {
+		// Insert group ID before file extension
+		ext := filepath.Ext(basePath)
+		nameWithoutExt := basePath[:len(basePath)-len(ext)]
+		return fmt.Sprintf("%s-%s%s", nameWithoutExt, groupID, ext)
+	}
+
+	return basePath
 }

@@ -6,6 +6,7 @@ use crate::message_queue::MessageQueue;
 use crate::proto::mesh::v1::{
     mesh_data_server::MeshData, Ack, MessageStatus, MessageStatusInfo, QueryMessageStatusRequest, 
     QueryMessageStatusResponse, Received, SendRequest, SendResponse, SubscribeRequest, SendMode,
+    MeshStateEvent, DatabaseSyncRequest, DatabaseSyncResponse,
 };
 use mesh_session::manager::RoutingFeedback;
 use mesh_topology::TopologyDatabase;
@@ -18,6 +19,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::{Request, Response, Result, Status};
 use tracing::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
+use serde_json;
 
 /// Message ID generator
 #[derive(Debug)]
@@ -910,6 +912,134 @@ impl MeshData for MeshDataService {
             message_statuses,
         }))
     }
+    
+    async fn broadcast_state_event(
+        &self,
+        request: Request<MeshStateEvent>,
+    ) -> Result<Response<()>> {
+        let event = request.into_inner();
+        
+        info!(
+            "Broadcasting state event {:?} from node {} (seq: {})",
+            event.event_type, event.originator_node, event.sequence_number
+        );
+        
+        // Convert the state event to a JSON-serializable format for broadcasting
+        let event_data = serde_json::json!({
+            "event_type": event.event_type as i32,
+            "originator_node": event.originator_node,
+            "affected_node": event.affected_node,
+            "sequence_number": event.sequence_number,
+            "timestamp": event.timestamp,
+            "metadata": event.metadata,
+            "payload": event.payload
+        });
+        
+        let mesh_event_payload = match serde_json::to_vec(&event_data) {
+            Ok(payload) => payload,
+            Err(e) => {
+                error!("Failed to serialize mesh state event: {}", e);
+                return Err(Status::internal("Failed to serialize event"));
+            }
+        };
+        
+        // Create headers to identify this as a mesh event
+        let mut headers = HashMap::new();
+        headers.insert("message_type".to_string(), b"mesh_event".to_vec());
+        headers.insert("event_type".to_string(), format!("{:?}", event.event_type).into_bytes());
+        headers.insert("originator_node".to_string(), event.originator_node.to_string().into_bytes());
+        headers.insert("sequence_number".to_string(), event.sequence_number.to_string().into_bytes());
+        
+        // Create outbound message for broadcasting
+        let outbound_msg = OutboundMessage {
+            src_node: self.node_id,
+            dst_node: 0, // Broadcast to all nodes (0 = broadcast)
+            payload: mesh_event_payload,
+            headers,
+            corr_id: 0, // Use 0 for broadcast messages
+            msg_id: None, // Don't track broadcast messages
+            require_ack: false, // Broadcasts don't require acknowledgment
+        };
+        
+        // Send the broadcast message
+        if let Err(e) = self.outbound_tx.send(outbound_msg) {
+            error!("Failed to broadcast state event: {}", e);
+            return Err(Status::internal("Failed to broadcast event"));
+        }
+        
+        info!(
+            "Successfully queued state event {:?} for broadcast (seq: {})",
+            event.event_type, event.sequence_number
+        );
+        
+        Ok(Response::new(()))
+    }
+    
+    async fn request_database_sync(
+        &self,
+        request: Request<DatabaseSyncRequest>,
+    ) -> Result<Response<DatabaseSyncResponse>> {
+        let req = request.into_inner();
+        
+        info!(
+            "Database sync request for table '{}' (last_known_version: {})",
+            req.table_name, req.last_known_version
+        );
+        
+        // Convert the sync request to a JSON-serializable format
+        let sync_data = serde_json::json!({
+            "table_name": req.table_name,
+            "last_known_version": req.last_known_version,
+            "node_ids": req.node_ids
+        });
+        
+        let sync_request_payload = match serde_json::to_vec(&sync_data) {
+            Ok(payload) => payload,
+            Err(e) => {
+                error!("Failed to serialize database sync request: {}", e);
+                return Err(Status::internal("Failed to serialize sync request"));
+            }
+        };
+        
+        // Create headers to identify this as a database sync request
+        let mut headers = HashMap::new();
+        headers.insert("message_type".to_string(), b"database_sync_request".to_vec());
+        headers.insert("table_name".to_string(), req.table_name.clone().into_bytes());
+        headers.insert("last_known_version".to_string(), req.last_known_version.to_string().into_bytes());
+        
+        // For now, we'll broadcast the sync request to all nodes
+        // In a more sophisticated implementation, we might target specific nodes
+        let outbound_msg = OutboundMessage {
+            src_node: self.node_id,
+            dst_node: 0, // Broadcast to all nodes
+            payload: sync_request_payload,
+            headers,
+            corr_id: 0,
+            msg_id: None,
+            require_ack: false,
+        };
+        
+        // Send the sync request
+        if let Err(e) = self.outbound_tx.send(outbound_msg) {
+            error!("Failed to send database sync request: {}", e);
+            return Err(Status::internal("Failed to send sync request"));
+        }
+        
+        info!(
+            "Successfully queued database sync request for table '{}' for broadcast",
+            req.table_name
+        );
+        
+        // For now, return an empty response
+        // In a full implementation, we would wait for responses from other nodes
+        // and aggregate the results
+        Ok(Response::new(DatabaseSyncResponse {
+            table_name: req.table_name,
+            current_version: req.last_known_version, // Placeholder
+            records: vec![], // Empty for now
+            has_more: false,
+        }))
+    }
 }
 
 // Implement MeshData for Arc<MeshDataService> to allow sharing the service
@@ -935,6 +1065,14 @@ impl MeshData for Arc<MeshDataService> {
     type SendWithStatusStreamStream = <MeshDataService as MeshData>::SendWithStatusStreamStream;
     async fn send_with_status_stream(&self, request: Request<SendRequest>) -> Result<Response<Self::SendWithStatusStreamStream>> {
         (**self).send_with_status_stream(request).await
+    }
+
+    async fn broadcast_state_event(&self, request: Request<MeshStateEvent>) -> Result<Response<()>> {
+        (**self).broadcast_state_event(request).await
+    }
+
+    async fn request_database_sync(&self, request: Request<DatabaseSyncRequest>) -> Result<Response<DatabaseSyncResponse>> {
+        (**self).request_database_sync(request).await
     }
 }
 

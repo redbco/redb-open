@@ -81,9 +81,21 @@ func main() {
 		initCtx, initCancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer initCancel()
 
-		initializer := initialize.New(log)
-		if err := initializer.Initialize(initCtx); err != nil {
-			log.Fatalf("Node initialization failed: %v", err)
+		initializer := initialize.NewWithConfig(log, cfg)
+
+		// Use single-tenant initialization if configured
+		if cfg.IsSingleTenant() {
+			err := initializer.InitializeWithSingleTenant(initCtx,
+				cfg.Global.MultiTenancy.DefaultTenantID,
+				cfg.Global.MultiTenancy.DefaultTenantName,
+				cfg.Global.MultiTenancy.DefaultTenantURL)
+			if err != nil {
+				log.Fatalf("Single-tenant initialization failed: %v", err)
+			}
+		} else {
+			if err := initializer.Initialize(initCtx); err != nil {
+				log.Fatalf("Node initialization failed: %v", err)
+			}
 		}
 
 		log.Info("Node initialization completed successfully!")
@@ -98,9 +110,21 @@ func main() {
 		initCtx, initCancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer initCancel()
 
-		initializer := initialize.New(log)
-		if err := initializer.AutoInitialize(initCtx); err != nil {
-			log.Fatalf("Node auto-initialization failed: %v", err)
+		initializer := initialize.NewWithConfig(log, cfg)
+
+		// Use single-tenant initialization if configured
+		if cfg.IsSingleTenant() {
+			err := initializer.InitializeWithSingleTenant(initCtx,
+				cfg.Global.MultiTenancy.DefaultTenantID,
+				cfg.Global.MultiTenancy.DefaultTenantName,
+				cfg.Global.MultiTenancy.DefaultTenantURL)
+			if err != nil {
+				log.Fatalf("Single-tenant auto-initialization failed: %v", err)
+			}
+		} else {
+			if err := initializer.AutoInitialize(initCtx); err != nil {
+				log.Fatalf("Node auto-initialization failed: %v", err)
+			}
 		}
 
 		log.Info("Node auto-initialization completed successfully!")
@@ -119,8 +143,17 @@ func main() {
 
 	// Initialize supervisor
 	serviceManager := manager.New(log, cfg)
+
+	// Apply port offset to supervisor port if configured
+	supervisorPort := *port
+	if cfg.Supervisor.Port > 0 {
+		supervisorPort = cfg.ApplyPortOffset(cfg.Supervisor.Port)
+	} else {
+		supervisorPort = cfg.ApplyPortOffset(*port)
+	}
+
 	supervisor := &Supervisor{
-		port:             *port,
+		port:             supervisorPort,
 		config:           cfg,
 		logger:           log,
 		serviceManager:   serviceManager,
@@ -262,6 +295,9 @@ func (s *Supervisor) startGRPCServer() error {
 func (s *Supervisor) startConfiguredServices(ctx context.Context) error {
 	// Get service startup order based on dependencies
 	startupOrder := s.config.GetServiceStartupOrder()
+
+	// Log the complete startup order for debugging
+	s.logger.Infof("Service startup order: %v", startupOrder)
 
 	for _, serviceName := range startupOrder {
 		svcConfig, exists := s.config.Services[serviceName]

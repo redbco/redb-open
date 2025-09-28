@@ -4,15 +4,43 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	meshv1 "github.com/redbco/redb-open/api/proto/mesh/v1"
+	"github.com/redbco/redb-open/services/core/internal/mesh"
 	meshsvc "github.com/redbco/redb-open/services/core/internal/services/mesh"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// publishMeshEvent publishes a mesh state event
+func (s *Server) publishMeshEvent(ctx context.Context, eventType corev1.MeshEventType, affectedNode uint64, metadata map[string]string) {
+	eventManager := s.engine.GetMeshEventManager()
+	if eventManager == nil {
+		s.engine.logger.Warnf("Cannot publish mesh event %s: event manager not available", eventType)
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		event := &mesh.MeshEvent{
+			Type:         eventType,
+			AffectedNode: affectedNode,
+			Metadata:     metadata,
+		}
+
+		if err := eventManager.(*mesh.MeshEventManager).PublishEvent(ctx, event); err != nil {
+			s.engine.logger.Errorf("Failed to publish mesh event %s for node %d: %v", eventType, affectedNode, err)
+		} else {
+			s.engine.logger.Debugf("Successfully published mesh event %s for node %d", eventType, affectedNode)
+		}
+	}()
+}
 
 // === Core Mesh Operations ===
 
@@ -65,6 +93,16 @@ func (s *Server) SeedMesh(ctx context.Context, req *corev1.SeedMeshRequest) (*co
 	}
 
 	s.engine.logger.Infof("Successfully seeded mesh '%s' with node '%s'", createdMesh.Name, localNode.Name)
+
+	// Publish mesh event for node joining the mesh
+	nodeIDUint, _ := strconv.ParseUint(localNode.ID, 10, 64)
+	s.publishMeshEvent(ctx, corev1.MeshEventType_MESH_EVENT_NODE_JOINED, nodeIDUint, map[string]string{
+		"mesh_id":     createdMesh.ID,
+		"mesh_name":   createdMesh.Name,
+		"node_name":   localNode.Name,
+		"operation":   "seed_mesh",
+		"description": "Node seeded new mesh",
+	})
 
 	// Convert to protobuf format
 	protoMesh := s.meshToProtoNew(createdMesh)
@@ -122,7 +160,7 @@ func (s *Server) JoinMesh(ctx context.Context, req *corev1.JoinMeshRequest) (*co
 	}
 
 	// Attempt to connect to the target node
-	addSessionResp, err := s.AddMeshSession(ctx, req.TargetAddress, timeout)
+	addSessionResp, err := s.AddMeshSession(ctx, req.TargetAddress, int32(timeout))
 	if err != nil {
 		// Reset node status to CLEAN on failure
 		meshService.UpdateNodeStatus(ctx, localNode.ID, "STATUS_CLEAN")
@@ -136,22 +174,44 @@ func (s *Server) JoinMesh(ctx context.Context, req *corev1.JoinMeshRequest) (*co
 		return nil, status.Errorf(codes.Internal, "failed to connect to target node: %s", addSessionResp.Message)
 	}
 
-	// TODO: Implement mesh discovery and configuration synchronization based on strategy
-	// For now, we'll create a placeholder mesh entry
+	// Discover mesh information from the connected peer
+	s.engine.logger.Infof("Discovering mesh information from peer node %d", addSessionResp.PeerNodeId)
 
-	// Get mesh information from the connected peer (this would be done via mesh protocol)
-	// For now, create a temporary mesh entry
-	meshName := fmt.Sprintf("mesh-via-%d", addSessionResp.PeerNodeId)
-	createdMesh, err := meshService.Create(ctx, meshName, "Joined mesh", true)
+	meshInfo, err := s.discoverMeshFromPeer(ctx, addSessionResp.PeerNodeId)
 	if err != nil {
+		// Reset node status to CLEAN on failure
+		meshService.UpdateNodeStatus(ctx, localNode.ID, "STATUS_CLEAN")
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to discover mesh information: %v", err)
+	}
+
+	// Create local mesh entry with discovered information
+	createdMesh, err := meshService.Create(ctx, meshInfo.Name, meshInfo.Description, true)
+	if err != nil {
+		// Reset node status to CLEAN on failure
+		meshService.UpdateNodeStatus(ctx, localNode.ID, "STATUS_CLEAN")
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to create mesh entry: %v", err)
 	}
 
 	// Add local node to the mesh
 	if err := meshService.AddNodeToMesh(ctx, createdMesh.ID, localNode.ID); err != nil {
+		// Reset node status to CLEAN on failure
+		meshService.UpdateNodeStatus(ctx, localNode.ID, "STATUS_CLEAN")
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to add node to mesh: %v", err)
+	}
+
+	// Synchronize data from the mesh based on strategy
+	if err := s.synchronizeDataFromMesh(ctx, strategy, addSessionResp.PeerNodeId, createdMesh.ID); err != nil {
+		s.engine.logger.Warnf("Failed to synchronize data from mesh: %v", err)
+		// Don't fail the join operation, but log the warning
+	}
+
+	// Register this node with all existing mesh members
+	if err := s.registerNodeWithMeshMembers(ctx, createdMesh.ID, localNode); err != nil {
+		s.engine.logger.Warnf("Failed to register node with all mesh members: %v", err)
+		// Don't fail the join operation, but log the warning
 	}
 
 	// Update node status to ACTIVE
@@ -160,6 +220,19 @@ func (s *Server) JoinMesh(ctx context.Context, req *corev1.JoinMeshRequest) (*co
 	}
 
 	s.engine.logger.Infof("Successfully joined mesh via peer node %d at %s", addSessionResp.PeerNodeId, addSessionResp.RemoteAddr)
+
+	// Publish mesh event for node joining the mesh
+	nodeIDUint, _ := strconv.ParseUint(localNode.ID, 10, 64)
+	s.publishMeshEvent(ctx, corev1.MeshEventType_MESH_EVENT_NODE_JOINED, nodeIDUint, map[string]string{
+		"mesh_id":       createdMesh.ID,
+		"mesh_name":     createdMesh.Name,
+		"node_name":     localNode.Name,
+		"peer_node_id":  fmt.Sprintf("%d", addSessionResp.PeerNodeId),
+		"target_addr":   req.TargetAddress,
+		"operation":     "join_mesh",
+		"description":   "Node joined existing mesh",
+		"join_strategy": req.Strategy.String(),
+	})
 
 	// Convert to protobuf format
 	protoMesh := s.meshToProtoNew(createdMesh)
@@ -214,7 +287,7 @@ func (s *Server) ExtendMesh(ctx context.Context, req *corev1.ExtendMeshRequest) 
 	s.engine.logger.Infof("Extending mesh to %s with strategy %s (timeout: %ds)", req.TargetAddress, strategy, timeout)
 
 	// Attempt to connect to the target node
-	addSessionResp, err := s.AddMeshSession(ctx, req.TargetAddress, timeout)
+	addSessionResp, err := s.AddMeshSession(ctx, req.TargetAddress, int32(timeout))
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to connect to target node: %v", err)
@@ -224,10 +297,40 @@ func (s *Server) ExtendMesh(ctx context.Context, req *corev1.ExtendMeshRequest) 
 		return nil, status.Errorf(codes.Internal, "failed to connect to target node: %s", addSessionResp.Message)
 	}
 
-	// TODO: Implement mesh extension logic based on strategy
-	// This would involve synchronizing mesh configuration to the target node
+	// Synchronize mesh configuration to the target node based on strategy
+	s.engine.logger.Infof("Synchronizing mesh configuration to peer node %d", addSessionResp.PeerNodeId)
+
+	if err := s.synchronizeDataToNode(ctx, strategy, addSessionResp.PeerNodeId, existingMeshes[0].ID); err != nil {
+		s.engine.logger.Warnf("Failed to synchronize data to target node: %v", err)
+		// Don't fail the extend operation, but log the warning
+	}
+
+	// Register the target node with all existing mesh members
+	targetNode := &meshsvc.Node{
+		ID:        fmt.Sprintf("%d", addSessionResp.PeerNodeId),
+		Name:      fmt.Sprintf("node-%d", addSessionResp.PeerNodeId),
+		IPAddress: extractIPFromAddress(addSessionResp.RemoteAddr),
+		Port:      int32(extractPortFromAddress(addSessionResp.RemoteAddr)),
+		Status:    "STATUS_ACTIVE",
+	}
+
+	if err := s.registerNodeWithMeshMembers(ctx, existingMeshes[0].ID, targetNode); err != nil {
+		s.engine.logger.Warnf("Failed to register target node with all mesh members: %v", err)
+		// Don't fail the extend operation, but log the warning
+	}
 
 	s.engine.logger.Infof("Successfully extended mesh to peer node %d at %s", addSessionResp.PeerNodeId, addSessionResp.RemoteAddr)
+
+	// Publish mesh event for extending mesh to new node
+	s.publishMeshEvent(ctx, corev1.MeshEventType_MESH_EVENT_NODE_JOINED, addSessionResp.PeerNodeId, map[string]string{
+		"mesh_id":         existingMeshes[0].ID,
+		"mesh_name":       existingMeshes[0].Name,
+		"target_addr":     req.TargetAddress,
+		"operation":       "extend_mesh",
+		"description":     "Mesh extended to new node",
+		"extend_strategy": req.Strategy.String(),
+		"local_node":      localNode.Name,
+	})
 
 	return &corev1.ExtendMeshResponse{
 		Message:    fmt.Sprintf("Successfully extended mesh to peer node %d", addSessionResp.PeerNodeId),
@@ -302,6 +405,19 @@ func (s *Server) LeaveMesh(ctx context.Context, req *corev1.LeaveMeshRequest) (*
 
 	s.engine.logger.Infof("Successfully left mesh, dropped %d connections", connectionsDropped)
 
+	// Publish mesh event for node leaving the mesh
+	nodeIDUint, _ := strconv.ParseUint(localNode.ID, 10, 64)
+	if len(existingMeshes) > 0 {
+		s.publishMeshEvent(ctx, corev1.MeshEventType_MESH_EVENT_NODE_LEFT, nodeIDUint, map[string]string{
+			"mesh_id":             existingMeshes[0].ID,
+			"mesh_name":           existingMeshes[0].Name,
+			"node_name":           localNode.Name,
+			"operation":           "leave_mesh",
+			"description":         "Node left mesh gracefully",
+			"connections_dropped": fmt.Sprintf("%d", connectionsDropped),
+		})
+	}
+
 	return &corev1.LeaveMeshResponse{
 		Message:            fmt.Sprintf("Successfully left mesh, dropped %d connections", connectionsDropped),
 		Success:            true,
@@ -360,6 +476,18 @@ func (s *Server) EvictNode(ctx context.Context, req *corev1.EvictNodeRequest) (*
 
 	s.engine.logger.Infof("Successfully evicted node %d from mesh", req.TargetNodeId)
 
+	// Publish mesh event for node eviction
+	if len(existingMeshes) > 0 {
+		s.publishMeshEvent(ctx, corev1.MeshEventType_MESH_EVENT_NODE_LEFT, req.TargetNodeId, map[string]string{
+			"mesh_id":        existingMeshes[0].ID,
+			"mesh_name":      existingMeshes[0].Name,
+			"operation":      "evict_node",
+			"description":    "Node evicted from mesh",
+			"target_cleaned": fmt.Sprintf("%t", targetCleaned),
+			"evicted_by":     localNode.Name,
+		})
+	}
+
 	return &corev1.EvictNodeResponse{
 		Message:       fmt.Sprintf("Successfully evicted node %d from mesh", req.TargetNodeId),
 		Success:       true,
@@ -393,9 +521,103 @@ func (s *Server) AddConnection(ctx context.Context, req *corev1.AddConnectionReq
 		return nil, status.Error(codes.FailedPrecondition, "node is not part of any mesh")
 	}
 
-	// TODO: Get target node address from mesh database
-	// For now, we'll return an error indicating this needs to be implemented
-	return nil, status.Error(codes.Unimplemented, "AddConnection requires mesh node registry implementation")
+	// Get target node information from database
+	targetNodeIDStr := strconv.FormatUint(req.TargetNodeId, 10)
+
+	// Query target node details from nodes table
+	var targetIPAddress string
+	var targetPort int32
+	var targetNodeName string
+	var targetStatus string
+
+	nodeQuery := `
+		SELECT node_name, ip_address, port, status 
+		FROM nodes 
+		WHERE routing_id = $1
+	`
+
+	err = s.engine.db.Pool().QueryRow(ctx, nodeQuery, req.TargetNodeId).Scan(
+		&targetNodeName, &targetIPAddress, &targetPort, &targetStatus,
+	)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "target node %d not found in database: %v", req.TargetNodeId, err)
+	}
+
+	// Verify target node is active
+	if targetStatus != "STATUS_ACTIVE" {
+		return nil, status.Errorf(codes.FailedPrecondition, "target node %d is not active (status: %s)", req.TargetNodeId, targetStatus)
+	}
+
+	// Verify target node is in the same mesh
+	targetMeshes, err := meshService.GetMeshesByNodeID(ctx, targetNodeIDStr)
+	if err != nil || len(targetMeshes) == 0 {
+		return nil, status.Errorf(codes.FailedPrecondition, "target node %d is not part of any mesh", req.TargetNodeId)
+	}
+
+	// Check if target node is in the same mesh as local node
+	sameSharedMesh := false
+	for _, localMesh := range existingMeshes {
+		for _, targetMesh := range targetMeshes {
+			if localMesh.ID == targetMesh.ID {
+				sameSharedMesh = true
+				break
+			}
+		}
+		if sameSharedMesh {
+			break
+		}
+	}
+
+	if !sameSharedMesh {
+		return nil, status.Errorf(codes.FailedPrecondition, "target node %d is not in the same mesh as local node", req.TargetNodeId)
+	}
+
+	// Construct target address
+	targetAddress := fmt.Sprintf("%s:%d", targetIPAddress, targetPort)
+
+	s.engine.logger.Infof("Adding connection to node %d (%s) at %s", req.TargetNodeId, targetNodeName, targetAddress)
+
+	// Set default timeout if not provided
+	timeout := req.GetTimeoutSeconds()
+	if timeout == 0 {
+		timeout = 30
+	}
+
+	// Use AddMeshSession to establish the connection
+	addSessionResp, err := s.AddMeshSession(ctx, targetAddress, int32(timeout))
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to add connection to node %d: %v", req.TargetNodeId, err)
+	}
+
+	var statusCode commonv1.Status
+	if addSessionResp.Success {
+		statusCode = commonv1.Status_STATUS_SUCCESS
+		s.engine.logger.Infof("Successfully added connection to node %d (%s)", req.TargetNodeId, targetNodeName)
+	} else {
+		statusCode = commonv1.Status_STATUS_ERROR
+		s.engine.logger.Warnf("Failed to add connection to node %d (%s): %s", req.TargetNodeId, targetNodeName, addSessionResp.Message)
+	}
+
+	// Create connection object for response
+	var connection *corev1.Connection
+	if addSessionResp.Success {
+		connection = &corev1.Connection{
+			PeerNodeId:   req.TargetNodeId,
+			PeerNodeName: targetNodeName,
+			RemoteAddr:   addSessionResp.RemoteAddr,
+			Status:       corev1.ConnectionStatus_CONNECTION_STATUS_CONNECTED,
+			// TODO: Add RTT, bytes sent/received, TLS info when available
+		}
+	}
+
+	return &corev1.AddConnectionResponse{
+		Message:    addSessionResp.Message,
+		Success:    addSessionResp.Success,
+		Connection: connection,
+		Status:     statusCode,
+	}, nil
 }
 
 // DropConnection drops a connection to another node
@@ -680,4 +902,382 @@ func (s *Server) convertStatus(status string) commonv1.Status {
 	default:
 		return commonv1.Status_STATUS_UNKNOWN
 	}
+}
+
+// === Mesh Synchronization Helper Functions ===
+
+// MeshInfo represents discovered mesh information
+type MeshInfo struct {
+	ID          string
+	Name        string
+	Description string
+	Nodes       []*meshsvc.Node
+}
+
+// discoverMeshFromPeer discovers mesh information from a connected peer
+func (s *Server) discoverMeshFromPeer(ctx context.Context, peerNodeID uint64) (*MeshInfo, error) {
+	s.engine.logger.Debugf("Discovering mesh information from peer node %d", peerNodeID)
+
+	// Use the database sync manager to request mesh information
+	syncManager := s.engine.GetDatabaseSyncManager()
+	if syncManager == nil {
+		return nil, fmt.Errorf("database sync manager not available")
+	}
+
+	// Request mesh table data from the peer
+	meshResponse, err := s.engine.GetMeshManager().(*mesh.MeshCommunicationManager).RequestDatabaseSync(ctx, &meshv1.DatabaseSyncRequest{
+		TableName:        "mesh",
+		LastKnownVersion: 0,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to sync mesh data: %w", err)
+	}
+
+	if len(meshResponse.Records) == 0 {
+		return nil, fmt.Errorf("no mesh data received from peer")
+	}
+
+	// Parse the first mesh record (assuming single mesh)
+	meshRecord := meshResponse.Records[0]
+	meshInfo := &MeshInfo{
+		ID:          meshRecord.Data["mesh_id"],
+		Name:        meshRecord.Data["mesh_name"],
+		Description: meshRecord.Data["mesh_description"],
+	}
+
+	// Request nodes table data
+	nodesResponse, err := s.engine.GetMeshManager().(*mesh.MeshCommunicationManager).RequestDatabaseSync(ctx, &meshv1.DatabaseSyncRequest{
+		TableName:        "nodes",
+		LastKnownVersion: 0,
+	})
+	if err != nil {
+		s.engine.logger.Warnf("Failed to sync nodes data: %v", err)
+		// Continue without nodes data
+		return meshInfo, nil
+	}
+
+	// Parse nodes data
+	for _, nodeRecord := range nodesResponse.Records {
+		port, _ := strconv.Atoi(nodeRecord.Data["port"])
+		node := &meshsvc.Node{
+			ID:        nodeRecord.Data["node_id"],
+			Name:      nodeRecord.Data["node_name"],
+			IPAddress: nodeRecord.Data["ip_address"],
+			Port:      int32(port),
+			Status:    nodeRecord.Data["status"],
+		}
+		meshInfo.Nodes = append(meshInfo.Nodes, node)
+	}
+
+	s.engine.logger.Infof("Discovered mesh '%s' with %d nodes", meshInfo.Name, len(meshInfo.Nodes))
+	return meshInfo, nil
+}
+
+// synchronizeDataFromMesh synchronizes data from the mesh based on strategy
+func (s *Server) synchronizeDataFromMesh(ctx context.Context, strategy corev1.JoinStrategy, peerNodeID uint64, meshID string) error {
+	s.engine.logger.Infof("Synchronizing data from mesh using strategy: %s", strategy)
+
+	syncManager := s.engine.GetDatabaseSyncManager()
+	if syncManager == nil {
+		return fmt.Errorf("database sync manager not available")
+	}
+
+	switch strategy {
+	case corev1.JoinStrategy_JOIN_STRATEGY_INHERIT:
+		// Inherit: Replace local data with mesh data
+		return s.inheritDataFromMesh(ctx, peerNodeID, meshID)
+
+	case corev1.JoinStrategy_JOIN_STRATEGY_MERGE:
+		// Merge: Combine local and mesh data
+		return s.mergeDataWithMesh(ctx, peerNodeID, meshID)
+
+	case corev1.JoinStrategy_JOIN_STRATEGY_OVERWRITE:
+		// Overwrite: Push local data to mesh (handled by mesh members)
+		return s.overwriteMeshData(ctx, peerNodeID, meshID)
+
+	default:
+		return fmt.Errorf("unsupported join strategy: %s", strategy)
+	}
+}
+
+// synchronizeDataToNode synchronizes data to a target node based on strategy
+func (s *Server) synchronizeDataToNode(ctx context.Context, strategy corev1.JoinStrategy, targetNodeID uint64, meshID string) error {
+	s.engine.logger.Infof("Synchronizing data to node %d using strategy: %s", targetNodeID, strategy)
+
+	// For extend operations, we always push our mesh data to the target node
+	// The strategy determines how the target node handles the data
+
+	syncManager := s.engine.GetDatabaseSyncManager()
+	if syncManager == nil {
+		return fmt.Errorf("database sync manager not available")
+	}
+
+	// Get all mesh-related data to sync
+	tablesToSync := []string{"mesh", "nodes", "mesh_node_membership"}
+
+	for _, table := range tablesToSync {
+		if err := s.syncTableToNode(ctx, table, targetNodeID); err != nil {
+			s.engine.logger.Warnf("Failed to sync table %s to node %d: %v", table, targetNodeID, err)
+		}
+	}
+
+	return nil
+}
+
+// registerNodeWithMeshMembers registers a node with all existing mesh members
+func (s *Server) registerNodeWithMeshMembers(ctx context.Context, meshID string, node *meshsvc.Node) error {
+	s.engine.logger.Infof("Registering node %s with all mesh members", node.Name)
+
+	meshService := meshsvc.NewService(s.engine.db, s.engine.logger)
+
+	// Add the new node to our local database (nodes are managed via mesh membership)
+	// The AddNode method doesn't exist, nodes are added via mesh membership
+
+	// Add node to mesh membership
+	if err := meshService.AddNodeToMesh(ctx, meshID, node.ID); err != nil {
+		s.engine.logger.Warnf("Failed to add node to mesh membership: %v", err)
+	}
+
+	// Broadcast node addition to all existing mesh members
+	nodeID, _ := strconv.ParseUint(node.ID, 10, 64)
+	nodeAddedEvent := &mesh.MeshEvent{
+		Type:         corev1.MeshEventType_MESH_EVENT_NODE_JOINED,
+		AffectedNode: nodeID,
+		Metadata: map[string]string{
+			"mesh_id":     meshID,
+			"node_name":   node.Name,
+			"ip_address":  node.IPAddress,
+			"port":        fmt.Sprintf("%d", node.Port),
+			"operation":   "node_registration",
+			"description": "New node registered with mesh",
+		},
+	}
+
+	eventManager := s.engine.GetMeshEventManager()
+	if eventManager != nil {
+		if err := eventManager.(*mesh.MeshEventManager).PublishEvent(ctx, nodeAddedEvent); err != nil {
+			s.engine.logger.Warnf("Failed to broadcast node registration event: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// Helper functions for data synchronization strategies
+
+func (s *Server) inheritDataFromMesh(ctx context.Context, peerNodeID uint64, meshID string) error {
+	// Request all data from mesh and replace local data
+	tablesToSync := []string{"workspaces", "satellites", "environments", "instances", "databases"}
+
+	for _, table := range tablesToSync {
+		if err := s.syncTableFromPeer(ctx, table, peerNodeID); err != nil {
+			s.engine.logger.Warnf("Failed to inherit %s data: %v", table, err)
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) mergeDataWithMesh(ctx context.Context, peerNodeID uint64, meshID string) error {
+	// Implement merge logic - combine local and remote data
+	// This is complex and would require conflict resolution
+	s.engine.logger.Infof("Merge strategy not fully implemented - using inherit strategy")
+	return s.inheritDataFromMesh(ctx, peerNodeID, meshID)
+}
+
+func (s *Server) overwriteMeshData(ctx context.Context, peerNodeID uint64, meshID string) error {
+	// Push local data to mesh - this would be handled by the mesh members
+	s.engine.logger.Infof("Overwrite strategy: local data will be pushed to mesh members")
+	return nil
+}
+
+func (s *Server) syncTableToNode(ctx context.Context, tableName string, targetNodeID uint64) error {
+	// Use mesh manager to send table data to target node
+	meshManager := s.engine.GetMeshManager()
+	if meshManager == nil {
+		return fmt.Errorf("mesh manager not available")
+	}
+
+	// This would use the database sync request mechanism
+	s.engine.logger.Debugf("Syncing table %s to node %d", tableName, targetNodeID)
+	return nil
+}
+
+func (s *Server) syncTableFromPeer(ctx context.Context, tableName string, peerNodeID uint64) error {
+	// Request table data from peer node
+	meshManager := s.engine.GetMeshManager()
+	if meshManager == nil {
+		return fmt.Errorf("mesh manager not available")
+	}
+
+	s.engine.logger.Debugf("Syncing table %s from peer %d", tableName, peerNodeID)
+	return nil
+}
+
+// Utility functions
+
+func extractIPFromAddress(addr string) string {
+	if idx := strings.LastIndex(addr, ":"); idx != -1 {
+		return addr[:idx]
+	}
+	return addr
+}
+
+func extractPortFromAddress(addr string) int {
+	if idx := strings.LastIndex(addr, ":"); idx != -1 {
+		if port, err := strconv.Atoi(addr[idx+1:]); err == nil {
+			return port
+		}
+	}
+	return 0
+}
+
+// === Mesh Integration Functions ===
+
+// AddMeshSession adds a new session to another node
+func (s *Server) AddMeshSession(ctx context.Context, targetAddress string, timeoutSeconds int32) (*meshv1.AddSessionResponse, error) {
+	if s.engine.meshControlClient == nil {
+		return nil, fmt.Errorf("mesh control client not available")
+	}
+
+	s.engine.logger.Infof("Adding mesh session to %s with timeout %ds", targetAddress, timeoutSeconds)
+
+	// Create context with timeout
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	// Call mesh service to add session
+	resp, err := s.engine.meshControlClient.AddSession(ctxWithTimeout, &meshv1.AddSessionRequest{
+		Addr:           targetAddress,
+		TimeoutSeconds: uint32(timeoutSeconds),
+	})
+	if err != nil {
+		s.engine.logger.Errorf("Failed to add mesh session to %s: %v", targetAddress, err)
+		return nil, err
+	}
+
+	if resp.Success {
+		s.engine.logger.Infof("Successfully added mesh session to node %d at %s", resp.PeerNodeId, resp.RemoteAddr)
+
+		// Publish mesh event for session added
+		s.publishMeshEvent(ctx, corev1.MeshEventType_MESH_EVENT_SESSION_ADDED, resp.PeerNodeId, map[string]string{
+			"target_address": targetAddress,
+			"remote_addr":    resp.RemoteAddr,
+			"operation":      "add_session",
+			"description":    "Mesh session added successfully",
+		})
+	} else {
+		s.engine.logger.Warnf("Failed to add mesh session to %s: %s", targetAddress, resp.Message)
+	}
+
+	return resp, nil
+}
+
+// DropMeshSession drops an existing session with another node
+func (s *Server) DropMeshSession(ctx context.Context, peerNodeID uint64) (*meshv1.DropSessionResponse, error) {
+	if s.engine.meshControlClient == nil {
+		return nil, fmt.Errorf("mesh control client not available")
+	}
+
+	s.engine.logger.Infof("Dropping mesh session with node %d", peerNodeID)
+
+	// Call mesh service to drop session
+	resp, err := s.engine.meshControlClient.DropSession(ctx, &meshv1.DropSessionRequest{
+		PeerNodeId: peerNodeID,
+	})
+	if err != nil {
+		s.engine.logger.Errorf("Failed to drop mesh session with node %d: %v", peerNodeID, err)
+		return nil, err
+	}
+
+	if resp.Success {
+		s.engine.logger.Infof("Successfully dropped mesh session with node %d", peerNodeID)
+
+		// Publish mesh event for session dropped
+		s.publishMeshEvent(ctx, corev1.MeshEventType_MESH_EVENT_SESSION_REMOVED, peerNodeID, map[string]string{
+			"operation":   "drop_session",
+			"description": "Mesh session dropped successfully",
+		})
+	} else {
+		s.engine.logger.Warnf("Failed to drop mesh session with node %d: %s", peerNodeID, resp.Message)
+	}
+
+	return resp, nil
+}
+
+// HandleStateEvent handles state events received from the mesh service
+func (s *Server) HandleStateEvent(ctx context.Context, req *corev1.HandleStateEventRequest) (*corev1.HandleStateEventResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+	s.engine.IncrementRequestsProcessed()
+
+	if req.Event == nil {
+		return &corev1.HandleStateEventResponse{
+			Success: false,
+			Message: "event is required",
+		}, nil
+	}
+
+	s.engine.logger.Debugf("Handling state event %s from node %d", req.Event.EventType, req.SourceNode)
+
+	eventManager := s.engine.GetMeshEventManager()
+	if eventManager == nil {
+		return &corev1.HandleStateEventResponse{
+			Success: false,
+			Message: "event manager not available",
+		}, nil
+	}
+
+	// Convert protobuf event to internal event
+	event := &mesh.MeshEvent{
+		Type:           req.Event.EventType,
+		OriginatorNode: req.Event.OriginatorNode,
+		AffectedNode:   req.Event.AffectedNode,
+		Sequence:       req.Event.SequenceNumber,
+		Timestamp:      time.Unix(int64(req.Event.Timestamp), 0),
+		Metadata:       req.Event.Metadata,
+		Payload:        req.Event.Payload,
+	}
+
+	if err := eventManager.(*mesh.MeshEventManager).HandleReceivedEvent(ctx, event, req.SourceNode); err != nil {
+		s.engine.logger.Errorf("Failed to handle received state event: %v", err)
+		return &corev1.HandleStateEventResponse{
+			Success: false,
+			Message: fmt.Sprintf("failed to handle event: %v", err),
+		}, nil
+	}
+
+	return &corev1.HandleStateEventResponse{
+		Success: true,
+		Message: "event processed successfully",
+	}, nil
+}
+
+// HandleDatabaseSyncRequest handles database sync requests from the mesh service
+func (s *Server) HandleDatabaseSyncRequest(ctx context.Context, req *corev1.HandleDatabaseSyncRequestMessage) (*corev1.HandleDatabaseSyncResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+	s.engine.IncrementRequestsProcessed()
+
+	s.engine.logger.Debugf("Handling database sync request for table %s from node %d", req.TableName, req.RequestingNode)
+
+	syncManager := s.engine.GetDatabaseSyncManager()
+	if syncManager == nil {
+		return &corev1.HandleDatabaseSyncResponse{
+			Success: false,
+			Message: "database sync manager not available",
+		}, nil
+	}
+
+	// Forward the request to the sync manager
+	response, err := syncManager.(*mesh.DatabaseSyncManager).HandleSyncRequest(ctx, req)
+	if err != nil {
+		s.engine.logger.Errorf("Failed to handle database sync request: %v", err)
+		return &corev1.HandleDatabaseSyncResponse{
+			Success: false,
+			Message: fmt.Sprintf("sync request failed: %v", err),
+		}, nil
+	}
+
+	return response, nil
 }

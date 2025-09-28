@@ -221,8 +221,13 @@ impl MeshConfig {
         }
         
         if let Ok(mesh_id) = std::env::var("MESH_MESH_ID") {
-            self.mesh_id = mesh_id;
-            info!("Mesh ID overridden by environment (from database): {}", self.mesh_id);
+            if mesh_id == "clean-node" {
+                self.mesh_id = "clean-node".to_string();
+                info!("Node is clean (not part of any mesh) - mesh service running in standalone mode");
+            } else {
+                self.mesh_id = mesh_id;
+                info!("Mesh ID overridden by environment (from database): {}", self.mesh_id);
+            }
         }
         
         if let Ok(external_port) = std::env::var("MESH_EXTERNAL_PORT") {

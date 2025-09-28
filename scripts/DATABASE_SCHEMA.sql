@@ -99,6 +99,7 @@ CREATE TABLE mesh (
     allow_join join_key_enum DEFAULT 'KEY_REQUIRED',
     join_key_hash TEXT, -- bcrypt hash of join key
     status status_enum DEFAULT 'STATUS_CREATED',
+    split_strategy VARCHAR(50) DEFAULT 'SEED_NODE_PREVAILS_IN_EVEN_SPLIT',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -146,6 +147,7 @@ CREATE TABLE nodes (
     ip_address INET,
     port INTEGER,
     status status_enum DEFAULT 'STATUS_CREATED',
+    seed_node BOOLEAN DEFAULT FALSE,
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -949,6 +951,49 @@ CREATE TABLE mesh_config_kv (
     key TEXT PRIMARY KEY,
     value JSONB NOT NULL,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =============================================================================
+-- MESH STATE SYNCHRONIZATION AND CONSENSUS TABLES
+-- =============================================================================
+
+-- Event log for mesh state synchronization
+CREATE TABLE mesh_event_log (
+    event_id ulid PRIMARY KEY DEFAULT generate_ulid('evt'),
+    event_type VARCHAR(50) NOT NULL,
+    originator_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    affected_node ulid REFERENCES nodes(node_id) ON DELETE CASCADE,
+    sequence_number BIGINT NOT NULL,
+    event_data JSONB DEFAULT '{}',
+    processed BOOLEAN DEFAULT FALSE,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(originator_node, sequence_number)
+);
+
+-- Table versioning for database synchronization
+CREATE TABLE mesh_table_versions (
+    table_name VARCHAR(100) PRIMARY KEY,
+    version BIGINT NOT NULL DEFAULT 0,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Node membership tracking in meshes
+CREATE TABLE mesh_node_membership (
+    mesh_id ulid NOT NULL REFERENCES mesh(mesh_id) ON DELETE CASCADE,
+    node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) DEFAULT 'ACTIVE',
+    PRIMARY KEY (mesh_id, node_id)
+);
+
+-- Consensus state tracking for split-brain detection
+CREATE TABLE mesh_consensus_state (
+    mesh_id ulid PRIMARY KEY REFERENCES mesh(mesh_id) ON DELETE CASCADE,
+    total_nodes INTEGER NOT NULL DEFAULT 0,
+    online_nodes INTEGER NOT NULL DEFAULT 0,
+    split_detected BOOLEAN DEFAULT FALSE,
+    majority_side BOOLEAN DEFAULT TRUE,
+    last_consensus_check TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- =============================================================================

@@ -52,6 +52,11 @@ pub struct MeshGrpcServer {
 }
 
 impl MeshGrpcServer {
+    /// Get the data service
+    pub fn get_data_service(&self) -> Arc<MeshDataService> {
+        self.data_service.clone()
+    }
+    
     /// Create a new gRPC server
     pub fn new(
         config: GrpcServerConfig,

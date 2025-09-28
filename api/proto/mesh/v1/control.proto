@@ -125,6 +125,35 @@ message GetMessageMetricsResponse {
     double pending_rate = 12;    // Percentage
 }
 
+// Consensus state information
+message ConsensusState {
+    uint64 total_nodes = 1;
+    uint64 online_nodes = 2;
+    bool split_detected = 3;
+    bool is_majority_partition = 4;
+    string split_strategy = 5;
+    uint64 seed_node_id = 6;
+    bool can_accept_writes = 7;
+}
+
+// Request to get consensus state
+message GetConsensusStateRequest {}
+
+// Response with consensus state
+message GetConsensusStateResponse {
+    ConsensusState consensus_state = 1;
+}
+
+// Request to trigger consensus check
+message TriggerConsensusCheckRequest {}
+
+// Response for consensus check trigger
+message TriggerConsensusCheckResponse {
+    bool success = 1;
+    string message = 2;
+    ConsensusState consensus_state = 3;
+}
+
 // MeshControl service for administration and monitoring
 service MeshControl {
     rpc GetSessions(GetSessionsRequest) returns (GetSessionsResponse);
@@ -135,4 +164,7 @@ service MeshControl {
     rpc InjectNeighbor(InjectNeighborRequest) returns (google.protobuf.Empty);
     rpc SetPolicy(SetPolicyRequest) returns (google.protobuf.Empty);
     rpc GetMessageMetrics(GetMessageMetricsRequest) returns (GetMessageMetricsResponse);
+    // Consensus and state management
+    rpc GetConsensusState(GetConsensusStateRequest) returns (GetConsensusStateResponse);
+    rpc TriggerConsensusCheck(TriggerConsensusCheckRequest) returns (TriggerConsensusCheckResponse);
 }

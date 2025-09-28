@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,16 +14,25 @@ import (
 )
 
 type ServiceProcess struct {
-	name   string
-	config superconfig.ServiceConfig
-	cmd    *exec.Cmd
-	mu     sync.Mutex
+	name         string
+	config       superconfig.ServiceConfig
+	cmd          *exec.Cmd
+	mu           sync.Mutex
+	globalConfig *superconfig.Config
 }
 
 func NewServiceProcess(name string, config superconfig.ServiceConfig) *ServiceProcess {
 	return &ServiceProcess{
 		name:   name,
 		config: config,
+	}
+}
+
+func NewServiceProcessWithGlobalConfig(name string, config superconfig.ServiceConfig, globalConfig *superconfig.Config) *ServiceProcess {
+	return &ServiceProcess{
+		name:         name,
+		config:       config,
+		globalConfig: globalConfig,
 	}
 }
 
@@ -33,8 +44,8 @@ func (p *ServiceProcess) Start(ctx context.Context) error {
 		return fmt.Errorf("process already running")
 	}
 
-	// Build command
-	args := append([]string{}, p.config.Args...)
+	// Build command with port offset applied
+	args := p.applyPortOffsets(p.config.Args)
 	p.cmd = exec.CommandContext(ctx, p.config.Executable, args...)
 
 	// Set environment
@@ -43,9 +54,13 @@ func (p *ServiceProcess) Start(ctx context.Context) error {
 		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	// Add EXTERNAL_PORT environment variable if configured
+	// Add EXTERNAL_PORT environment variable if configured (with port offset applied)
 	if p.config.ExternalPort > 0 {
-		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("EXTERNAL_PORT=%d", p.config.ExternalPort))
+		externalPort := p.config.ExternalPort
+		if p.globalConfig != nil {
+			externalPort = p.globalConfig.ApplyPortOffset(p.config.ExternalPort)
+		}
+		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("EXTERNAL_PORT=%d", externalPort))
 	}
 
 	// Add database configuration from supervisor config
@@ -103,4 +118,72 @@ func (p *ServiceProcess) monitor() {
 		// Handle process exit
 		// Could implement restart logic here based on restart policy
 	}
+}
+
+func (p *ServiceProcess) IsRunning() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cmd != nil && p.cmd.Process != nil
+}
+
+// applyPortOffsets applies port offsets to service arguments for multi-instance support
+func (p *ServiceProcess) applyPortOffsets(args []string) []string {
+	if p.globalConfig == nil || p.globalConfig.InstanceGroup.PortOffset == 0 {
+		return args
+	}
+
+	modifiedArgs := make([]string, len(args))
+	copy(modifiedArgs, args)
+
+	for i, arg := range modifiedArgs {
+		// Handle --port=XXXX format
+		if strings.HasPrefix(arg, "--port=") {
+			portStr := strings.TrimPrefix(arg, "--port=")
+			if port, err := strconv.Atoi(portStr); err == nil {
+				newPort := p.globalConfig.ApplyPortOffset(port)
+				modifiedArgs[i] = fmt.Sprintf("--port=%d", newPort)
+			}
+		}
+		// Handle --supervisor=host:port format
+		if strings.HasPrefix(arg, "--supervisor=") {
+			supervisorStr := strings.TrimPrefix(arg, "--supervisor=")
+			if strings.Contains(supervisorStr, ":") {
+				parts := strings.Split(supervisorStr, ":")
+				if len(parts) == 2 {
+					if port, err := strconv.Atoi(parts[1]); err == nil {
+						newPort := p.globalConfig.ApplyPortOffset(port)
+						modifiedArgs[i] = fmt.Sprintf("--supervisor=%s:%d", parts[0], newPort)
+					}
+				}
+			}
+		}
+		// Handle --grpc-bind=host:port format
+		if strings.HasPrefix(arg, "--grpc-bind=") {
+			bindStr := strings.TrimPrefix(arg, "--grpc-bind=")
+			if strings.Contains(bindStr, ":") {
+				parts := strings.Split(bindStr, ":")
+				if len(parts) == 2 {
+					if port, err := strconv.Atoi(parts[1]); err == nil {
+						newPort := p.globalConfig.ApplyPortOffset(port)
+						modifiedArgs[i] = fmt.Sprintf("--grpc-bind=%s:%d", parts[0], newPort)
+					}
+				}
+			}
+		}
+		// Handle --listen=host:port format
+		if strings.HasPrefix(arg, "--listen=") {
+			listenStr := strings.TrimPrefix(arg, "--listen=")
+			if strings.Contains(listenStr, ":") {
+				parts := strings.Split(listenStr, ":")
+				if len(parts) == 2 {
+					if port, err := strconv.Atoi(parts[1]); err == nil {
+						newPort := p.globalConfig.ApplyPortOffset(port)
+						modifiedArgs[i] = fmt.Sprintf("--listen=%s:%d", parts[0], newPort)
+					}
+				}
+			}
+		}
+	}
+
+	return modifiedArgs
 }

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	meshv1 "github.com/redbco/redb-open/api/proto/mesh/v1"
 	"github.com/redbco/redb-open/pkg/logger"
 	"google.golang.org/grpc/codes"
@@ -15,11 +16,13 @@ import (
 
 // Message types for core service communication
 const (
-	MessageTypeDBUpdate     = "db_update"
-	MessageTypeAnchorQuery  = "anchor_query"
-	MessageTypeAnchorResult = "anchor_result"
-	MessageTypeCommand      = "command"
-	MessageTypeResponse     = "response"
+	MessageTypeDBUpdate            = "db_update"
+	MessageTypeAnchorQuery         = "anchor_query"
+	MessageTypeAnchorResult        = "anchor_result"
+	MessageTypeCommand             = "command"
+	MessageTypeResponse            = "response"
+	MessageTypeMeshEvent           = "mesh_event"
+	MessageTypeDatabaseSyncRequest = "database_sync_request"
 )
 
 // CoreMessage represents a structured message between core services
@@ -37,6 +40,7 @@ type MessageHandler func(ctx context.Context, msg *meshv1.Received) error
 // MeshSubscription represents an active subscription to mesh messages
 type MeshSubscription struct {
 	stream  meshv1.MeshData_SubscribeClient
+	ctx     context.Context
 	cancel  context.CancelFunc
 	filter  *meshv1.SubscribeRequest
 	handler MessageHandler
@@ -51,6 +55,7 @@ type MeshCommunicationManager struct {
 	subscriptions     map[string]*MeshSubscription
 	messageHandlers   map[string]MessageHandler
 	pendingRequests   map[string]chan *meshv1.Received // For synchronous request-response
+	eventManager      *MeshEventManager                // Reference to event manager for handling mesh events
 	mu                sync.RWMutex
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -63,6 +68,8 @@ func NewMeshCommunicationManager(
 	logger *logger.Logger,
 	nodeID uint64,
 ) *MeshCommunicationManager {
+	// Create a context that can be cancelled for shutdown
+	// We'll update this when Start() is called with the proper parent context
 	ctx, cancel := context.WithCancel(context.Background())
 
 	mgr := &MeshCommunicationManager{
@@ -85,38 +92,94 @@ func NewMeshCommunicationManager(
 
 // Start initializes the mesh communication manager
 func (m *MeshCommunicationManager) Start(ctx context.Context) error {
-	m.logger.Infof("Starting mesh communication manager for node %d", m.nodeID)
+	// Enable console logging for debugging
+	m.logger.EnableConsoleOutput()
+	m.logger.Debug("Starting mesh manager for node %d", m.nodeID)
+
+	// Update our internal context to be derived from the provided context
+	// This ensures proper cancellation propagation during shutdown
+	m.logger.Debug("Updating mesh manager context")
+	m.mu.Lock()
+	m.cancel() // Cancel the old context
+	m.ctx, m.cancel = context.WithCancel(ctx)
+	m.mu.Unlock()
+	m.logger.Debug("Mesh manager context updated")
 
 	// Subscribe to all messages for this node
+	m.logger.Debug("Subscribing to mesh messages")
 	if err := m.SubscribeToMessages(ctx, nil); err != nil {
+		m.logger.Errorf("Failed to subscribe to mesh messages: %v", err)
 		return fmt.Errorf("failed to subscribe to mesh messages: %w", err)
 	}
+	m.logger.Debug("Mesh message subscription completed")
 
-	m.logger.Infof("Mesh communication manager started successfully")
+	m.logger.Info("Mesh communication manager started successfully")
 	return nil
 }
 
 // Stop gracefully shuts down the mesh communication manager
 func (m *MeshCommunicationManager) Stop() error {
-	m.logger.Infof("Stopping mesh communication manager")
+	m.logger.Debug("Stopping mesh manager")
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Cancel all subscriptions
+	m.logger.Debug("Mesh manager acquired lock")
+
+	// First, cancel the main context to signal all goroutines to stop
+	m.logger.Debug("Cancelling main context")
+	m.cancel()
+	m.logger.Debug("Main context cancelled")
+
+	// Close all gRPC streams before cancelling subscriptions
+	m.logger.Debug("Closing %d subscriptions", len(m.subscriptions))
 	for subID, sub := range m.subscriptions {
+		m.logger.Debug("Closing subscription %s", subID)
+
+		// Close the send side of the stream to signal completion with timeout
+		if sub.stream != nil {
+			m.logger.Debug("Closing stream for subscription %s", subID)
+
+			// Use a timeout for CloseSend to prevent hanging
+			done := make(chan error, 1)
+			go func() {
+				done <- sub.stream.CloseSend()
+			}()
+
+			select {
+			case err := <-done:
+				if err != nil {
+					m.logger.Warnf("Failed to close stream for subscription %s: %v", subID, err)
+				} else {
+					m.logger.Debug("Stream closed for subscription %s", subID)
+				}
+			case <-time.After(1 * time.Second):
+				m.logger.Warnf("Stream close timed out for subscription %s", subID)
+			}
+		}
+
+		// Cancel the subscription context
+		m.logger.Debug("Cancelling subscription context %s", subID)
 		sub.cancel()
 		delete(m.subscriptions, subID)
+		m.logger.Debug("Subscription %s cleaned up", subID)
 	}
 
-	// Cancel pending requests
+	// Cancel pending requests with proper cleanup
+	m.logger.Debug("Cleaning up %d pending requests", len(m.pendingRequests))
 	for reqID, ch := range m.pendingRequests {
-		close(ch)
+		select {
+		case <-ch:
+			// Channel already closed
+			m.logger.Debug("Request %s channel already closed", reqID)
+		default:
+			close(ch)
+			m.logger.Debug("Closed request %s channel", reqID)
+		}
 		delete(m.pendingRequests, reqID)
 	}
 
-	m.cancel()
-	m.logger.Infof("Mesh communication manager stopped")
+	m.logger.Info("Mesh communication manager stopped")
 	return nil
 }
 
@@ -203,6 +266,12 @@ func (m *MeshCommunicationManager) SendMessageWithResponse(ctx context.Context, 
 
 // SubscribeToMessages subscribes to messages from the mesh
 func (m *MeshCommunicationManager) SubscribeToMessages(ctx context.Context, filter *meshv1.SubscribeRequest) error {
+	// Check if mesh data client is available
+	if m.meshDataClient == nil {
+		m.logger.Warnf("Mesh data client not available, skipping subscription")
+		return fmt.Errorf("mesh data client not initialized")
+	}
+
 	if filter == nil {
 		filter = &meshv1.SubscribeRequest{
 			// Subscribe to all messages for this node
@@ -215,17 +284,26 @@ func (m *MeshCommunicationManager) SubscribeToMessages(ctx context.Context, filt
 	// Create subscription context
 	subCtx, cancel := context.WithCancel(m.ctx)
 
-	// Subscribe to mesh messages
-	stream, err := m.meshDataClient.Subscribe(subCtx, filter)
+	// Subscribe to mesh messages with timeout
+	m.logger.Infof("Attempting to subscribe to mesh messages for node %d", m.nodeID)
+
+	// Add timeout to prevent hanging during subscription
+	subscribeCtx, subscribeCancel := context.WithTimeout(subCtx, 10*time.Second)
+	defer subscribeCancel()
+
+	stream, err := m.meshDataClient.Subscribe(subscribeCtx, filter)
 	if err != nil {
 		cancel()
+		m.logger.Errorf("Failed to subscribe to mesh messages: %v", err)
 		return fmt.Errorf("failed to subscribe to mesh: %w", err)
 	}
+	m.logger.Infof("Successfully established mesh subscription stream")
 
 	// Create subscription
 	subID := fmt.Sprintf("main_%d", time.Now().UnixNano())
 	subscription := &MeshSubscription{
 		stream:  stream,
+		ctx:     subCtx,
 		cancel:  cancel,
 		filter:  filter,
 		handler: m.handleReceivedMessage,
@@ -251,23 +329,125 @@ func (m *MeshCommunicationManager) processMessages(subID string, sub *MeshSubscr
 		m.logger.Infof("Subscription %s ended", subID)
 	}()
 
+	// Use a goroutine to handle Recv() calls with proper context cancellation
+	msgCh := make(chan *meshv1.Received, 1)
+	errCh := make(chan error, 1)
+	recvDone := make(chan struct{})
+
+	go func() {
+		defer close(msgCh)
+		defer close(errCh)
+		defer close(recvDone)
+
+		for {
+			select {
+			case <-m.ctx.Done():
+				m.logger.Debugf("Recv goroutine for subscription %s stopping due to context cancellation", subID)
+				return
+			case <-sub.ctx.Done():
+				m.logger.Debugf("Recv goroutine for subscription %s stopping due to subscription cancellation", subID)
+				return
+			default:
+				// Check if stream is still valid before attempting Recv
+				if sub.stream == nil {
+					m.logger.Debugf("Stream for subscription %s is nil, stopping recv goroutine", subID)
+					return
+				}
+
+				// Create a separate goroutine for the blocking Recv() call
+				recvResultCh := make(chan struct {
+					msg *meshv1.Received
+					err error
+				}, 1)
+
+				go func() {
+					msg, err := sub.stream.Recv()
+					select {
+					case recvResultCh <- struct {
+						msg *meshv1.Received
+						err error
+					}{msg, err}:
+					case <-m.ctx.Done():
+						// Context cancelled while Recv was blocking
+					case <-sub.ctx.Done():
+						// Subscription cancelled while Recv was blocking
+					}
+				}()
+
+				// Wait for Recv result or cancellation with timeout
+				select {
+				case result := <-recvResultCh:
+					if result.err != nil {
+						select {
+						case errCh <- result.err:
+						case <-m.ctx.Done():
+						case <-sub.ctx.Done():
+						}
+						return
+					}
+
+					select {
+					case msgCh <- result.msg:
+					case <-m.ctx.Done():
+						return
+					case <-sub.ctx.Done():
+						return
+					}
+
+				case <-time.After(1 * time.Second):
+					// Timeout - check if we should continue or exit
+					select {
+					case <-m.ctx.Done():
+						return
+					case <-sub.ctx.Done():
+						return
+					default:
+						// Continue loop for next iteration
+					}
+
+				case <-m.ctx.Done():
+					m.logger.Debugf("Recv loop for subscription %s stopping due to context cancellation", subID)
+					return
+				case <-sub.ctx.Done():
+					m.logger.Debugf("Recv loop for subscription %s stopping due to subscription cancellation", subID)
+					return
+				}
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-m.ctx.Done():
+			m.logger.Debugf("Message processing loop for subscription %s stopping due to context cancellation", subID)
 			return
-		default:
-			msg, err := sub.stream.Recv()
+		case <-sub.ctx.Done():
+			m.logger.Debugf("Message processing loop for subscription %s stopping due to subscription cancellation", subID)
+			return
+		case err := <-errCh:
 			if err != nil {
-				if status.Code(err) == codes.Canceled {
-					return // Normal cancellation
+				if status.Code(err) == codes.Canceled || status.Code(err) == codes.Unavailable {
+					m.logger.Debugf("Subscription %s ended normally: %v", subID, err)
+					return // Normal cancellation or service unavailable
 				}
 				m.logger.Errorf("Error receiving message from subscription %s: %v", subID, err)
 				return
 			}
+		case msg := <-msgCh:
+			if msg == nil {
+				return // Channel closed
+			}
 
-			// Handle the message
-			if err := sub.handler(m.ctx, msg); err != nil {
-				m.logger.Errorf("Error handling message: %v", err)
+			// Handle the message with context checking
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-sub.ctx.Done():
+				return
+			default:
+				if err := sub.handler(m.ctx, msg); err != nil {
+					m.logger.Errorf("Error handling message: %v", err)
+				}
 			}
 
 			// Send acknowledgment if required
@@ -279,9 +459,18 @@ func (m *MeshCommunicationManager) processMessages(subID string, sub *MeshSubscr
 					Message: "Message processed successfully",
 				}
 
-				if _, err := m.meshDataClient.AckMessage(m.ctx, ack); err != nil {
-					m.logger.Errorf("Failed to acknowledge message %d: %v", msg.MsgId, err)
+				// Use a timeout for acknowledgment to prevent blocking during shutdown
+				ackCtx, ackCancel := context.WithTimeout(context.Background(), 1*time.Second)
+				if _, err := m.meshDataClient.AckMessage(ackCtx, ack); err != nil {
+					// Don't log errors during shutdown
+					select {
+					case <-m.ctx.Done():
+					case <-sub.ctx.Done():
+					default:
+						m.logger.Errorf("Failed to acknowledge message %d: %v", msg.MsgId, err)
+					}
 				}
+				ackCancel()
 			}
 		}
 	}
@@ -334,11 +523,58 @@ func (m *MeshCommunicationManager) RegisterMessageHandler(messageType string, ha
 	m.logger.Infof("Registered handler for message type: %s", messageType)
 }
 
+// SetEventManager sets the event manager reference (for circular dependency resolution)
+func (m *MeshCommunicationManager) SetEventManager(eventManager *MeshEventManager) {
+	m.logger.Debug("Setting event manager on mesh manager")
+
+	m.mu.Lock()
+	m.logger.Debug("Setting event manager field")
+	m.eventManager = eventManager
+
+	// Register mesh event handler directly without calling RegisterMessageHandler
+	// to avoid recursive mutex lock
+	m.logger.Debug("Registering message handler directly")
+	m.messageHandlers[MessageTypeMeshEvent] = m.handleMeshEvent
+	m.logger.Infof("Registered handler for message type: %s", MessageTypeMeshEvent)
+	m.mu.Unlock()
+
+	m.logger.Debug("Event manager set on mesh manager completed")
+}
+
 // registerDefaultHandlers registers default message handlers
 func (m *MeshCommunicationManager) registerDefaultHandlers() {
 	m.RegisterMessageHandler(MessageTypeDBUpdate, m.handleDBUpdate)
 	m.RegisterMessageHandler(MessageTypeAnchorQuery, m.handleAnchorQuery)
 	m.RegisterMessageHandler(MessageTypeCommand, m.handleCommand)
+	// Note: mesh_event handler is registered when SetEventManager is called
+}
+
+// BroadcastStateEvent broadcasts a state event to all nodes in the mesh
+func (m *MeshCommunicationManager) BroadcastStateEvent(ctx context.Context, event *meshv1.MeshStateEvent) error {
+	m.logger.Infof("Broadcasting state event %s (seq: %d) to mesh", event.EventType, event.SequenceNumber)
+
+	// Use the mesh data client to broadcast the event
+	_, err := m.meshDataClient.BroadcastStateEvent(ctx, event)
+	if err != nil {
+		return fmt.Errorf("failed to broadcast state event: %w", err)
+	}
+
+	m.logger.Debugf("Successfully broadcasted state event %s (seq: %d)", event.EventType, event.SequenceNumber)
+	return nil
+}
+
+// RequestDatabaseSync requests database synchronization from other nodes
+func (m *MeshCommunicationManager) RequestDatabaseSync(ctx context.Context, req *meshv1.DatabaseSyncRequest) (*meshv1.DatabaseSyncResponse, error) {
+	m.logger.Infof("Requesting database sync for table %s", req.TableName)
+
+	// Use the mesh data client to request sync
+	resp, err := m.meshDataClient.RequestDatabaseSync(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to request database sync: %w", err)
+	}
+
+	m.logger.Debugf("Received database sync response for table %s: %d records", req.TableName, len(resp.Records))
+	return resp, nil
 }
 
 // handleDBUpdate handles database update notifications
@@ -398,6 +634,93 @@ func (m *MeshCommunicationManager) handleCommand(ctx context.Context, msg *meshv
 	// TODO: Implement command handling based on operation
 	// This could handle various administrative commands
 
+	return nil
+}
+
+// handleMeshEvent handles mesh state events received from other nodes
+func (m *MeshCommunicationManager) handleMeshEvent(ctx context.Context, msg *meshv1.Received) error {
+	m.logger.Debugf("Received mesh event from node %d", msg.SrcNode)
+
+	// Check if we have an event manager
+	m.mu.RLock()
+	eventManager := m.eventManager
+	m.mu.RUnlock()
+
+	if eventManager == nil {
+		m.logger.Warnf("Received mesh event but no event manager is set, ignoring")
+		return nil
+	}
+
+	// Parse the mesh event from the payload
+	var eventData map[string]interface{}
+	if err := json.Unmarshal(msg.Payload, &eventData); err != nil {
+		return fmt.Errorf("failed to parse mesh event payload: %w", err)
+	}
+
+	// Extract event information
+	eventTypeRaw, ok := eventData["event_type"]
+	if !ok {
+		return fmt.Errorf("mesh event missing event_type field")
+	}
+
+	eventType, ok := eventTypeRaw.(float64) // JSON numbers are float64
+	if !ok {
+		return fmt.Errorf("invalid event_type format")
+	}
+
+	// Extract other fields with defaults
+	originatorNode := uint64(0)
+	if val, ok := eventData["originator_node"].(float64); ok {
+		originatorNode = uint64(val)
+	}
+
+	affectedNode := uint64(0)
+	if val, ok := eventData["affected_node"].(float64); ok {
+		affectedNode = uint64(val)
+	}
+
+	sequenceNumber := uint64(0)
+	if val, ok := eventData["sequence_number"].(float64); ok {
+		sequenceNumber = uint64(val)
+	}
+
+	timestamp := time.Now()
+	if val, ok := eventData["timestamp"].(float64); ok {
+		timestamp = time.Unix(int64(val), 0)
+	}
+
+	metadata := make(map[string]string)
+	if val, ok := eventData["metadata"].(map[string]interface{}); ok {
+		for k, v := range val {
+			if str, ok := v.(string); ok {
+				metadata[k] = str
+			}
+		}
+	}
+
+	payload := []byte{}
+	if val, ok := eventData["payload"].(string); ok {
+		payload = []byte(val)
+	}
+
+	// Create internal mesh event
+	event := &MeshEvent{
+		Type:           corev1.MeshEventType(int32(eventType)),
+		OriginatorNode: originatorNode,
+		AffectedNode:   affectedNode,
+		Sequence:       sequenceNumber,
+		Timestamp:      timestamp,
+		Metadata:       metadata,
+		Payload:        payload,
+	}
+
+	// Forward to event manager
+	if err := eventManager.HandleReceivedEvent(ctx, event, msg.SrcNode); err != nil {
+		m.logger.Errorf("Failed to handle received mesh event: %v", err)
+		return err
+	}
+
+	m.logger.Debugf("Successfully processed mesh event %d from node %d", int32(eventType), msg.SrcNode)
 	return nil
 }
 

@@ -99,6 +99,61 @@ message QueryMessageStatusResponse {
     repeated MessageStatusInfo message_statuses = 1;
 }
 
+// Mesh state synchronization event types (for broadcasting)
+enum MeshEventType {
+    MESH_EVENT_UNSPECIFIED = 0;
+    // Planned events
+    MESH_EVENT_NODE_JOINED = 1;
+    MESH_EVENT_NODE_LEFT = 2;
+    MESH_EVENT_NODE_EVICTED = 3;
+    MESH_EVENT_SESSION_ADDED = 4;
+    MESH_EVENT_SESSION_REMOVED = 5;
+    MESH_EVENT_NODE_SHUTDOWN = 6;
+    MESH_EVENT_NODE_STARTED = 7;
+    // Unplanned events
+    MESH_EVENT_SESSION_INTERRUPTED = 8;
+    MESH_EVENT_SESSION_RECOVERED = 9;
+    MESH_EVENT_NODE_OFFLINE = 10;
+    MESH_EVENT_NODE_RECOVERED = 11;
+    // Consensus events
+    MESH_EVENT_SPLIT_DETECTED = 12;
+    MESH_EVENT_SPLIT_RESOLVED = 13;
+}
+
+// Mesh state event for broadcasting (called by core service to mesh service)
+message MeshStateEvent {
+    MeshEventType event_type = 1;
+    uint64 originator_node = 2;
+    uint64 affected_node = 3;
+    uint64 sequence_number = 4;
+    uint64 timestamp = 5;
+    map<string, string> metadata = 6;
+    bytes payload = 7; // Serialized event-specific data
+}
+
+// Database synchronization request
+message DatabaseSyncRequest {
+    string table_name = 1;
+    uint64 last_known_version = 2;
+    repeated string node_ids = 3; // For filtering node-specific data
+}
+
+// Database record for synchronization
+message DatabaseRecord {
+    string operation = 1; // INSERT, UPDATE, DELETE
+    map<string, string> data = 2;
+    uint64 version = 3;
+    uint64 timestamp = 4;
+}
+
+// Database synchronization response
+message DatabaseSyncResponse {
+    string table_name = 1;
+    uint64 current_version = 2;
+    repeated DatabaseRecord records = 3;
+    bool has_more = 4;
+}
+
 // MeshData service for sending and receiving messages
 service MeshData {
     rpc Send(SendRequest) returns (SendResponse);
@@ -106,4 +161,7 @@ service MeshData {
     rpc Subscribe(SubscribeRequest) returns (stream Received);
     rpc AckMessage(Ack) returns (google.protobuf.Empty);
     rpc QueryMessageStatus(QueryMessageStatusRequest) returns (QueryMessageStatusResponse);
+    // State synchronization methods (called by core service to mesh service)
+    rpc BroadcastStateEvent(MeshStateEvent) returns (google.protobuf.Empty); // Core tells mesh to broadcast event
+    rpc RequestDatabaseSync(DatabaseSyncRequest) returns (DatabaseSyncResponse); // Core requests sync from mesh
 }

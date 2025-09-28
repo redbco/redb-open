@@ -112,12 +112,44 @@ type UserInfo struct {
 
 // New creates a new initializer instance
 func New(logger logger.LoggerInterface) *Initializer {
-	// Initialize keyring manager
-	keyringPath := keyring.GetDefaultKeyringPath()
-	masterPassword := keyring.GetMasterPasswordFromEnv()
+	return NewWithConfig(logger, nil)
+}
+
+// NewWithConfig creates a new initializer instance with configuration
+func NewWithConfig(logger logger.LoggerInterface, config interface{}) *Initializer {
+	// Initialize keyring manager with configuration if available
+	var keyringPath string
+	var masterPassword string
+	var backend string = "auto"
+
+	// Try to extract keyring configuration if config is provided
+	// We use reflection-like approach to avoid import cycles
+	if config != nil {
+		// Use type assertion to check if it has the methods we need
+		if cfgWithPath, ok := config.(interface{ GetKeyringPath() string }); ok {
+			keyringPath = cfgWithPath.GetKeyringPath()
+		}
+
+		// Check for keyring backend configuration using reflection-like approach
+		// This is a simplified approach that works for our use case
+		configStr := fmt.Sprintf("%+v", config)
+		if strings.Contains(configStr, "Backend:file") {
+			backend = "file"
+		} else if strings.Contains(configStr, "Backend:system") {
+			backend = "system"
+		}
+	}
+
+	// Fallback to defaults if not configured
+	if keyringPath == "" {
+		keyringPath = keyring.GetDefaultKeyringPath()
+	}
+	if masterPassword == "" {
+		masterPassword = keyring.GetMasterPasswordFromEnv()
+	}
 
 	logger.Info("Initializing keyring manager...")
-	km := keyring.NewKeyringManager(keyringPath, masterPassword)
+	km := keyring.NewKeyringManagerWithBackend(keyringPath, masterPassword, backend)
 	logger.Info("Keyring manager initialized successfully")
 
 	return &Initializer{
@@ -1314,4 +1346,140 @@ func getDatabaseCredentialsFromEnv() *DatabaseCredentials {
 	}
 
 	return creds
+}
+
+// InitializeWithSingleTenant performs initialization with automatic single-tenant setup
+func (i *Initializer) InitializeWithSingleTenant(ctx context.Context, tenantID, tenantName, tenantURL string) error {
+	i.logger.Info("Starting reDB node initialization in single-tenant mode...")
+
+	// Step 1: Check database connectivity
+	defaultCreds := &DatabaseCredentials{
+		User:     DefaultPostgresUser,
+		Password: DefaultPostgresPassword,
+		Host:     DefaultPostgresHost,
+		Port:     DefaultPostgresPort,
+		Database: DefaultPostgresDatabase,
+	}
+
+	workingCreds, err := i.checkDatabaseConnectivity(ctx, defaultCreds)
+	if err != nil {
+		return fmt.Errorf("failed to establish database connectivity: %w", err)
+	}
+
+	// Step 2: Generate secure password for production database
+	prodPassword, err := i.generateSecurePassword(32)
+	if err != nil {
+		return fmt.Errorf("failed to generate secure password: %w", err)
+	}
+
+	// Step 3: Store production password in keyring
+	if err := i.storeProductionPassword(prodPassword); err != nil {
+		return fmt.Errorf("failed to store production password: %w", err)
+	}
+
+	// Step 4: Create production database and user
+	if err := i.createProductionDatabase(ctx, workingCreds, prodPassword); err != nil {
+		return fmt.Errorf("failed to create production database: %w", err)
+	}
+
+	// Step 5: Create database schema
+	prodCreds := &DatabaseCredentials{
+		User:     ProductionUser,
+		Password: prodPassword,
+		Host:     workingCreds.Host,
+		Port:     workingCreds.Port,
+		Database: getProductionDatabaseName(),
+	}
+
+	if err := i.createDatabaseSchema(ctx, prodCreds); err != nil {
+		return fmt.Errorf("failed to create database schema: %w", err)
+	}
+
+	// Step 6: Generate and store node keys
+	nodeInfo, err := i.generateNodeKeys()
+	if err != nil {
+		return fmt.Errorf("failed to generate node keys: %w", err)
+	}
+
+	// Step 7: Insert local node details and set localidentity
+	if err := i.createLocalNode(ctx, prodCreds, nodeInfo); err != nil {
+		return fmt.Errorf("failed to create local node: %w", err)
+	}
+
+	// Step 8: Create default tenant automatically for single-tenant mode
+	tenantInfo, err := i.createDefaultTenant(ctx, prodCreds, tenantID, tenantName, tenantURL)
+	if err != nil {
+		return fmt.Errorf("failed to create default tenant: %w", err)
+	}
+
+	// Step 9: Generate and store JWT secrets for the tenant
+	if err := i.generateTenantJWTSecret(tenantInfo.TenantID); err != nil {
+		return fmt.Errorf("failed to generate tenant JWT secret: %w", err)
+	}
+
+	// Step 10: Generate and store RSA keys for the tenant
+	if err := i.generateTenantKeys(tenantInfo.TenantID); err != nil {
+		return fmt.Errorf("failed to generate tenant RSA keys: %w", err)
+	}
+
+	i.logger.Infof("Successfully created default tenant '%s' for single-tenant mode", tenantInfo.TenantName)
+	i.logger.Info("Node initialization completed successfully!")
+	i.logger.Info("You can now start the supervisor service normally.")
+	i.logger.Info("Use the API to create the initial user for the default tenant.")
+
+	return nil
+}
+
+// createDefaultTenant creates the default tenant for single-tenant mode
+func (i *Initializer) createDefaultTenant(ctx context.Context, creds *DatabaseCredentials, tenantID, tenantName, tenantURL string) (*TenantInfo, error) {
+	i.logger.Info("Creating default tenant for single-tenant mode...")
+
+	// Connect to database using pgxpool.ParseConfig to handle special characters
+	poolConfig, err := pgxpool.ParseConfig("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create connection config: %w", err)
+	}
+
+	poolConfig.ConnConfig.Host = creds.Host
+	poolConfig.ConnConfig.Port = uint16(creds.Port)
+	poolConfig.ConnConfig.Database = creds.Database
+	poolConfig.ConnConfig.User = creds.User
+	poolConfig.ConnConfig.Password = creds.Password
+	poolConfig.ConnConfig.ConnectTimeout = 30 * time.Second
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer pool.Close()
+
+	// Check if tenant already exists
+	var existingTenantID string
+	err = pool.QueryRow(ctx, "SELECT tenant_id FROM tenants WHERE tenant_id = $1 OR tenant_url = $2 LIMIT 1", tenantID, tenantURL).Scan(&existingTenantID)
+	if err == nil {
+		i.logger.Infof("Default tenant already exists with ID: %s", existingTenantID)
+		return &TenantInfo{
+			TenantID:   existingTenantID,
+			TenantName: tenantName,
+			TenantURL:  tenantURL,
+		}, nil
+	}
+
+	// Create new tenant with the specified ID
+	_, err = pool.Exec(ctx, `
+		INSERT INTO tenants (tenant_id, tenant_name, tenant_description, tenant_url, status)
+		VALUES ($1, $2, $3, $4, $5)
+	`, tenantID, tenantName, "Default tenant for single-tenant mode", tenantURL, "STATUS_ACTIVE")
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert default tenant: %w", err)
+	}
+
+	tenantInfo := &TenantInfo{
+		TenantID:   tenantID,
+		TenantName: tenantName,
+		TenantURL:  tenantURL,
+	}
+
+	i.logger.Infof("Successfully created default tenant '%s' with ID '%s'", tenantName, tenantID)
+	return tenantInfo, nil
 }
