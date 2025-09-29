@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -36,10 +38,12 @@ type ServiceConfig struct {
 	Dependencies []string          `yaml:"dependencies"`
 	Config       map[string]string `yaml:"config"`
 	ExternalPort int               `yaml:"external_port"`
+	RestAPIPort  int               `yaml:"rest_api_port"` // REST API port for services that provide HTTP endpoints
 }
 
 type DatabaseConfig struct {
 	Name string `yaml:"name"`
+	User string `yaml:"user"` // Database username for this instance
 }
 
 type LoggingConfig struct {
@@ -131,6 +135,17 @@ func Load(path string) (*Config, error) {
 	if config.InstanceGroup.PortOffset == 0 {
 		config.InstanceGroup.PortOffset = 0 // Default no offset
 	}
+
+	// Set database defaults
+	if config.Database.User == "" {
+		config.Database.User = "redb" // Default database user
+	}
+
+	// Apply port offset to supervisor port for multi-instance support
+	// This must be done after all defaults are set, but we need to avoid double-applying
+	// We'll apply the offset directly here since ApplyPortOffset would add it again
+	basePort := 50000 // The original default port before any offset
+	config.Supervisor.Port = basePort + config.InstanceGroup.PortOffset
 
 	// Validate required configuration
 	if config.Database.Name == "" {
@@ -240,4 +255,94 @@ func (c *Config) GetKeyringServiceName(service string) string {
 // ApplyPortOffset applies the port offset to a base port for multi-instance support
 func (c *Config) ApplyPortOffset(basePort int) int {
 	return basePort + c.InstanceGroup.PortOffset
+}
+
+// Interface implementations for configprovider interfaces
+
+// GetKeyringBackend implements KeyringConfigProvider
+func (c *Config) GetKeyringBackend() string {
+	return c.Keyring.Backend
+}
+
+// GetKeyringMasterKey implements KeyringConfigProvider
+func (c *Config) GetKeyringMasterKey() string {
+	return c.Keyring.MasterKey
+}
+
+// GetKeyringBaseServiceName implements KeyringConfigProvider (base service name)
+func (c *Config) GetKeyringBaseServiceName() string {
+	return c.Keyring.ServiceName
+}
+
+// GetInstanceGroupID implements InstanceConfigProvider
+func (c *Config) GetInstanceGroupID() string {
+	return c.InstanceGroup.GroupID
+}
+
+// GetPortOffset implements InstanceConfigProvider
+func (c *Config) GetPortOffset() int {
+	return c.InstanceGroup.PortOffset
+}
+
+// Note: GetKeyringServiceName(service string) is already implemented above
+// and serves as the ServiceNameProvider interface implementation
+
+// GetServiceGRPCAddress implements GRPCServiceProvider
+func (c *Config) GetServiceGRPCAddress(serviceName string) string {
+	basePort := c.GetServiceBaseGRPCPort(serviceName)
+	if basePort == 0 {
+		return "" // Service not found or not configured
+	}
+
+	// Apply port offset for multi-instance support
+	actualPort := c.ApplyPortOffset(basePort)
+	return fmt.Sprintf("localhost:%d", actualPort)
+}
+
+// GetServiceBaseGRPCPort implements GRPCServiceProvider
+func (c *Config) GetServiceBaseGRPCPort(serviceName string) int {
+	// Define base gRPC ports for all services
+	servicePorts := map[string]int{
+		"supervisor":     50000,
+		"security":       50051,
+		"unifiedmodel":   50052,
+		"webhook":        50053,
+		"transformation": 50054,
+		"core":           50055,
+		"mesh":           50056,
+		"anchor":         50057,
+		"integration":    50058,
+		"clientapi":      50059,
+		"mcpserver":      50060,
+	}
+
+	// Check if service is configured in services section with custom port
+	if serviceConfig, exists := c.Services[serviceName]; exists {
+		// Try to extract port from args (e.g., "--port=50055")
+		for _, arg := range serviceConfig.Args {
+			if strings.HasPrefix(arg, "--port=") {
+				portStr := strings.TrimPrefix(arg, "--port=")
+				if port, err := strconv.Atoi(portStr); err == nil {
+					return port
+				}
+			}
+		}
+	}
+
+	// Return default port for the service
+	if port, exists := servicePorts[serviceName]; exists {
+		return port
+	}
+
+	return 0 // Service not found
+}
+
+// GetDatabaseName implements DatabaseConfigProvider
+func (c *Config) GetDatabaseName() string {
+	return c.Database.Name
+}
+
+// GetDatabaseUser implements DatabaseConfigProvider
+func (c *Config) GetDatabaseUser() string {
+	return c.Database.User
 }

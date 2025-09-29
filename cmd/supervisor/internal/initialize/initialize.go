@@ -25,6 +25,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/redbco/redb-open/cmd/supervisor/internal/logger"
+	"github.com/redbco/redb-open/pkg/configprovider"
 	"github.com/redbco/redb-open/pkg/keyring"
 )
 
@@ -66,18 +67,46 @@ const (
 	ProductionUser     = "redb"
 )
 
-// getProductionDatabaseName returns the production database name from environment or defaults
-func getProductionDatabaseName() string {
+// getProductionDatabaseName returns the production database name from config or environment
+func (i *Initializer) getProductionDatabaseName() string {
+	// Try to get from config first
+	if i.config != nil {
+		if dbProvider, ok := i.config.(configprovider.DatabaseConfigProvider); ok {
+			if dbName := dbProvider.GetDatabaseName(); dbName != "" {
+				return dbName
+			}
+		}
+	}
+
+	// Fallback to environment variable
 	if dbName := os.Getenv("REDB_DATABASE_NAME"); dbName != "" {
 		return dbName
 	}
+
+	// Final fallback to default
 	return ProductionDatabase
+}
+
+// getProductionDatabaseUser returns the production database user from config or defaults
+func (i *Initializer) getProductionDatabaseUser() string {
+	// Try to get from config first
+	if i.config != nil {
+		if dbProvider, ok := i.config.(configprovider.DatabaseConfigProvider); ok {
+			if dbUser := dbProvider.GetDatabaseUser(); dbUser != "" {
+				return dbUser
+			}
+		}
+	}
+
+	// Fallback to default
+	return ProductionUser
 }
 
 type Initializer struct {
 	logger         logger.LoggerInterface
 	reader         io.Reader
 	keyringManager *keyring.KeyringManager
+	config         interface{} // Store config for instance-aware service names
 }
 
 type DatabaseCredentials struct {
@@ -121,34 +150,42 @@ func NewWithConfig(logger logger.LoggerInterface, config interface{}) *Initializ
 	var keyringPath string
 	var masterPassword string
 	var backend string = "auto"
+	var groupID string = "default"
 
-	// Try to extract keyring configuration if config is provided
-	// We use reflection-like approach to avoid import cycles
+	// Try to extract keyring configuration using proper interfaces
 	if config != nil {
-		// Use type assertion to check if it has the methods we need
-		if cfgWithPath, ok := config.(interface{ GetKeyringPath() string }); ok {
-			keyringPath = cfgWithPath.GetKeyringPath()
+		// Use proper interface-based type assertions
+		if keyringProvider, ok := config.(configprovider.KeyringConfigProvider); ok {
+			backend = keyringProvider.GetKeyringBackend()
+			if path := keyringProvider.GetKeyringPath(); path != "" {
+				keyringPath = path
+			}
+			if key := keyringProvider.GetKeyringMasterKey(); key != "" {
+				masterPassword = key
+			}
 		}
 
-		// Check for keyring backend configuration using reflection-like approach
-		// This is a simplified approach that works for our use case
-		configStr := fmt.Sprintf("%+v", config)
-		if strings.Contains(configStr, "Backend:file") {
-			backend = "file"
-		} else if strings.Contains(configStr, "Backend:system") {
-			backend = "system"
+		if instanceProvider, ok := config.(configprovider.InstanceConfigProvider); ok {
+			groupID = instanceProvider.GetInstanceGroupID()
 		}
 	}
 
 	// Fallback to defaults if not configured
 	if keyringPath == "" {
-		keyringPath = keyring.GetDefaultKeyringPath()
+		keyringPath = keyring.GetKeyringPathWithGroup(keyring.GetDefaultKeyringPath(), groupID)
 	}
 	if masterPassword == "" {
 		masterPassword = keyring.GetMasterPasswordFromEnv()
 	}
+	if backend == "" {
+		backend = "auto"
+	}
 
-	logger.Info("Initializing keyring manager...")
+	logger.Info("Initializing keyring manager with multi-instance support...")
+	logger.Infof("Keyring path: %s", keyringPath)
+	logger.Infof("Keyring backend: %s", backend)
+	logger.Infof("Instance group: %s", groupID)
+
 	km := keyring.NewKeyringManagerWithBackend(keyringPath, masterPassword, backend)
 	logger.Info("Keyring manager initialized successfully")
 
@@ -156,7 +193,21 @@ func NewWithConfig(logger logger.LoggerInterface, config interface{}) *Initializ
 		logger:         logger,
 		reader:         os.Stdin,
 		keyringManager: km,
+		config:         config,
 	}
+}
+
+// getKeyringServiceName returns the instance-aware keyring service name
+func (i *Initializer) getKeyringServiceName(service string) string {
+	if i.config != nil {
+		// Use proper interface-based type assertion
+		if serviceNameProvider, ok := i.config.(configprovider.ServiceNameProvider); ok {
+			return serviceNameProvider.GetKeyringServiceName(service)
+		}
+	}
+
+	// Fallback to default naming
+	return fmt.Sprintf("redb-%s", service)
 }
 
 // Initialize performs the complete node initialization process
@@ -195,11 +246,11 @@ func (i *Initializer) Initialize(ctx context.Context) error {
 
 	// Step 5: Create database schema
 	prodCreds := &DatabaseCredentials{
-		User:     ProductionUser,
+		User:     i.getProductionDatabaseUser(),
 		Password: prodPassword,
 		Host:     workingCreds.Host,
 		Port:     workingCreds.Port,
-		Database: getProductionDatabaseName(),
+		Database: i.getProductionDatabaseName(),
 	}
 
 	if err := i.createDatabaseSchema(ctx, prodCreds); err != nil {
@@ -274,11 +325,11 @@ func (i *Initializer) AutoInitialize(ctx context.Context) error {
 
 	// Step 5: Create database schema
 	prodCreds := &DatabaseCredentials{
-		User:     ProductionUser,
+		User:     i.getProductionDatabaseUser(),
 		Password: prodPassword,
 		Host:     workingCreds.Host,
 		Port:     workingCreds.Port,
-		Database: getProductionDatabaseName(),
+		Database: i.getProductionDatabaseName(),
 	}
 
 	// Check if initialization is already complete
@@ -375,18 +426,20 @@ func (i *Initializer) isInitializationComplete(ctx context.Context, creds *Datab
 	}
 
 	// Check if node keys exist in keyring
-	_, err = i.keyringManager.Get(NodeKeyringService, NodePrivateKeyKey)
+	nodeServiceName := i.getKeyringServiceName("node")
+	_, err = i.keyringManager.Get(nodeServiceName, NodePrivateKeyKey)
 	if err != nil {
 		return false, nil
 	}
 
-	_, err = i.keyringManager.Get(NodeKeyringService, NodePublicKeyKey)
+	_, err = i.keyringManager.Get(nodeServiceName, NodePublicKeyKey)
 	if err != nil {
 		return false, nil
 	}
 
 	// Check if production password exists in keyring
-	_, err = i.keyringManager.Get(DatabaseKeyringService, DatabasePasswordKey)
+	databaseServiceName := i.getKeyringServiceName("database")
+	_, err = i.keyringManager.Get(databaseServiceName, DatabasePasswordKey)
 	if err != nil {
 		return false, nil
 	}
@@ -398,24 +451,28 @@ func (i *Initializer) isInitializationComplete(ctx context.Context, creds *Datab
 func (i *Initializer) storeProductionPassword(password string) error {
 	i.logger.Info("Storing production database password in keyring...")
 
+	serviceName := i.getKeyringServiceName("database")
+
 	// Check if password already exists
-	existingPassword, err := i.keyringManager.Get(DatabaseKeyringService, DatabasePasswordKey)
+	existingPassword, err := i.keyringManager.Get(serviceName, DatabasePasswordKey)
 	if err == nil && existingPassword != "" {
 		i.logger.Info("Production database password already exists in keyring")
 		return nil
 	}
 
-	return i.keyringManager.Set(DatabaseKeyringService, DatabasePasswordKey, password)
+	return i.keyringManager.Set(serviceName, DatabasePasswordKey, password)
 }
 
 // generateNodeKeys generates RSA key pair for the node and stores them in keyring
 func (i *Initializer) generateNodeKeys() (*NodeInfo, error) {
 	i.logger.Info("Generating node RSA key pair...")
 
+	nodeServiceName := i.getKeyringServiceName("node")
+
 	// Check if keys already exist in keyring
-	existingPrivateKey, err := i.keyringManager.Get(NodeKeyringService, NodePrivateKeyKey)
+	existingPrivateKey, err := i.keyringManager.Get(nodeServiceName, NodePrivateKeyKey)
 	if err == nil && existingPrivateKey != "" {
-		existingPublicKey, err := i.keyringManager.Get(NodeKeyringService, NodePublicKeyKey)
+		existingPublicKey, err := i.keyringManager.Get(nodeServiceName, NodePublicKeyKey)
 		if err == nil && existingPublicKey != "" {
 			i.logger.Info("Node keys already exist in keyring, using existing keys")
 
@@ -462,11 +519,11 @@ func (i *Initializer) generateNodeKeys() (*NodeInfo, error) {
 	})
 
 	// Store keys in keyring
-	if err := i.keyringManager.Set(NodeKeyringService, NodePrivateKeyKey, string(privateKeyPEM)); err != nil {
+	if err := i.keyringManager.Set(nodeServiceName, NodePrivateKeyKey, string(privateKeyPEM)); err != nil {
 		return nil, fmt.Errorf("failed to store private key: %w", err)
 	}
 
-	if err := i.keyringManager.Set(NodeKeyringService, NodePublicKeyKey, string(publicKeyPEM)); err != nil {
+	if err := i.keyringManager.Set(nodeServiceName, NodePublicKeyKey, string(publicKeyPEM)); err != nil {
 		return nil, fmt.Errorf("failed to store public key: %w", err)
 	}
 
@@ -502,8 +559,9 @@ func (i *Initializer) generateTenantJWTSecret(tenantID string) error {
 	secretString := base64.StdEncoding.EncodeToString(secretBytes)
 
 	// Store in keyring using the same pattern as the security service
+	securityServiceName := i.getKeyringServiceName("security")
 	secretKey := fmt.Sprintf("%s-%s", JWTSecretKeyPrefix, tenantID)
-	err := i.keyringManager.Set(SecurityKeyringService, secretKey, secretString)
+	err := i.keyringManager.Set(securityServiceName, secretKey, secretString)
 	if err != nil {
 		return fmt.Errorf("failed to store tenant JWT secret: %w", err)
 	}
@@ -545,11 +603,12 @@ func (i *Initializer) generateTenantKeys(tenantID string) error {
 	publicKeyName := fmt.Sprintf("%s-%s", TenantPublicKeyKeyPrefix, tenantID)
 
 	// Store keys in keyring
-	if err := i.keyringManager.Set(SecurityKeyringService, privateKeyName, string(privateKeyPEM)); err != nil {
+	securityServiceName := i.getKeyringServiceName("security")
+	if err := i.keyringManager.Set(securityServiceName, privateKeyName, string(privateKeyPEM)); err != nil {
 		return fmt.Errorf("failed to store private key: %w", err)
 	}
 
-	if err := i.keyringManager.Set(SecurityKeyringService, publicKeyName, string(publicKeyPEM)); err != nil {
+	if err := i.keyringManager.Set(securityServiceName, publicKeyName, string(publicKeyPEM)); err != nil {
 		return fmt.Errorf("failed to store public key: %w", err)
 	}
 
@@ -559,7 +618,8 @@ func (i *Initializer) generateTenantKeys(tenantID string) error {
 
 // GetDatabasePassword retrieves the production database password from keyring
 func (i *Initializer) GetDatabasePassword() (string, error) {
-	password, err := i.keyringManager.Get(DatabaseKeyringService, DatabasePasswordKey)
+	serviceName := i.getKeyringServiceName("database")
+	password, err := i.keyringManager.Get(serviceName, DatabasePasswordKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to retrieve database password from keyring: %w", err)
 	}
@@ -568,12 +628,14 @@ func (i *Initializer) GetDatabasePassword() (string, error) {
 
 // GetNodeKeys retrieves the node's RSA key pair from keyring
 func (i *Initializer) GetNodeKeys() (publicKey, privateKey string, err error) {
-	publicKey, err = i.keyringManager.Get(NodeKeyringService, NodePublicKeyKey)
+	nodeServiceName := i.getKeyringServiceName("node")
+
+	publicKey, err = i.keyringManager.Get(nodeServiceName, NodePublicKeyKey)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to retrieve public key from keyring: %w", err)
 	}
 
-	privateKey, err = i.keyringManager.Get(NodeKeyringService, NodePrivateKeyKey)
+	privateKey, err = i.keyringManager.Get(nodeServiceName, NodePrivateKeyKey)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to retrieve private key from keyring: %w", err)
 	}
@@ -583,8 +645,9 @@ func (i *Initializer) GetNodeKeys() (publicKey, privateKey string, err error) {
 
 // GetTenantJWTSecret retrieves JWT secret for a specific tenant
 func (i *Initializer) GetTenantJWTSecret(tenantID string) ([]byte, error) {
+	securityServiceName := i.getKeyringServiceName("security")
 	secretKey := fmt.Sprintf("%s-%s", JWTSecretKeyPrefix, tenantID)
-	secretString, err := i.keyringManager.Get(SecurityKeyringService, secretKey)
+	secretString, err := i.keyringManager.Get(securityServiceName, secretKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve tenant JWT secret from keyring: %w", err)
 	}
@@ -712,8 +775,9 @@ func (i *Initializer) generateSecurePassword(length int) (string, error) {
 func (i *Initializer) createProductionDatabase(ctx context.Context, adminCreds *DatabaseCredentials, prodPassword string) error {
 	i.logger.Info("Creating production database and user...")
 
-	// Get the production database name
-	prodDatabaseName := getProductionDatabaseName()
+	// Get the production database name and user
+	prodDatabaseName := i.getProductionDatabaseName()
+	prodDatabaseUser := i.getProductionDatabaseUser()
 
 	// Use pgx.ParseConfig to handle special characters in passwords
 	connConfig, err := pgx.ParseConfig("")
@@ -753,40 +817,40 @@ func (i *Initializer) createProductionDatabase(ctx context.Context, adminCreds *
 	}
 
 	// Check if user already exists
-	err = conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_user WHERE usename = $1)", ProductionUser).Scan(&exists)
+	err = conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_user WHERE usename = $1)", prodDatabaseUser).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("failed to check if user exists: %w", err)
 	}
 
 	if exists {
-		i.logger.Warnf("User '%s' already exists, updating password", ProductionUser)
+		i.logger.Warnf("User '%s' already exists, updating password", prodDatabaseUser)
 		// Update password for existing user
-		_, err = conn.Exec(ctx, fmt.Sprintf("ALTER USER %s WITH ENCRYPTED PASSWORD '%s'", ProductionUser, prodPassword))
+		_, err = conn.Exec(ctx, fmt.Sprintf("ALTER USER %s WITH ENCRYPTED PASSWORD '%s'", prodDatabaseUser, prodPassword))
 		if err != nil {
 			return fmt.Errorf("failed to update user password: %w", err)
 		}
 	} else {
 		// Create user
-		_, err = conn.Exec(ctx, fmt.Sprintf("CREATE USER %s WITH ENCRYPTED PASSWORD '%s'", ProductionUser, prodPassword))
+		_, err = conn.Exec(ctx, fmt.Sprintf("CREATE USER %s WITH ENCRYPTED PASSWORD '%s'", prodDatabaseUser, prodPassword))
 		if err != nil {
 			return fmt.Errorf("failed to create user: %w", err)
 		}
-		i.logger.Infof("Created user '%s'", ProductionUser)
+		i.logger.Infof("Created user '%s'", prodDatabaseUser)
 	}
 
 	// Grant the production user to admin so admin can set ownership
-	_, err = conn.Exec(ctx, fmt.Sprintf("GRANT %s TO %s", ProductionUser, adminCreds.User))
+	_, err = conn.Exec(ctx, fmt.Sprintf("GRANT %s TO %s", prodDatabaseUser, adminCreds.User))
 	if err != nil {
 		return fmt.Errorf("failed to grant user to admin: %w", err)
 	}
 
 	// Grant privileges and set ownership
-	_, err = conn.Exec(ctx, fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", prodDatabaseName, ProductionUser))
+	_, err = conn.Exec(ctx, fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", prodDatabaseName, prodDatabaseUser))
 	if err != nil {
 		return fmt.Errorf("failed to grant privileges: %w", err)
 	}
 
-	_, err = conn.Exec(ctx, fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", prodDatabaseName, ProductionUser))
+	_, err = conn.Exec(ctx, fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", prodDatabaseName, prodDatabaseUser))
 	if err != nil {
 		return fmt.Errorf("failed to set database owner: %w", err)
 	}
@@ -836,7 +900,12 @@ func (i *Initializer) createDatabaseSchema(ctx context.Context, creds *DatabaseC
 		return nil
 	}
 
-	// Execute the main schema creation
+	// Create the ulid domain separately (may fail on shared PostgreSQL instances)
+	if err := i.createUlidDomainSafely(ctx, conn); err != nil {
+		return fmt.Errorf("failed to create ulid domain: %w", err)
+	}
+
+	// Execute the rest of the schema (everything else should work fine)
 	_, err = conn.Exec(ctx, DatabaseSchema)
 	if err != nil {
 		return fmt.Errorf("failed to create database schema: %w", err)
@@ -848,6 +917,35 @@ func (i *Initializer) createDatabaseSchema(ctx context.Context, creds *DatabaseC
 	}
 
 	i.logger.Info("Successfully created database schema and indexes")
+	return nil
+}
+
+// createUlidDomainSafely creates the ulid domain, handling conflicts gracefully
+// This is the only schema object that can conflict on shared PostgreSQL instances
+func (i *Initializer) createUlidDomainSafely(ctx context.Context, conn *pgx.Conn) error {
+	ulidDomainSQL := `CREATE DOMAIN ulid AS TEXT
+CHECK (
+    -- Check overall format
+    VALUE ~ '^[a-z]{2,10}_[0-9A-HJKMNP-TV-Z]{26}$'
+    AND
+    -- Ensure prefix is from allowed list
+    substring(VALUE from '^([a-z]+)_') IN (
+        'mesh', 'node', 'route', 'region', 'tenant', 'user', 'group', 'role', 'perm', 'pol', 'ws', 'env', 'instance', 'db', 'repo', 'branch', 'commit', 'map', 'maprule','rel', 'transform', 'mcpserver', 'mcpresource', 'mcptool', 'mcpprompt', 'audit', 'satellite', 'anchor', 'template', 'apitoken', 'cdcs', 'integration', 'intjob'
+    )
+);`
+
+	_, err := conn.Exec(ctx, ulidDomainSQL)
+	if err != nil {
+		// Check if it's a "already exists" error
+		if strings.Contains(err.Error(), "already exists") {
+			i.logger.Warnf("ULID domain already exists (shared PostgreSQL instance), continuing with initialization")
+			return nil // Not an error, just means another instance created it first
+		}
+		// For other errors, fail
+		return fmt.Errorf("failed to create ulid domain: %w", err)
+	}
+
+	i.logger.Info("Successfully created ulid domain")
 	return nil
 }
 
@@ -987,9 +1085,9 @@ func (i *Initializer) createLocalNode(ctx context.Context, creds *DatabaseCreden
 
 	// Insert node into nodes table
 	_, err = tx.Exec(ctx, `
-		INSERT INTO nodes (node_id, node_name, node_description, routing_id, ip_address, port, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, nodeID, nodeName, "Local node", routingID, nodeInfo.IPAddress, nodeInfo.Port, "STATUS_ACTIVE")
+		INSERT INTO nodes (node_id, node_name, node_description, node_public_key, routing_id, ip_address, port, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, nodeID, nodeName, "Local node", []byte(nodeInfo.PublicKey), routingID, nodeInfo.IPAddress, nodeInfo.Port, "STATUS_ACTIVE")
 	if err != nil {
 		return fmt.Errorf("failed to insert node: %w", err)
 	}
@@ -1384,11 +1482,11 @@ func (i *Initializer) InitializeWithSingleTenant(ctx context.Context, tenantID, 
 
 	// Step 5: Create database schema
 	prodCreds := &DatabaseCredentials{
-		User:     ProductionUser,
+		User:     i.getProductionDatabaseUser(),
 		Password: prodPassword,
 		Host:     workingCreds.Host,
 		Port:     workingCreds.Port,
-		Database: getProductionDatabaseName(),
+		Database: i.getProductionDatabaseName(),
 	}
 
 	if err := i.createDatabaseSchema(ctx, prodCreds); err != nil {
@@ -1453,9 +1551,9 @@ func (i *Initializer) createDefaultTenant(ctx context.Context, creds *DatabaseCr
 	}
 	defer pool.Close()
 
-	// Check if tenant already exists
+	// Check if tenant already exists by URL (since we'll generate a new ID)
 	var existingTenantID string
-	err = pool.QueryRow(ctx, "SELECT tenant_id FROM tenants WHERE tenant_id = $1 OR tenant_url = $2 LIMIT 1", tenantID, tenantURL).Scan(&existingTenantID)
+	err = pool.QueryRow(ctx, "SELECT tenant_id FROM tenants WHERE tenant_url = $1 LIMIT 1", tenantURL).Scan(&existingTenantID)
 	if err == nil {
 		i.logger.Infof("Default tenant already exists with ID: %s", existingTenantID)
 		return &TenantInfo{
@@ -1465,21 +1563,28 @@ func (i *Initializer) createDefaultTenant(ctx context.Context, creds *DatabaseCr
 		}, nil
 	}
 
-	// Create new tenant with the specified ID
+	// Generate a proper ULID for the tenant
+	var generatedTenantID string
+	err = pool.QueryRow(ctx, "SELECT generate_ulid('tenant')").Scan(&generatedTenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate tenant ULID: %w", err)
+	}
+
+	// Create new tenant with the generated ULID
 	_, err = pool.Exec(ctx, `
 		INSERT INTO tenants (tenant_id, tenant_name, tenant_description, tenant_url, status)
 		VALUES ($1, $2, $3, $4, $5)
-	`, tenantID, tenantName, "Default tenant for single-tenant mode", tenantURL, "STATUS_ACTIVE")
+	`, generatedTenantID, tenantName, "Default tenant for single-tenant mode", tenantURL, "STATUS_ACTIVE")
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert default tenant: %w", err)
 	}
 
 	tenantInfo := &TenantInfo{
-		TenantID:   tenantID,
+		TenantID:   generatedTenantID,
 		TenantName: tenantName,
 		TenantURL:  tenantURL,
 	}
 
-	i.logger.Infof("Successfully created default tenant '%s' with ID '%s'", tenantName, tenantID)
+	i.logger.Infof("Successfully created default tenant '%s' with ID '%s'", tenantName, generatedTenantID)
 	return tenantInfo, nil
 }

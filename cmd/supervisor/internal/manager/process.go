@@ -63,6 +63,15 @@ func (p *ServiceProcess) Start(ctx context.Context) error {
 		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("EXTERNAL_PORT=%d", externalPort))
 	}
 
+	// Add REST_API_PORT environment variable if configured (with port offset applied)
+	if p.config.RestAPIPort > 0 {
+		restAPIPort := p.config.RestAPIPort
+		if p.globalConfig != nil {
+			restAPIPort = p.globalConfig.ApplyPortOffset(p.config.RestAPIPort)
+		}
+		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REST_API_PORT=%d", restAPIPort))
+	}
+
 	// Add database configuration from supervisor config
 	// This allows microservices to access the database name from environment variables
 	if databaseName := os.Getenv("REDB_DATABASE_NAME"); databaseName != "" {

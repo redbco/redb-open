@@ -12,6 +12,7 @@ import (
 	pb "github.com/redbco/redb-open/api/proto/anchor/v1"
 	"github.com/redbco/redb-open/pkg/config"
 	"github.com/redbco/redb-open/pkg/database"
+	"github.com/redbco/redb-open/pkg/grpcconfig"
 	"github.com/redbco/redb-open/pkg/logger"
 	internalconfig "github.com/redbco/redb-open/services/anchor/internal/config"
 	internaldatabase "github.com/redbco/redb-open/services/anchor/internal/database"
@@ -129,23 +130,15 @@ func (e *Engine) Start(ctx context.Context) error {
 
 	// Initialize gRPC connections to other services (unless standalone)
 	if !e.standalone {
-		// Initialize gRPC connection to Core service
-		coreAddr := e.config.Get("services.supervisor.service_locations.core")
-		if coreAddr == "" {
-			// TODO: make this dynamic
-			coreAddr = "localhost:50055" // default core service port
-		}
+		// Initialize gRPC connection to Core service using dynamic address resolution
+		coreAddr := e.getServiceAddress("core")
 		e.coreConn, err = grpc.Dial(coreAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			return fmt.Errorf("failed to connect to Core service: %w", err)
 		}
 
-		// Initialize gRPC connection to UnifiedModel service
-		umAddr := e.config.Get("services.supervisor.service_locations.unifiedmodel")
-		if umAddr == "" {
-			// TODO: make this dynamic
-			umAddr = "localhost:50052" // default unifiedmodel service port
-		}
+		// Initialize gRPC connection to UnifiedModel service using dynamic address resolution
+		umAddr := e.getServiceAddress("unifiedmodel")
 		e.umConn, err = grpc.Dial(umAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			return fmt.Errorf("failed to connect to UnifiedModel service: %w", err)
@@ -470,4 +463,9 @@ func (e *Engine) UntrackOperation() {
 
 func (e *Engine) GetState() *state.GlobalState {
 	return state.GetInstance()
+}
+
+// getServiceAddress returns the gRPC address for a service using dynamic resolution
+func (e *Engine) getServiceAddress(serviceName string) string {
+	return grpcconfig.GetServiceAddress(e.config, serviceName)
 }

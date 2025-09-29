@@ -12,6 +12,7 @@ import (
 	anchorv1 "github.com/redbco/redb-open/api/proto/anchor/v1"
 	"github.com/redbco/redb-open/pkg/config"
 	"github.com/redbco/redb-open/pkg/database"
+	"github.com/redbco/redb-open/pkg/grpcconfig"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/pkg/models"
 	"google.golang.org/grpc"
@@ -462,8 +463,7 @@ func (e *Engine) loadServerBindings(ctx context.Context, mcpServerID string) ([]
 func (e *Engine) initAnchorClient() error {
 	addr := e.config.Get("services.anchor.grpc_address")
 	if addr == "" {
-		// TODO: make this dynamic
-		addr = "localhost:50057"
+		addr = grpcconfig.GetServiceAddress(e.config, "anchor")
 	}
 	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	integrationv1 "github.com/redbco/redb-open/api/proto/integration/v1"
 	pkggrpc "github.com/redbco/redb-open/pkg/grpc"
+	"github.com/redbco/redb-open/pkg/grpcconfig"
 	"github.com/redbco/redb-open/services/integration/internal/pipeline"
 )
 
@@ -26,8 +27,7 @@ func (s *RAGServer) initOrchestrator(ctx context.Context) error {
 	// connect to anchor
 	addr := s.engine.config.Get("services.anchor.grpc_address")
 	if addr == "" {
-		// TODO: make this dynamic
-		addr = "localhost:50057"
+		addr = grpcconfig.GetServiceAddress(s.engine.config, "anchor")
 	}
 	conn, err := pkggrpc.NewClient(ctx, addr, pkggrpc.DefaultClientOptions())
 	if err != nil {

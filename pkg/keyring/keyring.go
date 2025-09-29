@@ -316,3 +316,11 @@ func GetKeyringPathWithGroup(basePath, groupID string) string {
 
 	return basePath
 }
+
+// GetServiceNameWithGroup returns the service name with instance group isolation
+func GetServiceNameWithGroup(serviceName, groupID string) string {
+	if groupID != "" && groupID != "default" {
+		return fmt.Sprintf("%s-%s", serviceName, groupID)
+	}
+	return serviceName
+}

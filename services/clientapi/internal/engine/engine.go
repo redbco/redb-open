@@ -15,6 +15,7 @@ import (
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	securityv1 "github.com/redbco/redb-open/api/proto/security/v1"
 	"github.com/redbco/redb-open/pkg/config"
+	"github.com/redbco/redb-open/pkg/grpcconfig"
 	"github.com/redbco/redb-open/pkg/keyring"
 	"github.com/redbco/redb-open/pkg/logger"
 	"google.golang.org/grpc"
@@ -94,12 +95,8 @@ func (e *Engine) Start(ctx context.Context) error {
 		e.logger.Infof("Starting ClientAPI engine...")
 	}
 
-	// Connect to core service
-	coreAddr := e.config.Get("services.core.grpc_address")
-	if coreAddr == "" {
-		// TODO: make this dynamic
-		coreAddr = "localhost:50055" // default core service port
-	}
+	// Connect to core service using dynamic address resolution
+	coreAddr := grpcconfig.GetServiceAddress(e.config, "core")
 
 	if e.logger != nil {
 		e.logger.Infof("Connecting to core service at: %s", coreAddr)
@@ -146,11 +143,8 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.auditClient = corev1.NewAuditServiceClient(coreConn)
 	e.importExportClient = corev1.NewImportExportServiceClient(coreConn)
 
-	// Connect to security service
-	securityAddr := e.config.Get("services.security.grpc_address")
-	if securityAddr == "" {
-		securityAddr = "localhost:50051" // Default security service port
-	}
+	// Connect to security service using dynamic address resolution
+	securityAddr := grpcconfig.GetServiceAddress(e.config, "security")
 
 	if e.logger != nil {
 		e.logger.Infof("Connecting to security service at: %s", securityAddr)
@@ -176,10 +170,15 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 
 	// Initialize HTTP server
-	// Check for external_port from environment first, then fall back to config
-	portStr := os.Getenv("EXTERNAL_PORT")
+	// Check for REST_API_PORT from environment first (set by supervisor with port offset)
+	portStr := os.Getenv("REST_API_PORT")
 	if portStr == "" {
-		portStr = e.config.Get("services.clientapi.http_port") // Fallback to config
+		// Fallback to EXTERNAL_PORT for backward compatibility
+		portStr = os.Getenv("EXTERNAL_PORT")
+	}
+	if portStr == "" {
+		// Fallback to legacy config key
+		portStr = e.config.Get("services.clientapi.http_port")
 	}
 	if portStr == "" {
 		portStr = "8080" // Default HTTP port
@@ -187,9 +186,9 @@ func (e *Engine) Start(ctx context.Context) error {
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		if e.logger != nil {
-			e.logger.Errorf("Invalid HTTP port configuration: %v", err)
+			e.logger.Errorf("Invalid REST API port configuration: %v", err)
 		}
-		return fmt.Errorf("invalid port configuration: %v", err)
+		return fmt.Errorf("invalid REST API port configuration: %v", err)
 	}
 
 	e.server = &http.Server{
@@ -198,7 +197,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 
 	if e.logger != nil {
-		e.logger.Infof("Starting HTTP server on port: %d", port)
+		e.logger.Infof("Starting REST API server on port: %d", port)
 	}
 
 	// Start HTTP server

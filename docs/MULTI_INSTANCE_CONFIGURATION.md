@@ -126,7 +126,8 @@ With port offsets, the following ports are automatically adjusted:
 | Mesh (External) | 10001 | 10001 | 11001 | 12001 |
 | Anchor | 50057 | 50057 | 51057 | 52057 |
 | Integration | 50058 | 50058 | 51058 | 52058 |
-| ClientAPI | 50059 | 50059 | 51059 | 52059 |
+| ClientAPI (gRPC) | 50059 | 50059 | 51059 | 52059 |
+| ClientAPI (REST) | 8080 | 8080 | 9080 | 10080 |
 | MCPServer | 50060 | 50060 | 51060 | 52060 |
 
 ## Keyring Isolation

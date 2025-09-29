@@ -14,6 +14,7 @@ import (
 	unifiedmodelv1 "github.com/redbco/redb-open/api/proto/unifiedmodel/v1"
 	"github.com/redbco/redb-open/pkg/config"
 	"github.com/redbco/redb-open/pkg/database"
+	"github.com/redbco/redb-open/pkg/grpcconfig"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/core/internal/mesh"
 	"google.golang.org/grpc"
@@ -683,7 +684,7 @@ func (e *Engine) initializeAllClients(ctx context.Context) error {
 
 // initializeUnifiedModelClient initializes the UnifiedModel service gRPC client
 func (e *Engine) initializeUnifiedModelClient(ctx context.Context) error {
-	address := "localhost:50052" // UnifiedModel service port from config
+	address := e.getServiceAddress("unifiedmodel")
 	e.logger.Infof("Connecting to UnifiedModel service at %s", address)
 
 	conn, err := e.createGRPCConnection(ctx, address, "UnifiedModel")
@@ -699,7 +700,7 @@ func (e *Engine) initializeUnifiedModelClient(ctx context.Context) error {
 
 // initializeAnchorClient initializes the Anchor service gRPC client
 func (e *Engine) initializeAnchorClient(ctx context.Context) error {
-	address := "localhost:50057" // Anchor service port from config
+	address := e.getServiceAddress("anchor")
 	e.logger.Infof("Connecting to Anchor service at %s", address)
 
 	conn, err := e.createGRPCConnection(ctx, address, "Anchor")
@@ -715,7 +716,7 @@ func (e *Engine) initializeAnchorClient(ctx context.Context) error {
 
 // initializeMeshClients initializes gRPC clients for mesh service communication
 func (e *Engine) initializeMeshClients(ctx context.Context) error {
-	address := "localhost:50056" // Mesh service gRPC port from config
+	address := e.getServiceAddress("mesh")
 	e.logger.Infof("Connecting to Mesh service at %s", address)
 
 	conn, err := e.createGRPCConnection(ctx, address, "Mesh")
@@ -755,6 +756,11 @@ func (e *Engine) createGRPCConnection(ctx context.Context, address, serviceName 
 
 	e.logger.Infof("Successfully established gRPC connection to %s service at %s", serviceName, address)
 	return conn, nil
+}
+
+// getServiceAddress returns the gRPC address for a service using dynamic resolution
+func (e *Engine) getServiceAddress(serviceName string) string {
+	return grpcconfig.GetServiceAddress(e.config, serviceName)
 }
 
 // closeAllConnections closes all gRPC connections gracefully

@@ -180,14 +180,8 @@ func (s *Server) ConnectDatabase(ctx context.Context, req *corev1.ConnectDatabas
 		return nil, status.Errorf(codes.Internal, "failed to create database: %v", err)
 	}
 
-	// Get anchor service address
-	// TODO: make this dynamic
-	anchorAddr := "localhost:50057" // Default anchor service address
-	if s.engine.config != nil {
-		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
-			anchorAddr = addr
-		}
-	}
+	// Get anchor service address using dynamic resolution
+	anchorAddr := s.engine.getServiceAddress("anchor")
 
 	// Connect to anchor service
 	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -318,14 +312,8 @@ func (s *Server) ConnectDatabaseWithInstance(ctx context.Context, req *corev1.Co
 		return nil, status.Errorf(codes.Internal, "failed to create database: %v", err)
 	}
 
-	// Get anchor service address
-	// TODO: make this dynamic
-	anchorAddr := "localhost:50057" // Default anchor service address
-	if s.engine.config != nil {
-		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
-			anchorAddr = addr
-		}
-	}
+	// Get anchor service address using dynamic resolution
+	anchorAddr := s.engine.getServiceAddress("anchor")
 
 	// Connect to anchor service
 	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -417,14 +405,8 @@ func (s *Server) ReconnectDatabase(ctx context.Context, req *corev1.ReconnectDat
 		return nil, status.Errorf(codes.Internal, "failed to enable database: %v", err)
 	}
 
-	// Get anchor service address
-	// TODO: make this dynamic
-	anchorAddr := "localhost:50057" // Default anchor service address
-	if s.engine.config != nil {
-		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
-			anchorAddr = addr
-		}
-	}
+	// Get anchor service address using dynamic resolution
+	anchorAddr := s.engine.getServiceAddress("anchor")
 
 	// Connect to anchor service
 	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -590,14 +572,8 @@ func (s *Server) DisconnectDatabase(ctx context.Context, req *corev1.DisconnectD
 		return nil, status.Errorf(codes.PermissionDenied, "database not found in tenant")
 	}
 
-	// Call anchor service to disconnect the instance
-	// TODO: make this dynamic
-	anchorAddr := "localhost:50057" // Default anchor service address
-	if s.engine.config != nil {
-		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
-			anchorAddr = addr
-		}
-	}
+	// Get anchor service address using dynamic resolution
+	anchorAddr := s.engine.getServiceAddress("anchor")
 
 	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -690,14 +666,8 @@ func (s *Server) WipeDatabase(ctx context.Context, req *corev1.WipeDatabaseReque
 		return nil, status.Errorf(codes.PermissionDenied, "database not found in tenant")
 	}
 
-	// Get anchor service address
-	// TODO: make this dynamic
-	anchorAddr := "localhost:50057" // Default anchor service address
-	if s.engine.config != nil {
-		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
-			anchorAddr = addr
-		}
-	}
+	// Get anchor service address using dynamic resolution
+	anchorAddr := s.engine.getServiceAddress("anchor")
 
 	// Connect to anchor service
 	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -803,14 +773,8 @@ func (s *Server) TransformData(ctx context.Context, req *corev1.TransformDataReq
 		return nil, status.Errorf(codes.FailedPrecondition, "target database is not connected")
 	}
 
-	// Get anchor service address
-	// TODO: make this dynamic
-	anchorAddr := "localhost:50057" // Default anchor service address
-	if s.engine.config != nil {
-		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
-			anchorAddr = addr
-		}
-	}
+	// Get anchor service address using dynamic resolution
+	anchorAddr := s.engine.getServiceAddress("anchor")
 
 	// Connect to anchor service
 	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -1025,14 +989,8 @@ func (s *Server) TransformDataStream(req *corev1.TransformDataStreamRequest, str
 		return status.Errorf(codes.FailedPrecondition, "target database is not connected")
 	}
 
-	// Get anchor service address
-	// TODO: make this dynamic
-	anchorAddr := "localhost:50057" // Default anchor service address
-	if s.engine.config != nil {
-		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
-			anchorAddr = addr
-		}
-	}
+	// Get anchor service address using dynamic resolution
+	anchorAddr := s.engine.getServiceAddress("anchor")
 
 	// Connect to anchor service
 	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -1264,14 +1222,8 @@ func (s *Server) DropDatabase(ctx context.Context, req *corev1.DropDatabaseReque
 		return nil, status.Errorf(codes.PermissionDenied, "database not found in tenant")
 	}
 
-	// Get anchor service address
-	// TODO: make this dynamic
-	anchorAddr := "localhost:50057" // Default anchor service address
-	if s.engine.config != nil {
-		if addr := s.engine.config.Get("services.anchor.grpc_address"); addr != "" {
-			anchorAddr = addr
-		}
-	}
+	// Get anchor service address using dynamic resolution
+	anchorAddr := s.engine.getServiceAddress("anchor")
 
 	// Connect to anchor service
 	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))

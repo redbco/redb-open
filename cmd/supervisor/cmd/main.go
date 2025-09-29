@@ -144,11 +144,14 @@ func main() {
 	// Initialize supervisor
 	serviceManager := manager.New(log, cfg)
 
-	// Apply port offset to supervisor port if configured
+	// Use supervisor port from config (which already has port offset applied)
+	// or fall back to command-line flag with port offset applied
 	supervisorPort := *port
 	if cfg.Supervisor.Port > 0 {
-		supervisorPort = cfg.ApplyPortOffset(cfg.Supervisor.Port)
+		// Config port already has offset applied in superconfig.Load()
+		supervisorPort = cfg.Supervisor.Port
 	} else {
+		// Apply port offset to command-line flag
 		supervisorPort = cfg.ApplyPortOffset(*port)
 	}
 

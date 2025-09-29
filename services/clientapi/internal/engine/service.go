@@ -43,9 +43,10 @@ func (s *Service) Initialize(ctx context.Context, cfg *config.Config) error {
 
 	// Set restart keys specific to Client API service
 	cfg.SetRestartKeys([]string{
-		"services.clientapi.http_port", // Fixed: Use hyphenated name
-		"services.clientapi.timeout",   // Fixed: Use hyphenated name
-		"services.core.grpc_address",
+		"services.clientapi.rest_api_port", // REST API port configuration
+		"services.clientapi.http_port",     // Legacy HTTP port configuration (for backward compatibility)
+		"services.clientapi.timeout",       // Service timeout configuration
+		"services.core.grpc_address",       // Core service gRPC address
 		// Add other configuration keys that require service restart
 	})
 

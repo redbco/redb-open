@@ -4,19 +4,8 @@ package initialize
 // This is embedded directly in the code to avoid security risks of external SQL files
 const DatabaseSchema = `
 -- =============================================================================
--- CUSTOM DOMAINS
+-- EXTENSIONS AND FUNCTIONS
 -- =============================================================================
-
-CREATE DOMAIN ulid AS TEXT
-CHECK (
-    -- Check overall format
-    VALUE ~ '^[a-z]{2,10}_[0-9A-HJKMNP-TV-Z]{26}$'
-    AND
-    -- Ensure prefix is from allowed list
-    substring(VALUE from '^([a-z]+)_') IN (
-        'mesh', 'node', 'route', 'region', 'tenant', 'user', 'group', 'role', 'perm', 'pol', 'ws', 'env', 'instance', 'db', 'repo', 'branch', 'commit', 'map', 'maprule','rel', 'transform', 'mcpserver', 'mcpresource', 'mcptool', 'mcpprompt', 'audit', 'satellite', 'anchor', 'template', 'apitoken', 'cdcs', 'integration', 'intjob'
-    )
-);
 
 -- Add pgcrypto extension
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -64,7 +53,7 @@ $$ LANGUAGE plpgsql;
 -- =============================================================================
 
 -- Status enum
-CREATE TYPE status_enum AS ENUM ('STATUS_HEALTHY', 'STATUS_DEGRADED', 'STATUS_UNHEALTHY', 'STATUS_PENDING', 'STATUS_UNKNOWN', 'STATUS_SUCCESS', 'STATUS_FAILURE', 'STATUS_STARTING', 'STATUS_STOPPING', 'STATUS_STOPPED', 'STATUS_STARTED', 'STATUS_CREATED', 'STATUS_DELETED', 'STATUS_UPDATED', 'STATUS_CONNECTED', 'STATUS_DISCONNECTED', 'STATUS_CONNECTING', 'STATUS_DISCONNECTING', 'STATUS_RECONNECTING', 'STATUS_ERROR', 'STATUS_WARNING', 'STATUS_INFO', 'STATUS_DEBUG', 'STATUS_TRACE', 'STATUS_EMPTY', 'STATUS_JOINING', 'STATUS_LEAVING', 'STATUS_SEEDING', 'STATUS_ORPHANED', 'STATUS_SENT', 'STATUS_CANCELLED', 'STATUS_PROCESSING', 'STATUS_DONE', 'STATUS_RECEIVED');
+CREATE TYPE status_enum AS ENUM ('STATUS_HEALTHY', 'STATUS_DEGRADED', 'STATUS_UNHEALTHY', 'STATUS_PENDING', 'STATUS_UNKNOWN', 'STATUS_SUCCESS', 'STATUS_FAILURE', 'STATUS_STARTING', 'STATUS_STOPPING', 'STATUS_STOPPED', 'STATUS_STARTED', 'STATUS_CREATED', 'STATUS_DELETED', 'STATUS_UPDATED', 'STATUS_CONNECTED', 'STATUS_DISCONNECTED', 'STATUS_CONNECTING', 'STATUS_DISCONNECTING', 'STATUS_RECONNECTING', 'STATUS_ERROR', 'STATUS_WARNING', 'STATUS_INFO', 'STATUS_DEBUG', 'STATUS_TRACE', 'STATUS_EMPTY', 'STATUS_JOINING', 'STATUS_LEAVING', 'STATUS_SEEDING', 'STATUS_ORPHANED', 'STATUS_SENT', 'STATUS_CANCELLED', 'STATUS_PROCESSING', 'STATUS_DONE', 'STATUS_RECEIVED', 'STATUS_ACTIVE');
 
 -- Join key hash enum
 CREATE TYPE join_key_enum AS ENUM ('OPEN', 'KEY_REQUIRED', 'CLOSED');
@@ -1186,7 +1175,7 @@ CREATE INDEX idx_license_feature_usage_mesh_id ON license_feature_usage(mesh_id)
 -- Mesh network indexes for performance
 CREATE INDEX idx_mesh_status ON mesh(status);
 CREATE INDEX idx_nodes_status ON nodes(status);
-CREATE INDEX idx_nodes_last_seen ON nodes(last_seen);
+CREATE INDEX idx_nodes_last_seen ON nodes(node_last_seen);
 CREATE INDEX idx_routes_nodes ON routes(a_node, b_node);
 CREATE INDEX idx_routes_status ON routes(status);
 CREATE INDEX idx_stream_offsets_updated ON mesh_stream_offsets(updated);

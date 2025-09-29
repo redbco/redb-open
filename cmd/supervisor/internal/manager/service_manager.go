@@ -119,8 +119,20 @@ func (m *ServiceManager) RegisterService(ctx context.Context, info *commonv1.Ser
 		return serviceID, nil, nil
 	}
 
+	// Create service configuration with instance group settings
+	serviceConfigMap := make(map[string]string)
+
+	// Copy existing service config
+	for k, v := range svcConfig.Config {
+		serviceConfigMap[k] = v
+	}
+
+	// Add instance group configuration for multi-instance support
+	serviceConfigMap["instance_group.group_id"] = m.config.InstanceGroup.GroupID
+	serviceConfigMap["instance_group.port_offset"] = fmt.Sprintf("%d", m.config.InstanceGroup.PortOffset)
+
 	configuration := &supervisorv1.ServiceConfiguration{
-		Config:      svcConfig.Config,
+		Config:      serviceConfigMap,
 		Environment: svcConfig.Environment,
 	}
 

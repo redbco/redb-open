@@ -10,6 +10,7 @@ import (
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	pb "github.com/redbco/redb-open/api/proto/integration/v1"
 	pkggrpc "github.com/redbco/redb-open/pkg/grpc"
+	"github.com/redbco/redb-open/pkg/grpcconfig"
 	"github.com/redbco/redb-open/services/integration/internal/pipeline"
 	"github.com/redbco/redb-open/services/integration/internal/pipeline/steps"
 	"github.com/redbco/redb-open/services/integration/internal/rag"
@@ -182,8 +183,7 @@ func (s *IntegrationServer) ensureOrchestrator(ctx context.Context) error {
 	}
 	anchorAddr := s.engine.config.Get("services.anchor.grpc_address")
 	if anchorAddr == "" {
-		// TODO: make this dynamic
-		anchorAddr = "localhost:50057"
+		anchorAddr = grpcconfig.GetServiceAddress(s.engine.config, "anchor")
 	}
 	conn, err := pkggrpc.NewClient(ctx, anchorAddr, pkggrpc.DefaultClientOptions())
 	if err != nil {
