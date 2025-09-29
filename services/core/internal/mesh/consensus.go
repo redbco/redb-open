@@ -253,6 +253,24 @@ type MeshInfo struct {
 
 // getMeshInfo gets mesh configuration from database
 func (c *ConsensusChecker) getMeshInfo(ctx context.Context) (*MeshInfo, error) {
+	// First check if mesh table has any rows (clean node check)
+	var meshCount int
+	err := c.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM mesh").Scan(&meshCount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check mesh table: %w", err)
+	}
+
+	// If no mesh exists (clean node), return default values
+	if meshCount == 0 {
+		c.logger.Debug("No mesh found - node is clean, using default consensus values")
+		return &MeshInfo{
+			TotalNodes:    1, // Only this node exists
+			SplitStrategy: "SEED_NODE_PREVAILS_IN_EVEN_SPLIT",
+			SeedNodeID:    c.nodeID, // This node is the seed by default
+		}, nil
+	}
+
+	// Mesh exists, get actual configuration
 	query := `
 		SELECT 
 			COALESCE((SELECT COUNT(*) FROM mesh_node_membership WHERE status = 'ACTIVE'), 0) as total_nodes,
@@ -267,9 +285,9 @@ func (c *ConsensusChecker) getMeshInfo(ctx context.Context) (*MeshInfo, error) {
 	`
 
 	var info MeshInfo
-	err := c.db.Pool().QueryRow(ctx, query).Scan(&info.TotalNodes, &info.SplitStrategy, &info.SeedNodeID)
+	err = c.db.Pool().QueryRow(ctx, query).Scan(&info.TotalNodes, &info.SplitStrategy, &info.SeedNodeID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get mesh info: %w", err)
 	}
 
 	return &info, nil
@@ -291,6 +309,20 @@ func (c *ConsensusChecker) getOnlineNodesCount(ctx context.Context) (int, error)
 
 // updateConsensusState updates the consensus state in the database
 func (c *ConsensusChecker) updateConsensusState(ctx context.Context, state *ConsensusState) error {
+	// Check if mesh table has any rows (clean node check)
+	var meshCount int
+	err := c.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM mesh").Scan(&meshCount)
+	if err != nil {
+		return fmt.Errorf("failed to check mesh table: %w", err)
+	}
+
+	// If no mesh exists (clean node), skip consensus state update
+	if meshCount == 0 {
+		c.logger.Debug("No mesh found - node is clean, skipping consensus state update")
+		return nil
+	}
+
+	// Mesh exists, update consensus state
 	query := `
 		INSERT INTO mesh_consensus_state (mesh_id, total_nodes, online_nodes, split_detected, majority_side, last_consensus_check)
 		SELECT m.mesh_id, $1, $2, $3, $4, CURRENT_TIMESTAMP
@@ -308,7 +340,7 @@ func (c *ConsensusChecker) updateConsensusState(ctx context.Context, state *Cons
 			last_consensus_check = EXCLUDED.last_consensus_check
 	`
 
-	_, err := c.db.Pool().Exec(ctx, query,
+	_, err = c.db.Pool().Exec(ctx, query,
 		state.TotalNodes,
 		state.OnlineNodes,
 		state.SplitDetected,
