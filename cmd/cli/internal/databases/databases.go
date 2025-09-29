@@ -10,8 +10,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 	"golang.org/x/term"
 )
 
@@ -309,32 +308,27 @@ func formatTablesData(tablesJSON string) error {
 	return nil
 }
 
-// ListDatabases lists all databases
+// ListDatabases lists all databases using profile-based authentication
 func ListDatabases() error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/databases", tenantURL, workspaceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/databases")
+	if err != nil {
+		return err
+	}
 
 	var databasesResponse struct {
 		Databases []Database `json:"databases"`
 	}
-	if err := client.Get(url, &databasesResponse, true); err != nil {
+	if err := client.Get(url, &databasesResponse); err != nil {
 		return fmt.Errorf("failed to list databases: %v", err)
 	}
 
@@ -365,32 +359,32 @@ func ListDatabases() error {
 	return nil
 }
 
-// ShowDatabase displays details of a specific database
+// ShowDatabase displays details of a specific database using profile-based authentication
 func ShowDatabase(databaseName string, args []string) error {
 	databaseName = strings.TrimSpace(databaseName)
 	if databaseName == "" {
 		return fmt.Errorf("database name is required")
 	}
-	tenantURL, err := config.GetTenantURL()
+
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-	workspaceName, err := config.GetWorkspaceWithError(username)
+
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/%s", tenantURL, workspaceName, databaseName)
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/databases/%s", databaseName))
+	if err != nil {
+		return err
+	}
+
 	var databaseResponse struct {
 		Database Database `json:"database"`
 	}
-	if err := client.Get(url, &databaseResponse, true); err != nil {
+	if err := client.Get(url, &databaseResponse); err != nil {
 		return fmt.Errorf("failed to get database details: %v", err)
 	}
 	db := databaseResponse.Database
@@ -582,25 +576,19 @@ func CreateDatabase(args []string) error {
 		EnvironmentID:       environmentID,
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/connect", tenantURL, workspaceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/databases/connect")
+	if err != nil {
+		return err
+	}
 
 	var connectResponse struct {
 		Message  string   `json:"message"`
@@ -608,7 +596,7 @@ func CreateDatabase(args []string) error {
 		Database Database `json:"database"`
 		Status   string   `json:"status"`
 	}
-	if err := client.Post(url, connectReq, &connectResponse, true); err != nil {
+	if err := client.Post(url, connectReq, &connectResponse); err != nil {
 		return fmt.Errorf("failed to create database: %v", err)
 	}
 
@@ -623,32 +611,26 @@ func ModifyDatabase(databaseName string, args []string) error {
 	}
 
 	// First find the database to get its details
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/%s", tenantURL, workspaceName, databaseName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/databases/%s", databaseName))
+	if err != nil {
+		return err
+	}
 
 	fmt.Println()
 
 	var response struct {
 		Database Database `json:"database"`
 	}
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get database: %v", err)
 	}
 
@@ -874,7 +856,10 @@ func ModifyDatabase(databaseName string, args []string) error {
 	}
 
 	// Update the database
-	updateURL := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/%s", tenantURL, workspaceName, databaseName)
+	updateURL, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/databases/%s", databaseName))
+	if err != nil {
+		return err
+	}
 
 	var updateResponse struct {
 		Message  string   `json:"message"`
@@ -882,7 +867,7 @@ func ModifyDatabase(databaseName string, args []string) error {
 		Database Database `json:"database"`
 		Status   string   `json:"status"`
 	}
-	if err := client.Put(updateURL, updateReq, &updateResponse, true); err != nil {
+	if err := client.Put(updateURL, updateReq, &updateResponse); err != nil {
 		return fmt.Errorf("failed to update database: %v", err)
 	}
 
@@ -912,24 +897,15 @@ func DeleteDatabase(databaseName string, args []string) error {
 		}
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
 
 	// Confirm deletion unless force flag is used
 	if !force {
@@ -971,14 +947,17 @@ func DeleteDatabase(databaseName string, args []string) error {
 	}
 
 	// Disconnect the database
-	disconnectURL := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/%s/disconnect", tenantURL, workspaceName, databaseName)
+	disconnectURL, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/databases/%s/disconnect", databaseName))
+	if err != nil {
+		return err
+	}
 
 	var disconnectResponse struct {
 		Message string `json:"message"`
 		Success bool   `json:"success"`
 		Status  string `json:"status"`
 	}
-	if err := client.Post(disconnectURL, disconnectReq, &disconnectResponse, true); err != nil {
+	if err := client.Post(disconnectURL, disconnectReq, &disconnectResponse); err != nil {
 		return fmt.Errorf("failed to delete database: %v", err)
 	}
 
@@ -1026,23 +1005,19 @@ func withInstanceName(reader *bufio.Reader, argsMap map[argKey]string,
 		"environment_id":       environmentID,
 	}
 
-	tenantURL, err := config.GetTenantURL()
-	if err != nil {
-		return err
-	}
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/connect-with-instance", tenantURL, workspaceName)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/databases/connect-with-instance")
+	if err != nil {
+		return err
+	}
 
 	var connectResponse struct {
 		Message  string   `json:"message"`
@@ -1050,7 +1025,7 @@ func withInstanceName(reader *bufio.Reader, argsMap map[argKey]string,
 		Database Database `json:"database"`
 		Status   string   `json:"status"`
 	}
-	if err := client.Post(url, connectReq, &connectResponse, true); err != nil {
+	if err := client.Post(url, connectReq, &connectResponse); err != nil {
 		return fmt.Errorf("failed to connect database: %w", err)
 	}
 
@@ -1168,23 +1143,19 @@ func ConnectDatabase(databaseName string, args []string) error {
 		EnvironmentID:       environmentID,
 	}
 
-	tenantURL, err := config.GetTenantURL()
-	if err != nil {
-		return err
-	}
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/connect", tenantURL, workspaceName)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/databases/connect")
+	if err != nil {
+		return err
+	}
 
 	var connectResponse struct {
 		Message  string   `json:"message"`
@@ -1192,7 +1163,7 @@ func ConnectDatabase(databaseName string, args []string) error {
 		Database Database `json:"database"`
 		Status   string   `json:"status"`
 	}
-	if err := client.Post(url, connectReq, &connectResponse, true); err != nil {
+	if err := client.Post(url, connectReq, &connectResponse); err != nil {
 		return fmt.Errorf("failed to connect database: %v", err)
 	}
 
@@ -1206,25 +1177,19 @@ func ReconnectDatabase(databaseName string, _ []string) error {
 		return fmt.Errorf("database name is required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/%s/reconnect", tenantURL, workspaceName, databaseName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/databases/%s/reconnect", databaseName))
+	if err != nil {
+		return err
+	}
 
 	var response struct {
 		Message  string   `json:"message"`
@@ -1232,7 +1197,7 @@ func ReconnectDatabase(databaseName string, _ []string) error {
 		Database Database `json:"database"`
 		Status   string   `json:"status"`
 	}
-	if err := client.Post(url, nil, &response, true); err != nil {
+	if err := client.Post(url, nil, &response); err != nil {
 		return fmt.Errorf("failed to reconnect database: %v", err)
 	}
 
@@ -1251,32 +1216,26 @@ func WipeDatabase(databaseName string, _ []string) error {
 		return fmt.Errorf("database name is required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/%s/wipe", tenantURL, workspaceName, databaseName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/databases/%s/wipe", databaseName))
+	if err != nil {
+		return err
+	}
 
 	var response struct {
 		Message string `json:"message"`
 		Success bool   `json:"success"`
 		Status  string `json:"status"`
 	}
-	if err := client.Post(url, nil, &response, true); err != nil {
+	if err := client.Post(url, nil, &response); err != nil {
 		return fmt.Errorf("failed to wipe database: %v", err)
 	}
 
@@ -1290,32 +1249,26 @@ func DropDatabase(databaseName string, _ []string) error {
 		return fmt.Errorf("database name is required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/%s/drop", tenantURL, workspaceName, databaseName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/databases/%s/drop", databaseName))
+	if err != nil {
+		return err
+	}
 
 	var response struct {
 		Message string `json:"message"`
 		Success bool   `json:"success"`
 		Status  string `json:"status"`
 	}
-	if err := client.Post(url, nil, &response, true); err != nil {
+	if err := client.Post(url, nil, &response); err != nil {
 		return fmt.Errorf("failed to drop database: %v", err)
 	}
 
@@ -1352,32 +1305,26 @@ func CloneTableData(mappingName string, _ []string) error {
 		},
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/databases/transform", tenantURL, workspaceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/databases/transform")
+	if err != nil {
+		return err
+	}
 
 	var response struct {
 		Message string `json:"message"`
 		Success bool   `json:"success"`
 		Status  string `json:"status"`
 	}
-	if err := client.Post(url, transformReq, &response, true); err != nil {
+	if err := client.Post(url, transformReq, &response); err != nil {
 		return fmt.Errorf("failed to clone table data: %v", err)
 	}
 

@@ -8,8 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 )
 
 type Workspace struct {
@@ -62,18 +61,22 @@ type UpdateWorkspaceRequest struct {
 	Description string `json:"workspace_description,omitempty"`
 }
 
-// ShowWorkspaces lists all workspaces
+// ListWorkspaces lists all workspaces using profile-based authentication
 func ListWorkspaces() error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces", tenantURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := common.BuildAPIURL(profileInfo, "/workspaces")
 
 	var response Response
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get workspaces: %v", err)
 	}
 
@@ -117,16 +120,19 @@ func ListWorkspaces() error {
 
 // ShowWorkspace displays details of a specific workspace
 func ShowWorkspace(workspaceName string) error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s", tenantURL, workspaceName)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/workspaces/%s", workspaceName))
 
 	var response WorkspaceResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get workspace: %v", err)
 	}
 
@@ -175,16 +181,19 @@ func AddWorkspace(args []string) error {
 		Description: description,
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces", tenantURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url := common.BuildGlobalAPIURL(profileInfo, "/workspaces")
 
 	var createResponse CreateWorkspaceResponse
-	if err := client.Post(url, createReq, &createResponse, true); err != nil {
+	if err := client.Post(url, createReq, &createResponse); err != nil {
 		return fmt.Errorf("failed to create workspace: %v", err)
 	}
 
@@ -195,18 +204,21 @@ func AddWorkspace(args []string) error {
 // ModifyWorkspace updates an existing workspace
 func ModifyWorkspace(workspaceName string, args []string) error {
 	// First find the workspace to get its details
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s", tenantURL, workspaceName)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/workspaces/%s", workspaceName))
 
 	fmt.Println()
 
 	var response WorkspaceResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get workspace: %v", err)
 	}
 
@@ -254,10 +266,10 @@ func ModifyWorkspace(workspaceName string, args []string) error {
 	}
 
 	// Update the workspace
-	updateURL := fmt.Sprintf("%s/api/v1/workspaces/%s", tenantURL, workspaceName)
+	updateURL := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/workspaces/%s", workspaceName))
 
 	var updateResponse UpdateWorkspaceResponse
-	if err := client.Put(updateURL, updateReq, &updateResponse, true); err != nil {
+	if err := client.Put(updateURL, updateReq, &updateResponse); err != nil {
 		return fmt.Errorf("failed to update workspace: %v", err)
 	}
 
@@ -278,12 +290,15 @@ func DeleteWorkspace(workspaceName string, args []string) error {
 	}
 
 	// First find the workspace to get its details
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
 
 	// Confirm deletion unless force flag is used
 	if !force {
@@ -301,9 +316,9 @@ func DeleteWorkspace(workspaceName string, args []string) error {
 	}
 
 	// Delete the workspace
-	deleteURL := fmt.Sprintf("%s/api/v1/workspaces/%s", tenantURL, workspaceName)
+	deleteURL := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/workspaces/%s", workspaceName))
 
-	if err := client.Delete(deleteURL, true); err != nil {
+	if err := client.Delete(deleteURL); err != nil {
 		return fmt.Errorf("failed to delete workspace: %v", err)
 	}
 

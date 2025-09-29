@@ -7,8 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 )
 
 type Branch struct {
@@ -72,30 +71,25 @@ func ShowBranch(repoBranchStr string) error {
 		return fmt.Errorf("repository name and branch name are required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s/branches/%s", tenantURL, workspaceName, repoName, branchName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s/branches/%s", repoName, branchName))
+	if err != nil {
+		return err
+	}
 
 	var branchResponse struct {
 		Branch Branch `json:"branch"`
 	}
-	if err := client.Get(url, &branchResponse, true); err != nil {
+	if err := client.Get(url, &branchResponse); err != nil {
 		return fmt.Errorf("failed to get branch details: %v", err)
 	}
 
@@ -188,25 +182,19 @@ func AttachBranch(repoBranchStr string, args []string) error {
 		DatabaseName: databaseName,
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s/branches/%s/attach", tenantURL, workspaceName, repoName, branchName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s/branches/%s/attach", repoName, branchName))
+	if err != nil {
+		return err
+	}
 
 	var attachResponse struct {
 		Message string `json:"message"`
@@ -214,7 +202,7 @@ func AttachBranch(repoBranchStr string, args []string) error {
 		Branch  Branch `json:"branch"`
 		Status  string `json:"status"`
 	}
-	if err := client.Post(url, attachReq, &attachResponse, true); err != nil {
+	if err := client.Post(url, attachReq, &attachResponse); err != nil {
 		return fmt.Errorf("failed to attach branch: %v", err)
 	}
 
@@ -233,25 +221,19 @@ func DetachBranch(repoBranchStr string, _ []string) error {
 		return fmt.Errorf("repository name and branch name are required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s/branches/%s/detach", tenantURL, workspaceName, repoName, branchName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s/branches/%s/detach", repoName, branchName))
+	if err != nil {
+		return err
+	}
 
 	var detachResponse struct {
 		Message string `json:"message"`
@@ -259,7 +241,7 @@ func DetachBranch(repoBranchStr string, _ []string) error {
 		Branch  Branch `json:"branch"`
 		Status  string `json:"status"`
 	}
-	if err := client.Post(url, nil, &detachResponse, true); err != nil {
+	if err := client.Post(url, nil, &detachResponse); err != nil {
 		return fmt.Errorf("failed to detach branch: %v", err)
 	}
 
@@ -279,30 +261,24 @@ func ModifyBranch(repoBranchStr string, args []string) error {
 	}
 
 	// First get the branch to show current values
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s/branches/%s", tenantURL, workspaceName, repoName, branchName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s/branches/%s", repoName, branchName))
+	if err != nil {
+		return err
+	}
 
 	var response struct {
 		Branch Branch `json:"branch"`
 	}
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get branch: %v", err)
 	}
 
@@ -338,7 +314,10 @@ func ModifyBranch(repoBranchStr string, args []string) error {
 	}
 
 	// Update the branch
-	updateURL := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s/branches/%s", tenantURL, workspaceName, repoName, branchName)
+	updateURL, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s/branches/%s", repoName, branchName))
+	if err != nil {
+		return err
+	}
 
 	var updateResponse struct {
 		Message string `json:"message"`
@@ -346,7 +325,7 @@ func ModifyBranch(repoBranchStr string, args []string) error {
 		Branch  Branch `json:"branch"`
 		Status  string `json:"status"`
 	}
-	if err := client.Put(updateURL, updateReq, &updateResponse, true); err != nil {
+	if err := client.Put(updateURL, updateReq, &updateResponse); err != nil {
 		return fmt.Errorf("failed to update branch: %v", err)
 	}
 
@@ -374,24 +353,15 @@ func DeleteBranch(repoBranchStr string, args []string) error {
 		}
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
 
 	// Confirm deletion unless force flag is used
 	if !force {
@@ -407,9 +377,12 @@ func DeleteBranch(repoBranchStr string, args []string) error {
 	}
 
 	// Delete the branch
-	deleteURL := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s/branches/%s", tenantURL, workspaceName, repoName, branchName)
+	deleteURL, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s/branches/%s", repoName, branchName))
+	if err != nil {
+		return err
+	}
 
-	if err := client.Delete(deleteURL, true); err != nil {
+	if err := client.Delete(deleteURL); err != nil {
 		return fmt.Errorf("failed to delete branch: %v", err)
 	}
 

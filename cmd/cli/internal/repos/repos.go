@@ -7,8 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 )
 
 type Repo struct {
@@ -78,32 +77,27 @@ type DeleteRepoRequest struct {
 	Force bool `json:"force"`
 }
 
-// ListRepos lists all repositories
+// ListRepos lists all repositories using profile-based authentication
 func ListRepos() error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos", tenantURL, workspaceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/repos")
+	if err != nil {
+		return err
+	}
 
 	var reposResponse struct {
 		Repos []Repo `json:"repos"`
 	}
-	if err := client.Get(url, &reposResponse, true); err != nil {
+	if err := client.Get(url, &reposResponse); err != nil {
 		return fmt.Errorf("failed to list repos: %v", err)
 	}
 
@@ -134,30 +128,24 @@ func ShowRepo(repoName string) error {
 		return fmt.Errorf("repository name is required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s", tenantURL, workspaceName, repoName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s", repoName))
+	if err != nil {
+		return err
+	}
 
 	var repoResponse struct {
 		Repo FullRepo `json:"repo"`
 	}
-	if err := client.Get(url, &repoResponse, true); err != nil {
+	if err := client.Get(url, &repoResponse); err != nil {
 		return fmt.Errorf("failed to get repository details: %v", err)
 	}
 
@@ -233,25 +221,19 @@ func AddRepo(args []string) error {
 		RepoDescription: repoDescription,
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos", tenantURL, workspaceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/repos")
+	if err != nil {
+		return err
+	}
 
 	var createResponse struct {
 		Message string `json:"message"`
@@ -259,7 +241,7 @@ func AddRepo(args []string) error {
 		Repo    Repo   `json:"repo"`
 		Status  string `json:"status"`
 	}
-	if err := client.Post(url, createReq, &createResponse, true); err != nil {
+	if err := client.Post(url, createReq, &createResponse); err != nil {
 		return fmt.Errorf("failed to create repository: %v", err)
 	}
 
@@ -275,30 +257,24 @@ func ModifyRepo(repoName string, args []string) error {
 	}
 
 	// First get the repository to show current values
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s", tenantURL, workspaceName, repoName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s", repoName))
+	if err != nil {
+		return err
+	}
 
 	var response struct {
 		Repo FullRepo `json:"repo"`
 	}
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get repository: %v", err)
 	}
 
@@ -345,7 +321,10 @@ func ModifyRepo(repoName string, args []string) error {
 	}
 
 	// Update the repository
-	updateURL := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s", tenantURL, workspaceName, repoName)
+	updateURL, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s", repoName))
+	if err != nil {
+		return err
+	}
 
 	var updateResponse struct {
 		Message string `json:"message"`
@@ -353,7 +332,7 @@ func ModifyRepo(repoName string, args []string) error {
 		Repo    Repo   `json:"repo"`
 		Status  string `json:"status"`
 	}
-	if err := client.Put(updateURL, updateReq, &updateResponse, true); err != nil {
+	if err := client.Put(updateURL, updateReq, &updateResponse); err != nil {
 		return fmt.Errorf("failed to update repository: %v", err)
 	}
 
@@ -400,25 +379,19 @@ func CloneRepo(repoName string, args []string) error {
 		CloneRepoDescription: cloneRepoDescription,
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s/clone", tenantURL, workspaceName, repoName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s/clone", repoName))
+	if err != nil {
+		return err
+	}
 
 	var cloneResponse struct {
 		Message string `json:"message"`
@@ -426,7 +399,7 @@ func CloneRepo(repoName string, args []string) error {
 		Repo    Repo   `json:"repo"`
 		Status  string `json:"status"`
 	}
-	if err := client.Post(url, cloneReq, &cloneResponse, true); err != nil {
+	if err := client.Post(url, cloneReq, &cloneResponse); err != nil {
 		return fmt.Errorf("failed to clone repository: %v", err)
 	}
 
@@ -450,24 +423,15 @@ func DeleteRepo(repoName string, args []string) error {
 		}
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
 
 	// Confirm deletion unless force flag is used
 	if !force {
@@ -483,9 +447,12 @@ func DeleteRepo(repoName string, args []string) error {
 	}
 
 	// Delete the repository
-	deleteURL := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s", tenantURL, workspaceName, repoName)
+	deleteURL, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s", repoName))
+	if err != nil {
+		return err
+	}
 
-	if err := client.Delete(deleteURL, true); err != nil {
+	if err := client.Delete(deleteURL); err != nil {
 		return fmt.Errorf("failed to delete repository: %v", err)
 	}
 

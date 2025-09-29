@@ -9,8 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 )
 
 type Region struct {
@@ -74,18 +73,22 @@ type UpdateRegionRequest struct {
 	Longitude   float64 `json:"region_longitude,omitempty"`
 }
 
-// ShowRegions lists all regions
+// ListRegions lists all regions using profile-based authentication
 func ListRegions() error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/regions", tenantURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := common.BuildAPIURL(profileInfo, "/regions")
 
 	var response Response
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get regions: %v", err)
 	}
 
@@ -130,18 +133,21 @@ func ListRegions() error {
 
 // ShowRegion displays details of a specific region
 func ShowRegion(regionName string) error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
 
 	// Now get detailed region info using the ID
-	detailURL := fmt.Sprintf("%s/api/v1/regions/%s", tenantURL, regionName)
+	detailURL := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/regions/%s", regionName))
 
 	var response RegionResponse
-	if err := client.Get(detailURL, &response, true); err != nil {
+	if err := client.Get(detailURL, &response); err != nil {
 		return fmt.Errorf("failed to get region details: %v", err)
 	}
 
@@ -252,16 +258,19 @@ func AddRegion(args []string) error {
 		Longitude:   longitude,
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/regions", tenantURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url := common.BuildGlobalAPIURL(profileInfo, "/regions")
 
 	var createResponse CreateRegionResponse
-	if err := client.Post(url, createReq, &createResponse, true); err != nil {
+	if err := client.Post(url, createReq, &createResponse); err != nil {
 		return fmt.Errorf("failed to create region: %v", err)
 	}
 
@@ -272,18 +281,21 @@ func AddRegion(args []string) error {
 // ModifyRegion updates an existing region
 func ModifyRegion(regionName string, args []string) error {
 	// First find the region to get its ID
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/regions/%s", tenantURL, regionName)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/regions/%s", regionName))
 
 	fmt.Println()
 
 	var response RegionResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get region: %v", err)
 	}
 
@@ -363,10 +375,10 @@ func ModifyRegion(regionName string, args []string) error {
 	}
 
 	// Update the region
-	updateURL := fmt.Sprintf("%s/api/v1/regions/%s", tenantURL, regionName)
+	updateURL := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/regions/%s", regionName))
 
 	var updateResponse UpdateRegionResponse
-	if err := client.Put(updateURL, updateReq, &updateResponse, true); err != nil {
+	if err := client.Put(updateURL, updateReq, &updateResponse); err != nil {
 		return fmt.Errorf("failed to update region: %v", err)
 	}
 
@@ -387,12 +399,15 @@ func DeleteRegion(regionName string, args []string) error {
 	}
 
 	// First find the region to get its ID
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
 
 	// Confirm deletion unless force flag is used
 	if !force {
@@ -410,9 +425,9 @@ func DeleteRegion(regionName string, args []string) error {
 	}
 
 	// Delete the region
-	deleteURL := fmt.Sprintf("%s/api/v1/regions/%s", tenantURL, regionName)
+	deleteURL := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/regions/%s", regionName))
 
-	if err := client.Delete(deleteURL, true); err != nil {
+	if err := client.Delete(deleteURL); err != nil {
 		return fmt.Errorf("failed to delete region: %v", err)
 	}
 

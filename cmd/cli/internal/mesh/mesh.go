@@ -8,8 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 )
 
 // JoinStrategy represents the strategy for joining/extending mesh operations
@@ -195,10 +194,16 @@ type GetNodeStatusResponse struct {
 
 // SeedMesh creates a new mesh network
 func SeedMesh() error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
 	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
 	reader := bufio.NewReader(os.Stdin)
 
 	// Get mesh name
@@ -227,11 +232,10 @@ func SeedMesh() error {
 		MeshDescription: meshDescription,
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/seed", globalURL)
+	url := common.BuildGlobalAPIURL(profileInfo, "/mesh/seed")
 
 	var response SeedMeshResponse
-	if err := client.Post(url, seedReq, &response, true); err != nil {
+	if err := client.Post(url, seedReq, &response); err != nil {
 		return fmt.Errorf("failed to seed mesh: %v", err)
 	}
 
@@ -254,9 +258,14 @@ func SeedMesh() error {
 
 // JoinMesh joins an existing mesh network
 func JoinMesh(targetAddress, strategy string, timeout uint32) error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
 	}
 
 	if targetAddress == "" {
@@ -291,11 +300,10 @@ func JoinMesh(targetAddress, strategy string, timeout uint32) error {
 		joinReq.TimeoutSeconds = &timeout
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/join", globalURL)
+	url := common.BuildGlobalAPIURL(profileInfo, "/mesh/join")
 
 	var response JoinMeshResponse
-	if err := client.Post(url, joinReq, &response, true); err != nil {
+	if err := client.Post(url, joinReq, &response); err != nil {
 		return fmt.Errorf("failed to join mesh: %v", err)
 	}
 
@@ -318,9 +326,14 @@ func JoinMesh(targetAddress, strategy string, timeout uint32) error {
 
 // ExtendMesh extends the current mesh to a clean node
 func ExtendMesh(targetAddress, strategy string, timeout uint32) error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
 	}
 
 	if targetAddress == "" {
@@ -355,11 +368,10 @@ func ExtendMesh(targetAddress, strategy string, timeout uint32) error {
 		extendReq.TimeoutSeconds = &timeout
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/extend", globalURL)
+	url := common.BuildGlobalAPIURL(profileInfo, "/mesh/extend")
 
 	var response ExtendMeshResponse
-	if err := client.Post(url, extendReq, &response, true); err != nil {
+	if err := client.Post(url, extendReq, &response); err != nil {
 		return fmt.Errorf("failed to extend mesh: %v", err)
 	}
 
@@ -378,9 +390,14 @@ func ExtendMesh(targetAddress, strategy string, timeout uint32) error {
 
 // LeaveMesh removes the current node from its mesh
 func LeaveMesh(force bool) error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
 	}
 
 	// Create the request
@@ -388,11 +405,10 @@ func LeaveMesh(force bool) error {
 		Force: force,
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/leave", globalURL)
+	url := common.BuildGlobalAPIURL(profileInfo, "/mesh/leave")
 
 	var response LeaveMeshResponse
-	if err := client.Post(url, leaveReq, &response, true); err != nil {
+	if err := client.Post(url, leaveReq, &response); err != nil {
 		return fmt.Errorf("failed to leave mesh: %v", err)
 	}
 
@@ -410,9 +426,14 @@ func LeaveMesh(force bool) error {
 
 // EvictNode removes another node from the mesh
 func EvictNode(nodeIDStr string, clean bool) error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
 	}
 
 	// Parse node ID
@@ -427,11 +448,10 @@ func EvictNode(nodeIDStr string, clean bool) error {
 		CleanTarget:  clean,
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/evict", globalURL)
+	url := common.BuildGlobalAPIURL(profileInfo, "/mesh/evict")
 
 	var response EvictNodeResponse
-	if err := client.Post(url, evictReq, &response, true); err != nil {
+	if err := client.Post(url, evictReq, &response); err != nil {
 		return fmt.Errorf("failed to evict node: %v", err)
 	}
 
@@ -451,9 +471,14 @@ func EvictNode(nodeIDStr string, clean bool) error {
 
 // AddConnection adds a connection to another node
 func AddConnection(nodeIDStr string, timeout uint32) error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
 	}
 
 	// Parse node ID
@@ -471,11 +496,10 @@ func AddConnection(nodeIDStr string, timeout uint32) error {
 		connectReq.TimeoutSeconds = &timeout
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/connections", globalURL)
+	url := common.BuildGlobalAPIURL(profileInfo, "/mesh/connections")
 
 	var response AddConnectionResponse
-	if err := client.Post(url, connectReq, &response, true); err != nil {
+	if err := client.Post(url, connectReq, &response); err != nil {
 		return fmt.Errorf("failed to add connection: %v", err)
 	}
 
@@ -496,9 +520,14 @@ func AddConnection(nodeIDStr string, timeout uint32) error {
 
 // DropConnection drops a connection to another node
 func DropConnection(nodeIDStr string) error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
 	}
 
 	// Parse node ID
@@ -507,10 +536,9 @@ func DropConnection(nodeIDStr string) error {
 		return fmt.Errorf("invalid node ID: %s", nodeIDStr)
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/connections/%d", globalURL, nodeID)
+	url := fmt.Sprintf("%s/mesh/connections/%d", common.BuildGlobalAPIURL(profileInfo, ""), nodeID)
 
-	if err := client.Delete(url, true); err != nil {
+	if err := client.Delete(url); err != nil {
 		return fmt.Errorf("failed to drop connection: %v", err)
 	}
 
@@ -522,16 +550,20 @@ func DropConnection(nodeIDStr string) error {
 
 // ListConnections lists all active connections
 func ListConnections() error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/connections", globalURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := common.BuildGlobalAPIURL(profileInfo, "/mesh/connections")
 
 	var response ListConnectionsResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to list connections: %v", err)
 	}
 
@@ -571,16 +603,20 @@ func ListConnections() error {
 
 // ShowMesh displays information about the current mesh
 func ShowMesh() error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh", globalURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := common.BuildGlobalAPIURL(profileInfo, "/mesh")
 
 	var response ShowMeshResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get mesh details: %v", err)
 	}
 
@@ -602,16 +638,20 @@ func ShowMesh() error {
 
 // ListNodes displays all nodes in the current mesh
 func ListNodes() error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/mesh/nodes", globalURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := common.BuildGlobalAPIURL(profileInfo, "/mesh/nodes")
 
 	var response ListNodesResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get nodes: %v", err)
 	}
 
@@ -654,28 +694,31 @@ func ListNodes() error {
 
 // ShowNode displays information about a specific node or current node
 func ShowNode(nodeIDStr string) error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
 	}
 
 	var url string
 	if nodeIDStr == "" {
 		// Show current node
-		url = fmt.Sprintf("%s/api/v1/mesh/nodes", globalURL)
+		url = common.BuildGlobalAPIURL(profileInfo, "/mesh/nodes")
 	} else {
 		// Show specific node
 		nodeID, err := strconv.ParseUint(nodeIDStr, 10, 64)
 		if err != nil {
 			return fmt.Errorf("invalid node ID: %s", nodeIDStr)
 		}
-		url = fmt.Sprintf("%s/api/v1/mesh/nodes/%d", globalURL, nodeID)
+		url = fmt.Sprintf("%s/mesh/nodes/%d", common.BuildGlobalAPIURL(profileInfo, ""), nodeID)
 	}
 
-	client := httpclient.GetClient()
-
 	var response ShowNodeResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get node details: %v", err)
 	}
 
@@ -701,16 +744,20 @@ func ShowNode(nodeIDStr string) error {
 
 // GetNodeStatus displays comprehensive status for the current node
 func GetNodeStatus() error {
-	globalURL, err := config.GetGlobalAPIURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
-		return fmt.Errorf("failed to get API URL: %v", err)
+		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/node/status", globalURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := common.BuildGlobalAPIURL(profileInfo, "/node/status")
 
 	var response GetNodeStatusResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get node status: %v", err)
 	}
 

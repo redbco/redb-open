@@ -805,3 +805,65 @@ func (ah *AuthHandlers) writeErrorResponse(w http.ResponseWriter, statusCode int
 
 	json.NewEncoder(w).Encode(response)
 }
+
+// RefreshToken handles POST /{tenant_url}/api/v1/auth/refresh
+func (ah *AuthHandlers) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	ah.engine.TrackOperation()
+	defer ah.engine.UntrackOperation()
+
+	// Extract tenant_url from path
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	if tenantURL == "" {
+		ah.writeErrorResponse(w, http.StatusBadRequest, "tenant_url is required", "")
+		return
+	}
+
+	// Parse request body
+	var req RefreshTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ah.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", "")
+		return
+	}
+
+	// Validate required fields
+	if req.RefreshToken == "" {
+		ah.writeErrorResponse(w, http.StatusBadRequest, "Refresh token is required", "")
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Call security service gRPC with refresh token
+	grpcReq := &securityv1.AuthenticationRequest{
+		TenantUrl: tenantURL,
+		TokenType: "refresh",
+		Token:     req.RefreshToken,
+	}
+
+	grpcResp, err := ah.engine.GetSecurityClient().Authenticate(ctx, grpcReq)
+	if err != nil {
+		ah.handleGRPCError(w, err, "Token refresh failed")
+		return
+	}
+
+	if grpcResp.Status != commonv1.Status_STATUS_SUCCESS {
+		ah.writeErrorResponse(w, http.StatusUnauthorized, "Token refresh failed", "Invalid or expired refresh token")
+		return
+	}
+
+	// Convert gRPC response to REST response
+	response := RefreshTokenResponse{
+		AccessToken:  grpcResp.AccessToken,
+		RefreshToken: grpcResp.RefreshToken,
+		Status:       convertStatus(grpcResp.Status),
+	}
+
+	if ah.engine.logger != nil {
+		ah.engine.logger.Infof("Token refresh successful for tenant: %s", tenantURL)
+	}
+
+	ah.writeJSONResponse(w, http.StatusOK, response)
+}

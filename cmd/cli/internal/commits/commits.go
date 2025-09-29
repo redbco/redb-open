@@ -7,8 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 )
 
 type Commit struct {
@@ -49,30 +48,25 @@ func ShowCommit(repoBranchCommitStr string) error {
 		return fmt.Errorf("repository name, branch name, and commit code are required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s/branches/%s/commits/%s", tenantURL, workspaceName, repoName, branchName, commitCode)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s/branches/%s/commits/%s", repoName, branchName, commitCode))
+	if err != nil {
+		return err
+	}
 
 	var commitResponse struct {
 		Commit Commit `json:"commit"`
 	}
-	if err := client.Get(url, &commitResponse, true); err != nil {
+	if err := client.Get(url, &commitResponse); err != nil {
 		return fmt.Errorf("failed to get commit details: %v", err)
 	}
 
@@ -142,25 +136,20 @@ func BranchCommit(repoBranchCommitStr string, args []string) error {
 		NewBranchName: newBranchName,
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s/branches/%s/commits/%s/branch", tenantURL, workspaceName, repoName, branchName, commitCode)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s/branches/%s/commits/%s/branch", repoName, branchName, commitCode))
+	if err != nil {
+		return err
+	}
 
 	var branchResponse struct {
 		Message string `json:"message"`
@@ -168,7 +157,7 @@ func BranchCommit(repoBranchCommitStr string, args []string) error {
 		Commit  Commit `json:"commit"`
 		Status  string `json:"status"`
 	}
-	if err := client.Post(url, branchReq, &branchResponse, true); err != nil {
+	if err := client.Post(url, branchReq, &branchResponse); err != nil {
 		return fmt.Errorf("failed to create branch from commit: %v", err)
 	}
 
@@ -187,25 +176,20 @@ func MergeCommit(repoBranchCommitStr string, _ []string) error {
 		return fmt.Errorf("repository name, branch name, and commit code are required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s/branches/%s/commits/%s/merge", tenantURL, workspaceName, repoName, branchName, commitCode)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s/branches/%s/commits/%s/merge", repoName, branchName, commitCode))
+	if err != nil {
+		return err
+	}
 
 	var mergeResponse struct {
 		Message string `json:"message"`
@@ -213,7 +197,7 @@ func MergeCommit(repoBranchCommitStr string, _ []string) error {
 		Commit  Commit `json:"commit"`
 		Status  string `json:"status"`
 	}
-	if err := client.Post(url, nil, &mergeResponse, true); err != nil {
+	if err := client.Post(url, nil, &mergeResponse); err != nil {
 		return fmt.Errorf("failed to merge commit: %v", err)
 	}
 
@@ -232,25 +216,20 @@ func DeployCommit(repoBranchCommitStr string, _ []string) error {
 		return fmt.Errorf("repository name, branch name, and commit code are required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspace(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/repos/%s/branches/%s/commits/%s/deploy", tenantURL, workspaceName, repoName, branchName, commitCode)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/repos/%s/branches/%s/commits/%s/deploy", repoName, branchName, commitCode))
+	if err != nil {
+		return err
+	}
 
 	var deployResponse struct {
 		Message string `json:"message"`
@@ -258,7 +237,7 @@ func DeployCommit(repoBranchCommitStr string, _ []string) error {
 		Commit  Commit `json:"commit"`
 		Status  string `json:"status"`
 	}
-	if err := client.Post(url, nil, &deployResponse, true); err != nil {
+	if err := client.Post(url, nil, &deployResponse); err != nil {
 		return fmt.Errorf("failed to deploy commit: %v", err)
 	}
 

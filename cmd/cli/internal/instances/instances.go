@@ -9,8 +9,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 	"golang.org/x/term"
 )
 
@@ -125,30 +124,25 @@ type DisconnectInstanceRequest struct {
 	DeleteInstance bool `json:"delete_instance,omitempty"`
 }
 
-// ListInstances lists all instances
+// ListInstances lists all instances using profile-based authentication
 func ListInstances() error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/instances", tenantURL, workspaceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/instances")
+	if err != nil {
+		return err
+	}
 
 	var instancesResponse Response
-	if err := client.Get(url, &instancesResponse, true); err != nil {
+	if err := client.Get(url, &instancesResponse); err != nil {
 		return fmt.Errorf("failed to list instances: %v", err)
 	}
 
@@ -187,7 +181,7 @@ func ListInstances() error {
 	return nil
 }
 
-// ShowInstance displays details of a specific instance
+// ShowInstance displays details of a specific instance using profile-based authentication
 func ShowInstance(instanceName string) error {
 	// Trim whitespace from instance name
 	instanceName = strings.TrimSpace(instanceName)
@@ -195,28 +189,23 @@ func ShowInstance(instanceName string) error {
 		return fmt.Errorf("instance name is required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/instances/%s", tenantURL, workspaceName, instanceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/instances/%s", instanceName))
+	if err != nil {
+		return err
+	}
 
 	var instanceResponse InstanceResponse
-	if err := client.Get(url, &instanceResponse, true); err != nil {
+	if err := client.Get(url, &instanceResponse); err != nil {
 		return fmt.Errorf("failed to get instance details: %v", err)
 	}
 
@@ -494,28 +483,22 @@ func ConnectInstance(args []string) error {
 		InstanceSSLRootCert: sslRootCert,
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err = config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/instances/connect", tenantURL, workspaceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/instances/connect")
+	if err != nil {
+		return err
+	}
 
 	var connectResponse ConnectInstanceResponse
-	if err := client.Post(url, connectReq, &connectResponse, true); err != nil {
+	if err := client.Post(url, connectReq, &connectResponse); err != nil {
 		return fmt.Errorf("failed to connect instance: %v", err)
 	}
 
@@ -531,28 +514,22 @@ func ReconnectInstance(instanceName string, _ []string) error {
 		return fmt.Errorf("instance name is required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/instances/%s/reconnect", tenantURL, workspaceName, instanceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/instances/%s/reconnect", instanceName))
+	if err != nil {
+		return err
+	}
 
 	var response ReconnectInstanceResponse
-	if err := client.Post(url, nil, &response, true); err != nil {
+	if err := client.Post(url, nil, &response); err != nil {
 		return fmt.Errorf("failed to reconnect instance: %v", err)
 	}
 
@@ -569,30 +546,24 @@ func ModifyInstance(instanceName string, args []string) error {
 	}
 
 	// First find the instance to get its details
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/instances/%s", tenantURL, workspaceName, instanceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/instances/%s", instanceName))
+	if err != nil {
+		return err
+	}
 
 	fmt.Println()
 
 	var response InstanceResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get instance: %v", err)
 	}
 
@@ -796,10 +767,13 @@ func ModifyInstance(instanceName string, args []string) error {
 	}
 
 	// Update the instance
-	updateURL := fmt.Sprintf("%s/api/v1/workspaces/%s/instances/%s", tenantURL, workspaceName, instanceName)
+	updateURL, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/instances/%s", instanceName))
+	if err != nil {
+		return err
+	}
 
 	var updateResponse UpdateInstanceResponse
-	if err := client.Put(updateURL, updateReq, &updateResponse, true); err != nil {
+	if err := client.Put(updateURL, updateReq, &updateResponse); err != nil {
 		return fmt.Errorf("failed to update instance: %v", err)
 	}
 
@@ -827,24 +801,15 @@ func DisconnectInstance(instanceName string, args []string) error {
 		}
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
 
 	// Confirm disconnection unless force flag is used
 	if !force {
@@ -876,10 +841,13 @@ func DisconnectInstance(instanceName string, args []string) error {
 	}
 
 	// Disconnect the instance
-	disconnectURL := fmt.Sprintf("%s/api/v1/workspaces/%s/instances/%s/disconnect", tenantURL, workspaceName, instanceName)
+	disconnectURL, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/instances/%s/disconnect", instanceName))
+	if err != nil {
+		return err
+	}
 
 	var disconnectResponse DisconnectInstanceResponse
-	if err := client.Post(disconnectURL, disconnectReq, &disconnectResponse, true); err != nil {
+	if err := client.Post(disconnectURL, disconnectReq, &disconnectResponse); err != nil {
 		return fmt.Errorf("failed to disconnect instance: %v", err)
 	}
 

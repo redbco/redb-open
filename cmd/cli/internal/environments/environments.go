@@ -9,8 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 )
 
 type Environment struct {
@@ -73,30 +72,25 @@ type UpdateEnvironmentRequest struct {
 	Priority    int    `json:"environment_priority,omitempty"`
 }
 
-// ListEnvironments lists all environments
+// ListEnvironments lists all environments using profile-based authentication
 func ListEnvironments() error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/environments", tenantURL, workspaceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/environments")
+	if err != nil {
+		return err
+	}
 
 	var response Response
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get environments: %v", err)
 	}
 
@@ -154,28 +148,22 @@ func ListEnvironments() error {
 
 // ShowEnvironment displays details of a specific environment
 func ShowEnvironment(environmentName string) error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/environments/%s", tenantURL, workspaceName, environmentName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/environments/%s", environmentName))
+	if err != nil {
+		return err
+	}
 
 	var response EnvironmentResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get environment: %v", err)
 	}
 
@@ -270,28 +258,22 @@ func AddEnvironment(args []string) error {
 		Priority:    priorityInt,
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/environments", tenantURL, workspaceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/environments")
+	if err != nil {
+		return err
+	}
 
 	var createResponse CreateEnvironmentResponse
-	if err := client.Post(url, createReq, &createResponse, true); err != nil {
+	if err := client.Post(url, createReq, &createResponse); err != nil {
 		return fmt.Errorf("failed to create environment: %v", err)
 	}
 
@@ -302,30 +284,24 @@ func AddEnvironment(args []string) error {
 // ModifyEnvironment updates an existing environment
 func ModifyEnvironment(environmentName string, args []string) error {
 	// First find the environment to get its details
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/environments/%s", tenantURL, workspaceName, environmentName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/environments/%s", environmentName))
+	if err != nil {
+		return err
+	}
 
 	fmt.Println()
 
 	var response EnvironmentResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get environment: %v", err)
 	}
 
@@ -423,10 +399,13 @@ func ModifyEnvironment(environmentName string, args []string) error {
 	}
 
 	// Update the environment
-	updateURL := fmt.Sprintf("%s/api/v1/workspaces/%s/environments/%s", tenantURL, workspaceName, environmentName)
+	updateURL, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/environments/%s", environmentName))
+	if err != nil {
+		return err
+	}
 
 	var updateResponse UpdateEnvironmentResponse
-	if err := client.Put(updateURL, updateReq, &updateResponse, true); err != nil {
+	if err := client.Put(updateURL, updateReq, &updateResponse); err != nil {
 		return fmt.Errorf("failed to update environment: %v", err)
 	}
 
@@ -447,24 +426,15 @@ func DeleteEnvironment(environmentName string, args []string) error {
 	}
 
 	// First find the environment to get its details
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
 
 	// Confirm deletion unless force flag is used
 	if !force {
@@ -482,9 +452,12 @@ func DeleteEnvironment(environmentName string, args []string) error {
 	}
 
 	// Delete the environment
-	deleteURL := fmt.Sprintf("%s/api/v1/workspaces/%s/environments/%s", tenantURL, workspaceName, environmentName)
+	deleteURL, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/environments/%s", environmentName))
+	if err != nil {
+		return err
+	}
 
-	if err := client.Delete(deleteURL, true); err != nil {
+	if err := client.Delete(deleteURL); err != nil {
 		return fmt.Errorf("failed to delete environment: %v", err)
 	}
 

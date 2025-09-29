@@ -101,8 +101,15 @@ func (s *Server) setupRoutes() {
 	// Health check endpoint (global, no tenant)
 	s.router.HandleFunc("/health", s.handleHealth).Methods(http.MethodGet)
 
+	// Node status endpoint (global, no authentication required)
+	s.router.HandleFunc("/api/v1/status", s.handleNodeStatus).Methods(http.MethodGet)
+
 	// Initial setup endpoint (no authentication required) - from API
-	s.router.HandleFunc("/api/v1/setup", s.handleInitialSetup).Methods(http.MethodPost)
+	// Disabled in the open-source version due to lack of multi-tenant support
+	//s.router.HandleFunc("/api/v1/setup", s.handleInitialSetup).Methods(http.MethodPost)
+
+	// User setup endpoint for single-tenant mode (no authentication required)
+	s.router.HandleFunc("/{tenant_url}/api/v1/setup/user", s.handleUserSetup).Methods(http.MethodPost)
 
 	// Global tenant management endpoints (no tenant_url prefix) - from API
 	globalApiV1 := s.router.PathPrefix("/api/v1").Subrouter()
@@ -155,6 +162,7 @@ func (s *Server) setupRoutes() {
 	auth := tenantRouter.PathPrefix("/auth").Subrouter()
 	auth.HandleFunc("/login", s.authHandler.Login).Methods(http.MethodPost)
 	auth.HandleFunc("/logout", s.authHandler.Logout).Methods(http.MethodPost)
+	auth.HandleFunc("/refresh", s.authHandler.RefreshToken).Methods(http.MethodPost)
 	auth.HandleFunc("/profile", s.authHandler.GetProfile).Methods(http.MethodGet)
 	auth.HandleFunc("/change-password", s.authHandler.ChangePassword).Methods(http.MethodPost)
 
@@ -354,6 +362,71 @@ func (s *Server) handleInitialSetup(w http.ResponseWriter, r *http.Request) {
 
 	// Call the engine to perform initial setup
 	response, err := s.engine.PerformInitialSetup(ctx, req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Send response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleUserSetup(w http.ResponseWriter, r *http.Request) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+
+	// Extract tenant_url from path
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	if tenantURL == "" {
+		http.Error(w, "tenant_url is required", http.StatusBadRequest)
+		return
+	}
+
+	// Parse request body
+	var req struct {
+		UserEmail     string `json:"user_email"`
+		UserPassword  string `json:"user_password"`
+		WorkspaceName string `json:"workspace_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.UserEmail == "" || req.UserPassword == "" || req.WorkspaceName == "" {
+		http.Error(w, "Missing required fields: user_email, user_password, workspace_name", http.StatusBadRequest)
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Call the engine to perform user setup
+	response, err := s.engine.PerformUserSetup(ctx, tenantURL, req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Send response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Call the engine to get node status
+	response, err := s.engine.GetNodeStatus(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

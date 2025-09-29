@@ -9,8 +9,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 	"golang.org/x/term"
 )
 
@@ -62,14 +61,20 @@ type UpdateTenantRequest struct {
 
 // ListTenants lists all tenants
 func ListTenants() error {
-	// Use global API URL since tenant endpoints are now global in Client API
-	globalURL := config.GetGlobalAPIURLNoAuth()
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/tenants", globalURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := common.BuildGlobalAPIURL(profileInfo, "/tenants")
 
 	var response Response
-	if err := client.Get(url, &response, false); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get tenants: %v", err)
 	}
 
@@ -110,14 +115,20 @@ func ListTenants() error {
 
 // ShowTenant displays details of a specific tenant
 func ShowTenant(tenantID string) error {
-	// Use global API URL since tenant endpoints are now global in Client API
-	globalURL := config.GetGlobalAPIURLNoAuth()
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/tenants/%s", globalURL, tenantID)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/tenants/%s", common.BuildGlobalAPIURL(profileInfo, ""), tenantID)
 
 	var response TenantResponse
-	if err := client.Get(url, &response, false); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get tenant: %v", err)
 	}
 
@@ -196,14 +207,20 @@ func AddTenant(args []string) error {
 		URL:          tenantURL,
 	}
 
-	// Use global API URL since tenant endpoints are now global in Client API
-	globalURL := config.GetGlobalAPIURLNoAuth()
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/tenants", globalURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := common.BuildGlobalAPIURL(profileInfo, "/tenants")
 
 	var createResponse CreateTenantResponse
-	if err := client.Post(url, createReq, &createResponse, false); err != nil {
+	if err := client.Post(url, createReq, &createResponse); err != nil {
 		return fmt.Errorf("failed to create tenant: %v", err)
 	}
 
@@ -213,17 +230,22 @@ func AddTenant(args []string) error {
 
 // ModifyTenant updates an existing tenant
 func ModifyTenant(tenantID string, args []string) error {
-	// First find the tenant to get its details
-	// Use global API URL since tenant endpoints are now global in Client API
-	globalURL := config.GetGlobalAPIURLNoAuth()
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/tenants/%s", globalURL, tenantID)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/tenants/%s", common.BuildGlobalAPIURL(profileInfo, ""), tenantID)
 
 	fmt.Println()
 
 	var response TenantResponse
-	if err := client.Get(url, &response, false); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get tenant: %v", err)
 	}
 
@@ -271,10 +293,10 @@ func ModifyTenant(tenantID string, args []string) error {
 	}
 
 	// Update the tenant
-	updateURL := fmt.Sprintf("%s/api/v1/tenants/%s", globalURL, tenantID)
+	updateURL := fmt.Sprintf("%s/tenants/%s", common.BuildGlobalAPIURL(profileInfo, ""), tenantID)
 
 	var updateResponse UpdateTenantResponse
-	if err := client.Put(updateURL, updateReq, &updateResponse, false); err != nil {
+	if err := client.Put(updateURL, updateReq, &updateResponse); err != nil {
 		return fmt.Errorf("failed to update tenant: %v", err)
 	}
 
@@ -294,10 +316,15 @@ func DeleteTenant(tenantID string, args []string) error {
 		}
 	}
 
-	// Use global API URL since tenant endpoints are now global in Client API
-	globalURL := config.GetGlobalAPIURLNoAuth()
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
 
-	client := httpclient.GetClient()
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
 
 	// Confirm deletion unless force flag is used
 	if !force {
@@ -315,9 +342,9 @@ func DeleteTenant(tenantID string, args []string) error {
 	}
 
 	// Delete the tenant
-	deleteURL := fmt.Sprintf("%s/api/v1/tenants/%s", globalURL, tenantID)
+	deleteURL := fmt.Sprintf("%s/tenants/%s", common.BuildGlobalAPIURL(profileInfo, ""), tenantID)
 
-	if err := client.Delete(deleteURL, false); err != nil {
+	if err := client.Delete(deleteURL); err != nil {
 		return fmt.Errorf("failed to delete tenant: %v", err)
 	}
 

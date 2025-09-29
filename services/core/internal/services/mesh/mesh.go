@@ -203,7 +203,7 @@ func (s *Service) GetNodes(ctx context.Context, meshID string) ([]*Node, error) 
 	s.logger.Infof("Listing nodes from database for mesh: %s", meshID)
 	query := `
 		SELECT n.node_id, n.node_name, n.node_description, n.node_platform, n.node_version, 
-		       n.region_id, COALESCE(r.region_name, ''), n.ip_address, n.port, n.status, n.created, n.updated
+		       n.region_id, COALESCE(r.region_name, ''), HOST(n.ip_address), n.port, n.status, n.created, n.updated
 		FROM nodes n
 		LEFT JOIN regions r ON n.region_id = r.region_id
 		ORDER BY n.node_name
@@ -260,7 +260,7 @@ func (s *Service) GetNode(ctx context.Context, meshID, nodeID string) (*Node, er
 	s.logger.Infof("Retrieving node from database with ID: %s in mesh: %s", nodeID, meshID)
 	query := `
 		SELECT n.node_id, n.node_name, n.node_description, n.node_platform, n.node_version, 
-		       n.region_id, COALESCE(r.region_name, ''), n.ip_address, n.port, n.status, n.created, n.updated
+		       n.region_id, COALESCE(r.region_name, ''), HOST(n.ip_address), n.port, n.status, n.created, n.updated
 		FROM nodes n
 		LEFT JOIN regions r ON n.region_id = r.region_id
 		WHERE n.node_id = $1
@@ -306,7 +306,7 @@ func (s *Service) GetLocalNode(ctx context.Context) (*Node, error) {
 
 	query := `
 		SELECT n.node_id, n.node_name, n.node_description, n.node_platform, n.node_version, 
-		       n.region_id, n.ip_address, n.port, n.status, n.created, n.updated
+		       n.region_id, HOST(n.ip_address), n.port, n.status, n.created, n.updated
 		FROM nodes n
 		JOIN localidentity li ON n.node_id = li.identity_id
 		LIMIT 1
@@ -373,7 +373,7 @@ func (s *Service) CreateNode(ctx context.Context, meshID, nodeName, nodeDescript
 	query := `
 		INSERT INTO nodes (node_name, node_description, node_platform, node_version, region_id, ip_address, port)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING node_id, node_name, node_description, node_platform, node_version, region_id, ip_address, port, status, created, updated
+		RETURNING node_id, node_name, node_description, node_platform, node_version, region_id, HOST(ip_address), port, status, created, updated
 	`
 
 	var node Node

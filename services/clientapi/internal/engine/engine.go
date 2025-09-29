@@ -396,6 +396,210 @@ func (e *Engine) PerformInitialSetup(ctx context.Context, req interface{}) (inte
 	}, nil
 }
 
+// PerformUserSetup creates a user and workspace for an existing tenant (single-tenant mode)
+func (e *Engine) PerformUserSetup(ctx context.Context, tenantURL string, req interface{}) (interface{}, error) {
+	// Type assertion to get the request data
+	setupReq, ok := req.(struct {
+		UserEmail     string `json:"user_email"`
+		UserPassword  string `json:"user_password"`
+		WorkspaceName string `json:"workspace_name"`
+	})
+	if !ok {
+		return nil, fmt.Errorf("invalid request type for user setup")
+	}
+
+	// Get tenant by URL
+	tenantReq := &corev1.ListTenantsRequest{}
+	tenantsResp, err := e.tenantClient.ListTenants(ctx, tenantReq)
+	if err != nil {
+		if e.logger != nil {
+			e.logger.Errorf("Failed to list tenants: %v", err)
+		}
+		return nil, fmt.Errorf("failed to list tenants: %v", err)
+	}
+
+	// Find the tenant by URL
+	var targetTenant *corev1.Tenant
+	for _, tenant := range tenantsResp.Tenants {
+		if tenant.TenantUrl == tenantURL {
+			targetTenant = tenant
+			break
+		}
+	}
+
+	if targetTenant == nil {
+		if e.logger != nil {
+			e.logger.Warnf("Tenant not found with URL: %s", tenantURL)
+		}
+		return nil, fmt.Errorf("tenant not found with URL: %s", tenantURL)
+	}
+
+	// Check if any users already exist in the tenant (this should only create the first user)
+	usersReq := &corev1.ListUsersRequest{
+		TenantId: targetTenant.TenantId,
+	}
+	usersResp, err := e.userClient.ListUsers(ctx, usersReq)
+	if err != nil {
+		if e.logger != nil {
+			e.logger.Errorf("Failed to check existing users: %v", err)
+		}
+		return nil, fmt.Errorf("failed to check existing users: %v", err)
+	}
+
+	// If users already exist, reject the setup request
+	if len(usersResp.Users) > 0 {
+		if e.logger != nil {
+			e.logger.Warnf("User setup rejected: users already exist in tenant %s", tenantURL)
+		}
+		return nil, fmt.Errorf("user setup not allowed: users already exist in the tenant")
+	}
+
+	// Generate JWT secret for the tenant if it doesn't exist
+	if err := e.generateTenantJWTSecret(targetTenant.TenantId); err != nil {
+		if e.logger != nil {
+			e.logger.Errorf("Failed to generate JWT secret for tenant: %v", err)
+		}
+		return nil, fmt.Errorf("failed to generate JWT secret for tenant: %v", err)
+	}
+
+	// Create the user
+	userReq := &corev1.AddUserRequest{
+		TenantId:     targetTenant.TenantId,
+		UserName:     setupReq.UserEmail, // Use email as name for initial user
+		UserEmail:    setupReq.UserEmail,
+		UserPassword: setupReq.UserPassword,
+	}
+
+	userResp, err := e.userClient.AddUser(ctx, userReq)
+	if err != nil {
+		if e.logger != nil {
+			e.logger.Errorf("Failed to create user: %v", err)
+		}
+		return nil, fmt.Errorf("failed to create user: %v", err)
+	}
+
+	workspaceDescription := "Default workspace"
+
+	// Create workspace using the workspace service
+	workspaceReq := &corev1.AddWorkspaceRequest{
+		TenantId:             targetTenant.TenantId,
+		WorkspaceName:        setupReq.WorkspaceName,
+		WorkspaceDescription: &workspaceDescription,
+		OwnerId:              userResp.User.UserId,
+	}
+	workspaceResp, err := e.workspaceClient.AddWorkspace(ctx, workspaceReq)
+	if err != nil {
+		if e.logger != nil {
+			e.logger.Errorf("Failed to create workspace: %v", err)
+		}
+		return nil, fmt.Errorf("failed to create workspace: %v", err)
+	}
+
+	if e.logger != nil {
+		e.logger.Infof("User setup completed successfully for tenant: %s, user: %s", tenantURL, setupReq.UserEmail)
+	}
+
+	return map[string]interface{}{
+		"success": true,
+		"message": "User setup completed successfully",
+		"user": map[string]interface{}{
+			"user_id":    userResp.User.UserId,
+			"user_name":  userResp.User.UserName,
+			"user_email": userResp.User.UserEmail,
+		},
+		"workspace": map[string]interface{}{
+			"workspace_id":          workspaceResp.Workspace.WorkspaceId,
+			"workspace_name":        workspaceResp.Workspace.WorkspaceName,
+			"workspace_description": workspaceResp.Workspace.WorkspaceDescription,
+		},
+	}, nil
+}
+
+// GetNodeStatus returns the current initialization status of the node
+func (e *Engine) GetNodeStatus(ctx context.Context) (interface{}, error) {
+	// Check if tenants exist (indicates initialization has been run)
+	tenantsReq := &corev1.ListTenantsRequest{}
+	tenantsResp, err := e.tenantClient.ListTenants(ctx, tenantsReq)
+	if err != nil {
+		// If we can't connect to core service, node is not initialized
+		if e.logger != nil {
+			e.logger.Debugf("Failed to connect to core service for status check: %v", err)
+		}
+		return map[string]interface{}{
+			"status":      "not_initialized",
+			"description": "Node not initialized",
+			"reachable":   true, // Client API is responding
+		}, nil
+	}
+
+	// If no tenants exist, node is initialized but no users created yet
+	if len(tenantsResp.Tenants) == 0 {
+		return map[string]interface{}{
+			"status":      "initialized_no_users",
+			"description": "Initial user not created",
+			"reachable":   true,
+		}, nil
+	}
+
+	// Check if users exist in any tenant
+	hasUsers := false
+	for _, tenant := range tenantsResp.Tenants {
+		usersReq := &corev1.ListUsersRequest{
+			TenantId: tenant.TenantId,
+		}
+		usersResp, err := e.userClient.ListUsers(ctx, usersReq)
+		if err != nil {
+			continue // Skip this tenant if we can't check users
+		}
+		if len(usersResp.Users) > 0 {
+			hasUsers = true
+			break
+		}
+	}
+
+	if !hasUsers {
+		return map[string]interface{}{
+			"status":      "initialized_no_users",
+			"description": "Initial user not created",
+			"reachable":   true,
+		}, nil
+	}
+
+	// Check if node is part of a mesh using the mesh client
+	meshStatus := "not_connected"
+	meshDescription := "no mesh"
+
+	if e.meshClient != nil {
+		meshReq := &corev1.ShowMeshRequest{}
+		meshResp, err := e.meshClient.ShowMesh(ctx, meshReq)
+		if err == nil && meshResp.Mesh != nil {
+			// Node is part of a mesh
+			meshStatus = "connected"
+			meshDescription = fmt.Sprintf("('%s' - %d nodes)",
+				meshResp.Mesh.MeshId, meshResp.Mesh.NodeCount)
+
+			return map[string]interface{}{
+				"status":      "ready_with_mesh",
+				"description": fmt.Sprintf("Ready, %s", meshDescription),
+				"reachable":   true,
+				"mesh_status": meshStatus,
+				"mesh_info": map[string]interface{}{
+					"mesh_id":    meshResp.Mesh.MeshId,
+					"mesh_name":  meshResp.Mesh.MeshName,
+					"node_count": meshResp.Mesh.NodeCount,
+				},
+			}, nil
+		}
+	}
+
+	return map[string]interface{}{
+		"status":      "ready_no_mesh",
+		"description": fmt.Sprintf("Ready, %s", meshDescription),
+		"reachable":   true,
+		"mesh_status": meshStatus,
+	}, nil
+}
+
 func (e *Engine) generateTenantJWTSecret(tenantId string) error {
 	// Initialize keyring manager
 	keyringPath := keyring.GetDefaultKeyringPath()

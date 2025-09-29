@@ -57,6 +57,18 @@ type GetProfileResponse struct {
 	Profile Profile `json:"profile"`
 }
 
+// RefreshTokenRequest represents the refresh token request payload
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
+// RefreshTokenResponse represents the refresh token response payload
+type RefreshTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	Status       Status `json:"status"`
+}
+
 // ToggleRootRequest represents the toggle root request payload
 type ToggleRootRequest struct {
 	TenantID string `json:"tenant_id" validate:"required"`

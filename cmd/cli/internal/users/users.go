@@ -9,8 +9,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 	"golang.org/x/term"
 )
 
@@ -62,18 +61,22 @@ type UpdateUserRequest struct {
 	UserEnabled  *bool  `json:"user_enabled,omitempty"`
 }
 
-// ListUsers lists all users
+// ListUsers lists all users using profile-based authentication
 func ListUsers() error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/users", tenantURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := common.BuildAPIURL(profileInfo, "/users")
 
 	var response Response
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get users: %v", err)
 	}
 
@@ -119,16 +122,19 @@ func ListUsers() error {
 
 // ShowUser displays details of a specific user
 func ShowUser(userID string) error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/users/%s", tenantURL, userID)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/users/%s", userID))
 
 	var response UserResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get user: %v", err)
 	}
 
@@ -223,16 +229,19 @@ func AddUser(args []string) error {
 		UserEnabled:  userEnabled,
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/users", tenantURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url := common.BuildGlobalAPIURL(profileInfo, "/users")
 
 	var createResponse CreateUserResponse
-	if err := client.Post(url, createReq, &createResponse, true); err != nil {
+	if err := client.Post(url, createReq, &createResponse); err != nil {
 		return fmt.Errorf("failed to create user: %v", err)
 	}
 
@@ -243,18 +252,21 @@ func AddUser(args []string) error {
 // ModifyUser updates an existing user
 func ModifyUser(userID string, args []string) error {
 	// First find the user to get its details
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/users/%s", tenantURL, userID)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/users/%s", userID))
 
 	fmt.Println()
 
 	var response UserResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get user: %v", err)
 	}
 
@@ -336,10 +348,10 @@ func ModifyUser(userID string, args []string) error {
 	}
 
 	// Update the user
-	updateURL := fmt.Sprintf("%s/api/v1/users/%s", tenantURL, userID)
+	updateURL := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/users/%s", userID))
 
 	var updateResponse UpdateUserResponse
-	if err := client.Put(updateURL, updateReq, &updateResponse, true); err != nil {
+	if err := client.Put(updateURL, updateReq, &updateResponse); err != nil {
 		return fmt.Errorf("failed to update user: %v", err)
 	}
 
@@ -360,12 +372,15 @@ func DeleteUser(userID string, args []string) error {
 	}
 
 	// First find the user to get its details
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
 
 	// Confirm deletion unless force flag is used
 	if !force {
@@ -383,9 +398,9 @@ func DeleteUser(userID string, args []string) error {
 	}
 
 	// Delete the user
-	deleteURL := fmt.Sprintf("%s/api/v1/users/%s", tenantURL, userID)
+	deleteURL := common.BuildGlobalAPIURL(profileInfo, fmt.Sprintf("/users/%s", userID))
 
-	if err := client.Delete(deleteURL, true); err != nil {
+	if err := client.Delete(deleteURL); err != nil {
 		return fmt.Errorf("failed to delete user: %v", err)
 	}
 

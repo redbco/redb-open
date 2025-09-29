@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+
 	"github.com/redbco/redb-open/cmd/cli/internal/auth"
 	"github.com/spf13/cobra"
 )
@@ -15,11 +16,12 @@ var authCmd = &cobra.Command{
 
 // loginCmd represents the login command
 var loginCmd = &cobra.Command{
-	Use:   "login",
+	Use:   "login [--profile=<profile_name>]",
 	Short: "Login to reDB",
-	Long:  `Login to reDB by providing username, password, hostname, and optionally tenant.`,
+	Long:  `Login to reDB using a profile or by providing connection details directly.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := auth.Login(args)
+		profileName, _ := cmd.Flags().GetString("profile")
+		err := auth.LoginWithProfile(args, profileName)
 		// Check if it's an AuthError and suppress usage help
 		var authError auth.AuthError
 		if errors.As(err, &authError) {
@@ -197,6 +199,9 @@ var changePasswordCmd = &cobra.Command{
 }
 
 func init() {
+	// Add flags to login command
+	loginCmd.Flags().String("profile", "", "Profile name to use for login")
+
 	// Add flags to logout-all command
 	logoutAllCmd.Flags().Bool("keep-current", false, "Keep the current session active")
 

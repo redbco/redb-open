@@ -12,8 +12,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/profile"
 	"golang.org/x/term"
 )
 
@@ -154,28 +155,200 @@ func getSystemInfo() (platform, operatingSystem, deviceType string) {
 	return
 }
 
-// Login authenticates the user
+// LoginWithProfile authenticates the user using a profile or direct connection details
+func LoginWithProfile(args []string, profileName string) error {
+	if profileName != "" {
+		return loginWithProfile(profileName, args)
+	}
+	// For backward compatibility, if no profile is specified, require the user to create one
+	return fmt.Errorf("profile name is required. Use 'redb-cli profiles create <name>' to create a profile, then 'redb-cli auth login --profile <name>' to login")
+}
+
+// Login authenticates the user (DEPRECATED - use profiles instead)
 func Login(args []string) error {
+	return fmt.Errorf("legacy login is deprecated. Use 'redb-cli profiles create <name>' to create a profile, then 'redb-cli auth login --profile <name>' to login")
+	/*
+		reader := bufio.NewReader(os.Stdin)
+
+		// Get username
+		var username string
+		if len(args) > 0 && strings.HasPrefix(args[0], "--username=") {
+			username = strings.TrimPrefix(args[0], "--username=")
+		} else {
+			fmt.Print("Username (email): ")
+			username, _ = reader.ReadString('\n')
+			username = strings.TrimSpace(username)
+		}
+
+		if username == "" {
+			return fmt.Errorf("username is required")
+		}
+
+		// Get password
+		var password string
+		if len(args) > 1 && strings.HasPrefix(args[1], "--password=") {
+			password = strings.TrimPrefix(args[1], "--password=")
+		} else {
+			fmt.Print("Password: ")
+			passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
+			if err != nil {
+				return fmt.Errorf("failed to read password: %v", err)
+			}
+			password = string(passwordBytes)
+			fmt.Println() // Add newline after password input
+		}
+
+		if password == "" {
+			return fmt.Errorf("password is required")
+		}
+
+		// Get hostname
+		var hostname string
+		if len(args) > 2 && strings.HasPrefix(args[2], "--hostname=") {
+			hostname = strings.TrimPrefix(args[2], "--hostname=")
+		} else {
+			fmt.Print("Hostname (default: localhost:8080): ")
+			hostname, _ = reader.ReadString('\n')
+			hostname = strings.TrimSpace(hostname)
+			if hostname == "" {
+				hostname = "localhost:8080"
+			}
+		}
+
+		// Check if tenant URL is already stored for this username
+		var tenantURL string
+		storedTenantURL, err := config.GetTenant(username)
+		if err == nil && storedTenantURL != "" {
+			// Use stored tenant URL
+			tenantURL = storedTenantURL
+			// fmt.Printf("Using stored tenant URL: %s\n", tenantURL)
+		} else {
+			// Get tenant URL from command line or prompt
+			if len(args) > 3 && strings.HasPrefix(args[3], "--tenant=") {
+				tenantURL = strings.TrimPrefix(args[3], "--tenant=")
+			} else {
+				fmt.Print("Tenant URL: ")
+				tenantURL, _ = reader.ReadString('\n')
+				tenantURL = strings.TrimSpace(tenantURL)
+			}
+
+			if tenantURL == "" {
+				return fmt.Errorf("tenant URL is required")
+			}
+		}
+
+		// Get optional session name
+		sessionName := "reDB CLI"
+		// var sessionName string
+		// fmt.Print("Session Name (optional, default: reDB CLI): ")
+		// sessionName, _ = reader.ReadString('\n')
+		// sessionName = strings.TrimSpace(sessionName)
+		// if sessionName == "" {
+		// 	sessionName = "reDB CLI"
+		// }
+
+		// Get system information
+		platform, operatingSystem, deviceType := getSystemInfo()
+
+		// Prepare login request with session metadata
+		loginReq := LoginRequest{
+			Username:        username,
+			Password:        password,
+			SessionName:     sessionName,
+			UserAgent:       fmt.Sprintf("redb-cli/%s (%s)", "1.0.0", operatingSystem),
+			Platform:        platform,
+			OperatingSystem: operatingSystem,
+			DeviceType:      deviceType,
+		}
+
+		// Ensure protocol is included in hostname
+		if !strings.HasPrefix(hostname, "http://") && !strings.HasPrefix(hostname, "https://") {
+			hostname = "http://" + hostname
+		}
+
+		// Make login request with tenant URL
+		client := httpclient.GetClient()
+		url := fmt.Sprintf("%s/%s/api/v1/auth/login", hostname, tenantURL)
+
+		var loginResp LoginResponse
+		if err = client.Post(url, loginReq, &loginResp, false); err != nil {
+			return fmt.Errorf("login failed: %v", err)
+		}
+
+		// Store credentials in keyring
+		if err = config.StoreUsername(username); err != nil {
+			return fmt.Errorf("failed to store username: %v", err)
+		}
+
+		if err = config.StoreToken(username, loginResp.AccessToken); err != nil {
+			return fmt.Errorf("failed to store token: %v", err)
+		}
+
+		if err = config.StoreRefreshToken(username, loginResp.RefreshToken); err != nil {
+			return fmt.Errorf("failed to store refresh token: %v", err)
+		}
+
+		if err = config.StoreSessionID(username, loginResp.SessionID); err != nil {
+			return fmt.Errorf("failed to store session ID: %v", err)
+		}
+
+		if err = config.StoreHostname(username, hostname); err != nil {
+			return fmt.Errorf("failed to store hostname: %v", err)
+		}
+
+		if err = config.StoreTenant(username, tenantURL); err != nil {
+			return fmt.Errorf("failed to store tenant: %v", err)
+		}
+
+		fmt.Printf("Successfully logged in as %s\n", username)
+		// fmt.Printf("Tenant: %s\n", tenantURL)
+		fmt.Printf("Session: %s (ID: %s)\n", sessionName, loginResp.SessionID)
+
+		// Check if workspace is already selected
+		currentWorkspace, err := config.GetWorkspace(username)
+		if err != nil || currentWorkspace == "" {
+			// Prompt for workspace selection
+			fmt.Print("\nSelect workspace (press Enter to skip): ")
+			workspaceInput, _ := reader.ReadString('\n')
+			workspaceInput = strings.TrimSpace(workspaceInput)
+
+			if workspaceInput != "" {
+				// Validate and store the workspace
+				if err := SelectWorkspace(workspaceInput); err != nil {
+					fmt.Printf("Warning: Failed to select workspace '%s': %v\n", workspaceInput, err)
+					fmt.Println("You can select a workspace later using 'redb-cli select workspace <name>'")
+				} else {
+					fmt.Printf("Selected workspace: %s\n", workspaceInput)
+				}
+			} else {
+				fmt.Println("No workspace selected. Use 'redb-cli select workspace <name>' to select one later.")
+			}
+		}
+
+		return nil
+	*/
+}
+
+// loginWithProfile handles login using a profile
+func loginWithProfile(profileName string, args []string) error {
+	// Import profile package
+	pm, err := profile.NewProfileManager()
+	if err != nil {
+		return fmt.Errorf("failed to initialize profile manager: %v", err)
+	}
+
+	// Get the profile
+	prof, err := pm.GetProfile(profileName)
+	if err != nil {
+		return fmt.Errorf("profile '%s' not found: %v", profileName, err)
+	}
+
 	reader := bufio.NewReader(os.Stdin)
 
-	// Get username
-	var username string
-	if len(args) > 0 && strings.HasPrefix(args[0], "--username=") {
-		username = strings.TrimPrefix(args[0], "--username=")
-	} else {
-		fmt.Print("Username (email): ")
-		username, _ = reader.ReadString('\n')
-		username = strings.TrimSpace(username)
-	}
-
-	if username == "" {
-		return fmt.Errorf("username is required")
-	}
-
-	// Get password
+	// Get password (required for login)
 	var password string
-	if len(args) > 1 && strings.HasPrefix(args[1], "--password=") {
-		password = strings.TrimPrefix(args[1], "--password=")
+	if len(args) > 0 && strings.HasPrefix(args[0], "--password=") {
+		password = strings.TrimPrefix(args[0], "--password=")
 	} else {
 		fmt.Print("Password: ")
 		passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
@@ -190,185 +363,145 @@ func Login(args []string) error {
 		return fmt.Errorf("password is required")
 	}
 
-	// Get hostname
-	var hostname string
-	if len(args) > 2 && strings.HasPrefix(args[2], "--hostname=") {
-		hostname = strings.TrimPrefix(args[2], "--hostname=")
-	} else {
-		fmt.Print("Hostname (default: localhost:8080): ")
-		hostname, _ = reader.ReadString('\n')
-		hostname = strings.TrimSpace(hostname)
-		if hostname == "" {
-			hostname = "localhost:8080"
-		}
-	}
-
-	// Check if tenant URL is already stored for this username
-	var tenantURL string
-	storedTenantURL, err := config.GetTenant(username)
-	if err == nil && storedTenantURL != "" {
-		// Use stored tenant URL
-		tenantURL = storedTenantURL
-		// fmt.Printf("Using stored tenant URL: %s\n", tenantURL)
-	} else {
-		// Get tenant URL from command line or prompt
-		if len(args) > 3 && strings.HasPrefix(args[3], "--tenant=") {
-			tenantURL = strings.TrimPrefix(args[3], "--tenant=")
-		} else {
-			fmt.Print("Tenant URL: ")
-			tenantURL, _ = reader.ReadString('\n')
-			tenantURL = strings.TrimSpace(tenantURL)
-		}
-
-		if tenantURL == "" {
-			return fmt.Errorf("tenant URL is required")
-		}
-	}
-
-	// Get optional session name
-	sessionName := "reDB CLI"
-	// var sessionName string
-	// fmt.Print("Session Name (optional, default: reDB CLI): ")
-	// sessionName, _ = reader.ReadString('\n')
-	// sessionName = strings.TrimSpace(sessionName)
-	// if sessionName == "" {
-	// 	sessionName = "reDB CLI"
-	// }
-
 	// Get system information
 	platform, operatingSystem, deviceType := getSystemInfo()
 
 	// Prepare login request with session metadata
 	loginReq := LoginRequest{
-		Username:        username,
+		Username:        prof.Username,
 		Password:        password,
-		SessionName:     sessionName,
+		SessionName:     fmt.Sprintf("reDB CLI (%s)", profileName),
 		UserAgent:       fmt.Sprintf("redb-cli/%s (%s)", "1.0.0", operatingSystem),
 		Platform:        platform,
 		OperatingSystem: operatingSystem,
 		DeviceType:      deviceType,
 	}
 
-	// Ensure protocol is included in hostname
-	if !strings.HasPrefix(hostname, "http://") && !strings.HasPrefix(hostname, "https://") {
-		hostname = "http://" + hostname
-	}
-
-	// Make login request with tenant URL
+	// Make login request with profile's tenant URL
 	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/%s/api/v1/auth/login", hostname, tenantURL)
+	url := fmt.Sprintf("%s/api/v1/auth/login", prof.GetTenantURL())
 
 	var loginResp LoginResponse
 	if err = client.Post(url, loginReq, &loginResp, false); err != nil {
 		return fmt.Errorf("login failed: %v", err)
 	}
 
-	// Store credentials in keyring
-	if err = config.StoreUsername(username); err != nil {
-		return fmt.Errorf("failed to store username: %v", err)
+	// Update profile with session information
+	prof.AccessToken = loginResp.AccessToken
+	prof.RefreshToken = loginResp.RefreshToken
+	prof.SessionID = loginResp.SessionID
+
+	// Update token expiry information
+	prof.UpdateTokenExpiry()
+
+	// Save updated profile
+	if err := pm.UpdateProfile(prof); err != nil {
+		return fmt.Errorf("failed to save profile: %v", err)
 	}
 
-	if err = config.StoreToken(username, loginResp.AccessToken); err != nil {
-		return fmt.Errorf("failed to store token: %v", err)
+	// Set this profile as active
+	if err := pm.SetActiveProfile(profileName); err != nil {
+		return fmt.Errorf("failed to set active profile: %v", err)
 	}
 
-	if err = config.StoreRefreshToken(username, loginResp.RefreshToken); err != nil {
-		return fmt.Errorf("failed to store refresh token: %v", err)
-	}
+	fmt.Printf("Successfully logged in to profile '%s' as %s\n", profileName, prof.Username)
+	fmt.Printf("Endpoint: %s\n", prof.GetBaseURL())
+	fmt.Printf("Tenant: %s\n", prof.TenantURL)
+	fmt.Printf("Session: %s (ID: %s)\n", loginReq.SessionName, loginResp.SessionID)
 
-	if err = config.StoreSessionID(username, loginResp.SessionID); err != nil {
-		return fmt.Errorf("failed to store session ID: %v", err)
-	}
-
-	if err = config.StoreHostname(username, hostname); err != nil {
-		return fmt.Errorf("failed to store hostname: %v", err)
-	}
-
-	if err = config.StoreTenant(username, tenantURL); err != nil {
-		return fmt.Errorf("failed to store tenant: %v", err)
-	}
-
-	fmt.Printf("Successfully logged in as %s\n", username)
-	// fmt.Printf("Tenant: %s\n", tenantURL)
-	fmt.Printf("Session: %s (ID: %s)\n", sessionName, loginResp.SessionID)
-
-	// Check if workspace is already selected
-	currentWorkspace, err := config.GetWorkspace(username)
-	if err != nil || currentWorkspace == "" {
+	// Check if workspace is set in profile
+	if prof.Workspace == "" {
 		// Prompt for workspace selection
 		fmt.Print("\nSelect workspace (press Enter to skip): ")
 		workspaceInput, _ := reader.ReadString('\n')
 		workspaceInput = strings.TrimSpace(workspaceInput)
 
 		if workspaceInput != "" {
-			// Validate and store the workspace
-			if err := SelectWorkspace(workspaceInput); err != nil {
-				fmt.Printf("Warning: Failed to select workspace '%s': %v\n", workspaceInput, err)
-				fmt.Println("You can select a workspace later using 'redb-cli select workspace <name>'")
+			prof.Workspace = workspaceInput
+			if err := pm.UpdateProfile(prof); err != nil {
+				fmt.Printf("Warning: Failed to save workspace to profile: %v\n", err)
 			} else {
-				fmt.Printf("Selected workspace: %s\n", workspaceInput)
+				fmt.Printf("Workspace '%s' saved to profile.\n", workspaceInput)
 			}
-		} else {
-			fmt.Println("No workspace selected. Use 'redb-cli select workspace <name>' to select one later.")
 		}
-	}
-
-	return nil
-}
-
-// Logout logs out the current user
-func Logout() error {
-	username, err := config.GetUsername()
-	if err != nil {
-		return AuthError{message: "no user is currently logged in"}
-	}
-
-	// Get refresh token for logout
-	refreshToken, err := config.GetRefreshToken(username)
-	if err != nil {
-		// If we can't get the refresh token, just clear local credentials
-		fmt.Println("⚠️  Could not get refresh token for logout, clearing local credentials only")
 	} else {
-		// Call logout API endpoint with refresh token
-		tenantURL, err := config.GetTenantURL()
-		if err == nil {
-			client := httpclient.GetClient()
-			url := fmt.Sprintf("%s/api/v1/auth/logout", tenantURL)
-
-			logoutReq := LogoutRequest{
-				RefreshToken: refreshToken,
-			}
-
-			// Attempt to logout from server (ignore errors as we'll clear local credentials anyway)
-			var logoutResp LogoutResponse
-			if err := client.Post(url, logoutReq, &logoutResp, false); err != nil {
-				// Log the error but don't fail the logout process
-				fmt.Printf("⚠️  %v\n", err)
-			}
-		}
+		fmt.Printf("Using workspace: %s\n", prof.Workspace)
 	}
 
-	// Clear local credentials
-	if err := config.ClearCredentials(username); err != nil {
-		return AuthError{message: fmt.Sprintf("failed to clear credentials: %v", err)}
-	}
-
-	fmt.Printf("✅ Successfully logged out %s\n", username)
 	return nil
 }
 
-// Profile displays the current user's profile
+// Logout logs out the current user from the active profile
+func Logout() error {
+	pm, err := profile.NewProfileManager()
+	if err != nil {
+		return fmt.Errorf("failed to initialize profile manager: %v", err)
+	}
+
+	activeProfileName, err := pm.GetActiveProfile()
+	if err != nil {
+		return AuthError{message: "no active profile found. Use 'redb-cli profiles list' to see available profiles"}
+	}
+
+	prof, err := pm.GetProfile(activeProfileName)
+	if err != nil {
+		return fmt.Errorf("failed to get active profile '%s': %v", activeProfileName, err)
+	}
+
+	if !prof.IsLoggedIn() {
+		return AuthError{message: fmt.Sprintf("profile '%s' is not logged in", activeProfileName)}
+	}
+
+	// Call logout API endpoint with refresh token if available
+	if prof.RefreshToken != "" {
+		client := httpclient.GetClient()
+		url := fmt.Sprintf("%s/api/v1/auth/logout", prof.GetTenantURL())
+
+		logoutReq := LogoutRequest{
+			RefreshToken: prof.RefreshToken,
+		}
+
+		var logoutResp LogoutResponse
+		if err := client.Post(url, logoutReq, &logoutResp, false); err != nil {
+			fmt.Printf("⚠️  Failed to logout from server: %v\n", err)
+		} else {
+			fmt.Println("Successfully logged out from server")
+		}
+	} else {
+		fmt.Println("⚠️  No refresh token found, clearing local credentials only")
+	}
+
+	// Clear profile credentials
+	prof.AccessToken = ""
+	prof.RefreshToken = ""
+	prof.SessionID = ""
+	prof.AccessTokenExpiry = time.Time{}
+	prof.RefreshTokenExpiry = time.Time{}
+
+	if err := pm.UpdateProfile(prof); err != nil {
+		return fmt.Errorf("failed to clear profile credentials: %v", err)
+	}
+
+	fmt.Printf("✅ Successfully logged out from profile: %s\n", activeProfileName)
+	return nil
+}
+
+// Profile displays the current user's profile using the active profile
 func Profile() error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/auth/profile", tenantURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/api/v1/auth/profile", profileInfo.TenantURL)
 
 	var response ProfileResponse
-	if err := client.Get(url, &response, true); err != nil {
+	if err := client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get profile: %v", err)
 	}
 
@@ -389,18 +522,22 @@ func Profile() error {
 	return nil
 }
 
-// ListSessions lists all active sessions for the authenticated user
+// ListSessions lists all active sessions for the authenticated user using the active profile
 func ListSessions() error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/auth/sessions", tenantURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/api/v1/auth/sessions", profileInfo.TenantURL)
 
 	var sessionsResp SessionsResponse
-	if err := client.Get(url, &sessionsResp, true); err != nil {
+	if err := client.Get(url, &sessionsResp); err != nil {
 		return fmt.Errorf("failed to get sessions: %v", err)
 	}
 
@@ -443,16 +580,19 @@ func LogoutSession(sessionID string) error {
 		return AuthError{message: "session ID is required"}
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/auth/sessions/%s/logout", tenantURL, sessionID)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("%s/api/v1/auth/sessions/%s/logout", profileInfo.TenantURL, sessionID)
 
 	var response LogoutSessionResponse
-	if err := client.Post(url, nil, &response, true); err != nil {
+	if err := client.Post(url, nil, &response); err != nil {
 		return AuthError{message: fmt.Sprintf("failed to logout session: %v", err)}
 	}
 
@@ -462,20 +602,23 @@ func LogoutSession(sessionID string) error {
 
 // LogoutAllSessions logs out all sessions for the authenticated user
 func LogoutAllSessions(excludeCurrent bool) error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/auth/sessions/logout-all", tenantURL)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("%s/api/v1/auth/sessions/logout-all", profileInfo.TenantURL)
 
 	logoutReq := LogoutAllSessionsRequest{
 		ExcludeCurrent: excludeCurrent,
 	}
 
 	var response LogoutAllSessionsResponse
-	if err := client.Post(url, logoutReq, &response, true); err != nil {
+	if err := client.Post(url, logoutReq, &response); err != nil {
 		return fmt.Errorf("failed to logout all sessions: %v", err)
 	}
 
@@ -492,20 +635,23 @@ func UpdateSessionName(sessionID, newName string) error {
 		return fmt.Errorf("session name is required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/auth/sessions/%s/name", tenantURL, sessionID)
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("%s/api/v1/auth/sessions/%s/name", profileInfo.TenantURL, sessionID)
 
 	updateReq := UpdateSessionNameRequest{
 		SessionName: newName,
 	}
 
 	var response UpdateSessionNameResponse
-	if err := client.Put(url, updateReq, &response, true); err != nil {
+	if err := client.Put(url, updateReq, &response); err != nil {
 		return fmt.Errorf("failed to update session name: %v", err)
 	}
 
@@ -513,8 +659,29 @@ func UpdateSessionName(sessionID, newName string) error {
 	return nil
 }
 
-// ChangePassword changes the current user's password
+// ChangePassword changes the current user's password using the active profile
 func ChangePassword(args []string) error {
+	// Initialize profile manager
+	pm, err := profile.NewProfileManager()
+	if err != nil {
+		return fmt.Errorf("failed to initialize profile manager: %v", err)
+	}
+
+	// Get active profile
+	activeProfileName, err := pm.GetActiveProfile()
+	if err != nil {
+		return fmt.Errorf("no active profile found. Use 'redb-cli profiles list' to see available profiles or 'redb-cli profiles create <name>' to create one: %v", err)
+	}
+
+	prof, err := pm.GetProfile(activeProfileName)
+	if err != nil {
+		return fmt.Errorf("failed to get active profile '%s': %v", activeProfileName, err)
+	}
+
+	if !prof.IsLoggedIn() {
+		return fmt.Errorf("profile '%s' is not logged in or session has expired. Use 'redb-cli auth login --profile %s' to login", prof.Name, prof.Name)
+	}
+
 	// Get current password
 	var currentPassword string
 	if len(args) > 0 && strings.HasPrefix(args[0], "--current-password=") {
@@ -570,20 +737,19 @@ func ChangePassword(args []string) error {
 		NewPassword: newPassword,
 	}
 
-	// Get tenant URL
-	tenantURL, err := config.GetTenantURL()
+	// Get profile-aware HTTP client
+	client, err := httpclient.GetProfileClient()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get profile client: %v", err)
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/auth/change-password", tenantURL)
+	url := fmt.Sprintf("%s/api/v1/auth/change-password", prof.GetTenantURL())
 
-	if err := client.Post(url, changeReq, nil, true); err != nil {
+	if err := client.Post(url, changeReq, nil); err != nil {
 		return fmt.Errorf("failed to change password: %v", err)
 	}
 
-	fmt.Println("Password changed successfully")
+	fmt.Printf("Password changed successfully for profile '%s'\n", prof.Name)
 	return nil
 }
 
@@ -627,79 +793,62 @@ func parseJWTToken(token string) (*JWTClaims, error) {
 	return &claims, nil
 }
 
-// Status shows the current authentication status
+// Status shows the current authentication status using profiles
 func Status() error {
-	// Try to get the current username
-	username, err := config.GetUsername()
+	pm, err := profile.NewProfileManager()
 	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
+		return fmt.Errorf("failed to initialize profile manager: %v", err)
+	}
+
+	activeProfileName, err := pm.GetActiveProfile()
+	if err != nil {
+		fmt.Println("Authentication Status: No active profile")
+		fmt.Println("Use 'redb-cli profiles list' to see available profiles or 'redb-cli profiles create <name>' to create one")
 		return nil
 	}
 
-	// Get stored credentials
-	accessToken, err := config.GetToken(username)
+	prof, err := pm.GetProfile(activeProfileName)
 	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Printf("Username found: %s\n", username)
-		fmt.Println("Access token not found in keyring")
+		fmt.Printf("Authentication Status: Error loading profile '%s': %v\n", activeProfileName, err)
 		return nil
 	}
 
-	refreshToken, err := config.GetRefreshToken(username)
-	if err != nil {
-		fmt.Println("Authentication Status: Partially logged in")
-		fmt.Printf("Username: %s\n", username)
-		fmt.Println("Refresh token not found in keyring")
+	if !prof.IsLoggedIn() {
+		fmt.Printf("Authentication Status: Not logged in (Profile: %s)\n", activeProfileName)
+		fmt.Printf("Profile: %s\n", prof.Name)
+		fmt.Printf("Username: %s\n", prof.Username)
+		fmt.Printf("Tenant URL: %s\n", prof.GetTenantURL())
+		fmt.Printf("Workspace: %s\n", prof.Workspace)
+		fmt.Println("Use 'redb-cli auth login --profile " + prof.Name + "' to login")
 		return nil
-	}
-
-	// Get tenant URL
-	tenantURL, err := config.GetTenantURL()
-	if err != nil {
-		fmt.Println("Authentication Status: Partially logged in")
-		fmt.Printf("Username: %s\n", username)
-		fmt.Println("Tenant URL not found in keyring")
-		return nil
-	}
-
-	// Get workspace
-	workspace, err := config.GetWorkspace(username)
-	if err != nil {
-		workspace = "Not selected"
 	}
 
 	// Parse token expiration times
 	var accessExpiry, refreshExpiry string
-	var accessExpiryTime, refreshExpiryTime time.Time
+	accessExpired := prof.IsAccessTokenExpired()
+	refreshExpired := prof.IsRefreshTokenExpired()
 
-	if accessClaims, parseErr := parseJWTToken(accessToken); parseErr == nil {
-		accessExpiryTime = time.Unix(accessClaims.Exp, 0)
-		accessExpiry = accessExpiryTime.Format("2006-01-02 15:04:05 MST")
+	if !prof.AccessTokenExpiry.IsZero() {
+		accessExpiry = prof.AccessTokenExpiry.Format("2006-01-02 15:04:05 MST")
 	} else {
-		accessExpiry = "Unable to parse"
+		accessExpiry = "Unknown"
 	}
 
-	if refreshClaims, parseErr := parseJWTToken(refreshToken); parseErr == nil {
-		refreshExpiryTime = time.Unix(refreshClaims.Exp, 0)
-		refreshExpiry = refreshExpiryTime.Format("2006-01-02 15:04:05 MST")
+	if !prof.RefreshTokenExpiry.IsZero() {
+		refreshExpiry = prof.RefreshTokenExpiry.Format("2006-01-02 15:04:05 MST")
 	} else {
-		refreshExpiry = "Unable to parse"
+		refreshExpiry = "Unknown"
 	}
-
-	// Check if tokens are expired
-	now := time.Now()
-	accessExpired := accessExpiryTime.Before(now)
-	refreshExpired := refreshExpiryTime.Before(now)
 
 	// Display status
-	fmt.Println("Authentication Status: Logged in")
+	fmt.Printf("Authentication Status: Logged in (Profile: %s)\n", prof.Name)
 	fmt.Println("----------------------------------------")
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintf(w, "Username:\t%s\n", username)
-	fmt.Fprintf(w, "Tenant URL:\t%s\n", tenantURL)
-	fmt.Fprintf(w, "Selected Workspace:\t%s\n", workspace)
+	fmt.Fprintf(w, "Profile:\t%s\n", prof.Name)
+	fmt.Fprintf(w, "Username:\t%s\n", prof.Username)
+	fmt.Fprintf(w, "Tenant URL:\t%s\n", prof.GetTenantURL())
+	fmt.Fprintf(w, "Selected Workspace:\t%s\n", prof.Workspace)
 
 	// Show token status
 	accessStatus := "Valid"
@@ -728,21 +877,41 @@ func Status() error {
 	return nil
 }
 
-// SelectWorkspace selects the active workspace
+// SelectWorkspace selects the active workspace for the current profile
 func SelectWorkspace(workspaceName string) error {
 	if workspaceName == "" {
 		return fmt.Errorf("workspace name is required")
 	}
 
-	// Get tenant URL
-	tenantURL, err := config.GetTenantURL()
+	// Initialize profile manager
+	pm, err := profile.NewProfileManager()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to initialize profile manager: %v", err)
+	}
+
+	// Get active profile
+	activeProfileName, err := pm.GetActiveProfile()
+	if err != nil {
+		return fmt.Errorf("no active profile found. Use 'redb-cli profiles list' to see available profiles or 'redb-cli profiles create <name>' to create one: %v", err)
+	}
+
+	prof, err := pm.GetProfile(activeProfileName)
+	if err != nil {
+		return fmt.Errorf("failed to get active profile '%s': %v", activeProfileName, err)
+	}
+
+	if !prof.IsLoggedIn() {
+		return fmt.Errorf("profile '%s' is not logged in or session has expired. Use 'redb-cli auth login --profile %s' to login", prof.Name, prof.Name)
+	}
+
+	// Get profile-aware HTTP client
+	client, err := httpclient.GetProfileClient()
+	if err != nil {
+		return fmt.Errorf("failed to get profile client: %v", err)
 	}
 
 	// Get list of workspaces to validate the name
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces", tenantURL)
+	url := fmt.Sprintf("%s/api/v1/workspaces", prof.GetTenantURL())
 
 	var response struct {
 		Workspaces []struct {
@@ -751,7 +920,7 @@ func SelectWorkspace(workspaceName string) error {
 		} `json:"workspaces"`
 	}
 
-	if err = client.Get(url, &response, true); err != nil {
+	if err = client.Get(url, &response); err != nil {
 		return fmt.Errorf("failed to get workspaces: %v", err)
 	}
 
@@ -772,16 +941,12 @@ func SelectWorkspace(workspaceName string) error {
 		return fmt.Errorf("workspace '%s' not found", workspaceName)
 	}
 
-	// Store the selected workspace
-	username, err := config.GetUsername()
-	if err != nil {
-		return fmt.Errorf("no user logged in: %v", err)
+	// Store the selected workspace in the profile
+	prof.Workspace = workspaceName
+	if err := pm.UpdateProfile(prof); err != nil {
+		return fmt.Errorf("failed to save workspace selection to profile: %v", err)
 	}
 
-	if err := config.StoreWorkspace(username, workspaceName); err != nil {
-		return fmt.Errorf("failed to store workspace selection: %v", err)
-	}
-
-	fmt.Printf("Selected workspace: %s (ID: %s)\n", workspaceName, selectedWorkspace.ID)
+	fmt.Printf("Selected workspace: %s (ID: %s) for profile '%s'\n", workspaceName, selectedWorkspace.ID, prof.Name)
 	return nil
 }

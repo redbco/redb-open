@@ -163,10 +163,6 @@ var nodeStatusCmd = &cobra.Command{
 }
 
 func init() {
-	// Add main commands
-	rootCmd.AddCommand(meshCmd)
-	rootCmd.AddCommand(nodeCmd)
-
 	// === Core Mesh Operations ===
 	meshCmd.AddCommand(seedMeshCmd)
 	meshCmd.AddCommand(joinMeshCmd)

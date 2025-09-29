@@ -51,11 +51,43 @@ Artifacts are placed under `bin/` for local builds and `build/<os-arch>/` for mu
 # Start the supervisor (or run as a service)
 ./bin/redb-node
 
-# Login via CLI
-./bin/redb-cli auth login
+# Create a connection profile for your reDB instance
+./bin/redb-cli profiles create default --hostname localhost:8080
+
+# Login using the profile
+./bin/redb-cli auth login --profile default
+
+# Select a workspace (if you have multiple)
+./bin/redb-cli select workspace default
 ```
 
 When prompted during initialization, provide your PostgreSQL connection details. You can also preconfigure via `bin/config.yaml` or `sample_config/config.yaml`.
+
+### Profile Management
+
+reDB CLI uses profiles to manage connections to multiple reDB instances. Each profile stores:
+- Hostname/endpoint information
+- Tenant URL
+- Authentication tokens
+- Selected workspace
+
+Common profile commands:
+```bash
+# List all profiles
+./bin/redb-cli profiles list
+
+# Show current active profile
+./bin/redb-cli profiles show
+
+# Switch between profiles
+./bin/redb-cli profiles activate <profile-name>
+
+# Delete a profile
+./bin/redb-cli profiles delete <profile-name>
+
+# Clean all profiles and logout
+./bin/redb-cli clean
+```
 
 ### Cross-Compiling and Targets
 

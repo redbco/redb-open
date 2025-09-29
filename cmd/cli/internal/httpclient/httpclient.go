@@ -68,17 +68,9 @@ func (c *HTTPClient) makeRequest(method, url string, body interface{}, requireAu
 
 	// Add authentication if required and available
 	if requireAuth {
-		username, authErr := config.GetUsername()
-		if authErr != nil {
-			return nil, fmt.Errorf("authentication required but no user logged in: %v", authErr)
-		}
-
-		token, authErr := config.GetToken(username)
-		if authErr != nil {
-			return nil, fmt.Errorf("authentication required but no valid token found: %v", authErr)
-		}
-
-		req.Header.Set("Authorization", "Bearer "+token)
+		// For authenticated requests, we should use ProfileHTTPClient instead
+		// This is kept for backward compatibility with legacy login flows
+		return nil, fmt.Errorf("authentication required - use ProfileHTTPClient for authenticated requests")
 	}
 
 	resp, err := c.client.Do(req)

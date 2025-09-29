@@ -25,6 +25,7 @@ func setupCommands() {
 
 	// Add mesh commands
 	rootCmd.AddCommand(meshCmd)
+	rootCmd.AddCommand(nodeCmd)
 
 	// Add users commands
 	rootCmd.AddCommand(usersCmd)
@@ -49,6 +50,9 @@ func setupCommands() {
 
 	// Add commits commands
 	rootCmd.AddCommand(commitsCmd)
+
+	// Add clean command
+	rootCmd.AddCommand(cleanCmd)
 }
 
 // setupCompletion adds shell completion support

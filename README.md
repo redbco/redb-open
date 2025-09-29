@@ -29,10 +29,26 @@ make dev-tools   # optional Go tools
 make local       # builds Go services + Rust mesh
 ./bin/redb-node --initialize
 ./bin/redb-node &
-./bin/redb-cli auth login
+./bin/redb-cli profiles create default --hostname localhost:8080
+./bin/redb-cli auth login --profile default
 ```
 
 Full install docs: see `docs/INSTALL.md`.
+
+## First login
+
+After starting, create a profile and authenticate with the CLI:
+
+```bash
+# Create a connection profile
+./bin/redb-cli profiles create default --hostname localhost:8080
+
+# Login using the profile
+./bin/redb-cli auth login --profile default
+
+# Select workspace (if needed)
+./bin/redb-cli select workspace default
+```
 
 ### Make targets
 
@@ -41,14 +57,6 @@ Full install docs: see `docs/INSTALL.md`.
 - `make build-all`: linux/darwin/windows on amd64/arm64
 - `make test`: run Go and Rust tests
 - `make proto`, `make lint`, `make dev`
-
-## First login
-
-After starting, authenticate with the CLI:
-
-```bash
-./bin/redb-cli auth login
-```
 
 ## Architecture (short)
 
@@ -125,7 +133,8 @@ AGPL-3.0 for open-source use (`LICENSE`). Commercial license available (`LICENSE
 2) Build: `make local`
 3) Initialize: `./bin/redb-node --initialize`
 4) Start: `./bin/redb-node`
-5) Login: `./bin/redb-cli auth login`
+5) Create profile: `./bin/redb-cli profiles create default --hostname localhost:8080`
+6) Login: `./bin/redb-cli auth login --profile default`
 
 ---
 

@@ -155,13 +155,26 @@ func (m *Middleware) shouldSkipAuth(r *http.Request) bool {
 		return true
 	}
 
+	// Skip authentication for refresh endpoint (it validates the refresh token internally)
+	if strings.HasSuffix(path, "/auth/refresh") && method == http.MethodPost {
+		return true
+	}
+
 	// Skip authentication for OPTIONS requests (CORS preflight)
 	if method == http.MethodOptions {
 		return true
 	}
 
-	// Skip authentication for setup endpoint (no auth required)
+	// Skip authentication for setup endpoints (no auth required)
 	if strings.HasPrefix(path, "/api/v1/setup") {
+		return true
+	}
+	if strings.Contains(path, "/api/v1/setup/user") {
+		return true
+	}
+
+	// Skip authentication for status endpoint (no auth required)
+	if strings.HasSuffix(path, "/api/v1/status") && method == http.MethodGet {
 		return true
 	}
 
@@ -184,6 +197,11 @@ func (m *Middleware) isGlobalEndpoint(r *http.Request) bool {
 
 	// Global tenant endpoints
 	if strings.HasPrefix(path, "/api/v1/tenants") {
+		return true
+	}
+
+	// Global status endpoint
+	if strings.HasSuffix(path, "/api/v1/status") {
 		return true
 	}
 

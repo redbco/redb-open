@@ -6,8 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/redbco/redb-open/cmd/cli/internal/config"
-	"github.com/redbco/redb-open/cmd/cli/internal/httpclient"
+	"github.com/redbco/redb-open/cmd/cli/internal/common"
 )
 
 type MappingRuleMetadata struct {
@@ -159,25 +158,19 @@ func AddTableMapping(args []string) error {
 		PolicyID:                  policyID,
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/mappings/table", tenantURL, workspaceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/mappings/table")
+	if err != nil {
+		return err
+	}
 
 	var response struct {
 		Message string  `json:"message"`
@@ -185,7 +178,7 @@ func AddTableMapping(args []string) error {
 		Mapping Mapping `json:"mapping"`
 		Status  string  `json:"status"`
 	}
-	if err := client.Post(url, tableMappingReq, &response, true); err != nil {
+	if err := client.Post(url, tableMappingReq, &response); err != nil {
 		return fmt.Errorf("failed to create table mapping: %v", err)
 	}
 
@@ -193,32 +186,27 @@ func AddTableMapping(args []string) error {
 	return nil
 }
 
-// ListMappings lists all mappings
+// ListMappings lists all mappings using profile-based authentication
 func ListMappings() error {
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
 
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/mappings", tenantURL, workspaceName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/mappings")
+	if err != nil {
+		return err
+	}
 
 	var mappingsResponse struct {
 		Mappings []Mapping `json:"mappings"`
 	}
-	if err := client.Get(url, &mappingsResponse, true); err != nil {
+	if err := client.Get(url, &mappingsResponse); err != nil {
 		return fmt.Errorf("failed to list mappings: %v", err)
 	}
 
@@ -252,30 +240,24 @@ func ShowMapping(mappingName string) error {
 		return fmt.Errorf("mapping name is required")
 	}
 
-	tenantURL, err := config.GetTenantURL()
+	profileInfo, err := common.GetActiveProfileInfo()
 	if err != nil {
 		return err
 	}
 
-	username, err := config.GetUsername()
-	if err != nil {
-		fmt.Println("Authentication Status: Not logged in")
-		fmt.Println("No user credentials found in keyring")
-		return nil
-	}
-
-	workspaceName, err := config.GetWorkspaceWithError(username)
+	client, err := common.GetProfileClient()
 	if err != nil {
 		return err
 	}
-
-	client := httpclient.GetClient()
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/mappings/%s", tenantURL, workspaceName, mappingName)
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/mappings/%s", mappingName))
+	if err != nil {
+		return err
+	}
 
 	var mappingResponse struct {
 		Mapping Mapping `json:"mapping"`
 	}
-	if err := client.Get(url, &mappingResponse, true); err != nil {
+	if err := client.Get(url, &mappingResponse); err != nil {
 		return fmt.Errorf("failed to get mapping details: %v", err)
 	}
 

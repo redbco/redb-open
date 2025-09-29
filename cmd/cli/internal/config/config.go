@@ -87,72 +87,6 @@ func GetConfig() *Config {
 	return globalConfig
 }
 
-// Keyring operations with fallback
-func StoreToken(username, token string) error {
-	return keyringManager.Set(ServiceName, fmt.Sprintf("%s:%s", username, TokenKey), token)
-}
-
-func GetToken(username string) (string, error) {
-	return keyringManager.Get(ServiceName, fmt.Sprintf("%s:%s", username, TokenKey))
-}
-
-func StoreRefreshToken(username, token string) error {
-	return keyringManager.Set(ServiceName, fmt.Sprintf("%s:%s", username, RefreshKey), token)
-}
-
-func GetRefreshToken(username string) (string, error) {
-	return keyringManager.Get(ServiceName, fmt.Sprintf("%s:%s", username, RefreshKey))
-}
-
-func StoreSessionID(username, sessionID string) error {
-	return keyringManager.Set(ServiceName, fmt.Sprintf("%s:%s", username, SessionKey), sessionID)
-}
-
-func GetSessionID(username string) (string, error) {
-	return keyringManager.Get(ServiceName, fmt.Sprintf("%s:%s", username, SessionKey))
-}
-
-func StoreHostname(username, hostname string) error {
-	return keyringManager.Set(ServiceName, fmt.Sprintf("%s:%s", username, HostnameKey), hostname)
-}
-
-func GetHostname(username string) (string, error) {
-	return keyringManager.Get(ServiceName, fmt.Sprintf("%s:%s", username, HostnameKey))
-}
-
-func StoreWorkspace(username, workspace string) error {
-	return keyringManager.Set(ServiceName, fmt.Sprintf("%s:%s", username, WorkspaceKey), workspace)
-}
-
-func GetWorkspace(username string) (string, error) {
-	return keyringManager.Get(ServiceName, fmt.Sprintf("%s:%s", username, WorkspaceKey))
-}
-
-// GetWorkspaceWithError provides a specific error message when no workspace is selected
-func GetWorkspaceWithError(username string) (string, error) {
-	workspace, err := GetWorkspace(username)
-	if err != nil {
-		return "", fmt.Errorf("no workspace selected. Please select a workspace first using 'redb-cli select workspace <workspace-name>' or 'redb-cli workspaces list' to see available workspaces")
-	}
-	return workspace, nil
-}
-
-func StoreTenant(username, tenant string) error {
-	return keyringManager.Set(ServiceName, fmt.Sprintf("%s:%s", username, TenantKey), tenant)
-}
-
-func GetTenant(username string) (string, error) {
-	return keyringManager.Get(ServiceName, fmt.Sprintf("%s:%s", username, TenantKey))
-}
-
-func StoreUsername(username string) error {
-	return keyringManager.Set(ServiceName, "current_user", username)
-}
-
-func GetUsername() (string, error) {
-	return keyringManager.Get(ServiceName, "current_user")
-}
-
 func ClearCredentials(username string) error {
 	// Clear all stored credentials for the user
 	if err := keyringManager.Delete(ServiceName, fmt.Sprintf("%s:%s", username, TokenKey)); err != nil {
@@ -177,66 +111,6 @@ func ClearCredentials(username string) error {
 		return fmt.Errorf("failed to delete current user: %v", err)
 	}
 	return nil
-}
-
-// GetBaseURL constructs the base URL for API calls
-func GetBaseURL() (string, error) {
-	username, err := GetUsername()
-	if err != nil {
-		return "", fmt.Errorf("no user logged in: %v", err)
-	}
-
-	hostname, err := GetHostname(username)
-	if err != nil {
-		hostname = globalConfig.DefaultHost
-	}
-
-	// Ensure protocol is included
-	if hostname[:7] != "http://" && hostname[:8] != "https://" {
-		hostname = "http://" + hostname
-	}
-
-	return hostname, nil
-}
-
-// GetTenantURL constructs the tenant-specific base URL
-func GetTenantURL() (string, error) {
-	baseURL, err := GetBaseURL()
-	if err != nil {
-		return "", err
-	}
-
-	username, err := GetUsername()
-	if err != nil {
-		return "", fmt.Errorf("no user logged in: %v", err)
-	}
-
-	tenant, err := GetTenant(username)
-	if err != nil {
-		return baseURL, nil // Return base URL if no tenant is set
-	}
-
-	return fmt.Sprintf("%s/%s", baseURL, tenant), nil
-}
-
-// GetGlobalAPIURL constructs the global API base URL (for endpoints without tenant prefix)
-func GetGlobalAPIURL() (string, error) {
-	username, err := GetUsername()
-	if err != nil {
-		return "", fmt.Errorf("no user logged in: %v", err)
-	}
-
-	hostname, err := GetHostname(username)
-	if err != nil {
-		hostname = globalConfig.DefaultHost
-	}
-
-	// Ensure protocol is included
-	if hostname[:7] != "http://" && hostname[:8] != "https://" {
-		hostname = "http://" + hostname
-	}
-
-	return hostname, nil
 }
 
 // GetGlobalAPIURLNoAuth constructs the global API base URL without requiring authentication

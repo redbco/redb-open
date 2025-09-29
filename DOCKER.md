@@ -280,11 +280,17 @@ When creating the initial tenant and user via the API, you specify the password 
 
 Once you've created the initial setup, you can use the credentials with the CLI:
 ```bash
-# Login with the CLI
-docker compose exec redb-node redb-cli auth login
+# Create a profile for your reDB instance
+docker compose exec redb-node redb-cli profiles create default --hostname localhost:8080 --tenant-url http://localhost:8080/mycompany
+
+# Login with the profile
+docker compose exec redb-node redb-cli auth login --profile default
 
 # Enter the email: (the email you set during setup)
 # Enter the password: (the password you set during setup)
+
+# Select workspace if needed
+docker compose exec redb-node redb-cli select workspace default
 ```
 
 ## CLI Usage
@@ -298,11 +304,14 @@ docker compose exec redb-node redb-cli --help
 # Initial setup (create first tenant, user, and workspace)
 docker compose exec redb-node redb-cli setup
 
+# Create a profile for your instance
+docker compose exec redb-node redb-cli profiles create default --hostname localhost:8080 --tenant-url http://localhost:8080/mycompany
+
+# Authenticate using the profile
+docker compose exec redb-node redb-cli auth login --profile default
+
 # List tenants
 docker compose exec redb-node redb-cli tenants list
-
-# Authenticate
-docker compose exec redb-node redb-cli auth login
 
 # Create a database
 docker compose exec redb-node redb-cli databases create
