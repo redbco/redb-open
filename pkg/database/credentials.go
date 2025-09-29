@@ -33,6 +33,11 @@ func GetProductionPassword() (string, error) {
 
 // FromProductionConfig creates a PostgreSQL config using keyring credentials
 func FromProductionConfig(databaseName string) (PostgreSQLConfig, error) {
+	return FromProductionConfigWithUser(databaseName, "")
+}
+
+// FromProductionConfigWithUser creates a PostgreSQL config using keyring credentials with specified user
+func FromProductionConfigWithUser(databaseName, databaseUser string) (PostgreSQLConfig, error) {
 	password, err := GetProductionPassword()
 	if err != nil {
 		return PostgreSQLConfig{}, err
@@ -47,8 +52,17 @@ func FromProductionConfig(databaseName string) (PostgreSQLConfig, error) {
 		dbName = DefaultDatabase
 	}
 
+	// Use provided database user, or try environment variable, or use default
+	dbUser := databaseUser
+	if dbUser == "" {
+		dbUser = os.Getenv("REDB_DATABASE_USER")
+	}
+	if dbUser == "" {
+		dbUser = ProductionUser
+	}
+
 	return PostgreSQLConfig{
-		User:              ProductionUser,
+		User:              dbUser,
 		Password:          password,
 		Host:              "localhost",
 		Port:              5432,

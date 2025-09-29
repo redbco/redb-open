@@ -93,11 +93,12 @@ func New(ctx context.Context, cfg PostgreSQLConfig) (*PostgreSQL, error) {
 // If the node has been initialized, it will use keyring credentials
 func FromGlobalConfig(cfg *config.Config) PostgreSQLConfig {
 	// Try to get production credentials from keyring first
-	var databaseName string
+	var databaseName, databaseUser string
 	if cfg != nil {
 		databaseName = cfg.Get("database.name")
+		databaseUser = cfg.Get("database.user")
 	}
-	if prodConfig, err := FromProductionConfig(databaseName); err == nil {
+	if prodConfig, err := FromProductionConfigWithUser(databaseName, databaseUser); err == nil {
 		return prodConfig
 	}
 
@@ -106,6 +107,15 @@ func FromGlobalConfig(cfg *config.Config) PostgreSQLConfig {
 	if dbName == "" {
 		// Try to get database name from environment variable
 		dbName = os.Getenv("REDB_DATABASE_NAME")
+	}
+
+	// Use provided database user from config, or try environment variable, or use default
+	dbUser := databaseUser
+	if dbUser == "" {
+		dbUser = os.Getenv("REDB_DATABASE_USER")
+	}
+	if dbUser == "" {
+		dbUser = "redb" // Default user
 	}
 
 	if dbName == "" {
@@ -124,7 +134,7 @@ func FromGlobalConfig(cfg *config.Config) PostgreSQLConfig {
 
 	// Fallback to default configuration
 	return PostgreSQLConfig{
-		User:              "redb",
+		User:              dbUser,
 		Password:          "redb",
 		Host:              "localhost",
 		Port:              5432,

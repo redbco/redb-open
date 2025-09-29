@@ -73,9 +73,24 @@ func (p *ServiceProcess) Start(ctx context.Context) error {
 	}
 
 	// Add database configuration from supervisor config
-	// This allows microservices to access the database name from environment variables
+	// This allows microservices to access the database configuration from environment variables
+	if p.globalConfig != nil {
+		// Pass database name from supervisor config
+		if p.globalConfig.Database.Name != "" {
+			p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_DATABASE_NAME=%s", p.globalConfig.Database.Name))
+		}
+		// Pass database user from supervisor config
+		if p.globalConfig.Database.User != "" {
+			p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_DATABASE_USER=%s", p.globalConfig.Database.User))
+		}
+	}
+
+	// Also check environment variables as fallback
 	if databaseName := os.Getenv("REDB_DATABASE_NAME"); databaseName != "" {
 		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_DATABASE_NAME=%s", databaseName))
+	}
+	if databaseUser := os.Getenv("REDB_DATABASE_USER"); databaseUser != "" {
+		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_DATABASE_USER=%s", databaseUser))
 	}
 
 	// Set output

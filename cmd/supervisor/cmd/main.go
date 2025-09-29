@@ -132,7 +132,7 @@ func main() {
 	}
 
 	// Validate that the database and tables exist before starting services
-	if err := validateDatabaseSetup(cfg.Database.Name); err != nil {
+	if err := validateDatabaseSetup(cfg.Database.Name, cfg.Database.User); err != nil {
 		fmt.Fprintf(os.Stderr, "Database validation failed: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Please run --initialize first to set up the database and schema.\n")
 		os.Exit(1)
@@ -438,9 +438,9 @@ func (s *Supervisor) addSystemReadyCallbacks() {
 }
 
 // validateDatabaseSetup checks if the database and required tables exist
-func validateDatabaseSetup(databaseName string) error {
+func validateDatabaseSetup(databaseName, databaseUser string) error {
 	// Try to get production credentials from keyring first
-	dbConfig, err := database.FromProductionConfig(databaseName)
+	dbConfig, err := database.FromProductionConfigWithUser(databaseName, databaseUser)
 	if err != nil {
 		// If keyring credentials don't exist, try default credentials
 		dbConfig = database.PostgreSQLConfig{
@@ -524,10 +524,20 @@ func validateDatabaseSetup(databaseName string) error {
 
 // initializeDatabaseConnection sets up the database connection for the service manager
 func (s *Supervisor) initializeDatabaseConnection(ctx context.Context) error {
-	// Get database configuration
-	dbConfig := database.FromGlobalConfig(nil) // Use nil to get config from environment
-	if dbConfig.Database == "" {
-		dbConfig.Database = s.config.Database.Name
+	// Get database configuration using superconfig values
+	dbConfig, err := database.FromProductionConfigWithUser(s.config.Database.Name, s.config.Database.User)
+	if err != nil {
+		// If keyring credentials don't exist, use fallback configuration
+		dbConfig = database.PostgreSQLConfig{
+			User:              s.config.Database.User,
+			Password:          "redb", // fallback password
+			Host:              "localhost",
+			Port:              5432,
+			Database:          s.config.Database.Name,
+			SSLMode:           "disable",
+			MaxConnections:    40,
+			ConnectionTimeout: 5 * time.Second,
+		}
 	}
 
 	// Initialize database connection
