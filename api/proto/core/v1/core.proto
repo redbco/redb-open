@@ -158,6 +158,7 @@ service CommitService {
 service MappingService {
   rpc ListMappings(ListMappingsRequest) returns (ListMappingsResponse);
   rpc ShowMapping(ShowMappingRequest) returns (ShowMappingResponse);
+  rpc AddMapping(AddMappingRequest) returns (AddMappingResponse);
   rpc AddDatabaseMapping(AddDatabaseMappingRequest) returns (AddMappingResponse);
   rpc AddTableMapping(AddTableMappingRequest) returns (AddMappingResponse);
   rpc AddEmptyMapping(AddEmptyMappingRequest) returns (AddMappingResponse);
@@ -2044,6 +2045,19 @@ message ShowMappingRequest {
 // Show a mapping response
 message ShowMappingResponse {
     Mapping mapping = 1;
+}
+
+// Add a mapping request (unified)
+message AddMappingRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    string mapping_description = 4;
+    string scope = 5;  // "database" or "table"
+    string source = 6;  // database_name[.table_name]
+    string target = 7;  // database_name[.table_name]
+    optional string policy_id = 8;
+    string owner_id = 9;
 }
 
 // Add a database mapping request

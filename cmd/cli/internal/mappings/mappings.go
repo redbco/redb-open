@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/redbco/redb-open/cmd/cli/internal/common"
 )
@@ -45,7 +46,105 @@ type Mapping struct {
 	MappingRules       []MappingRule `json:"mapping_rules"`
 }
 
-// AddTableMapping creates a new table mapping
+// AddMapping creates a new mapping with specified scope
+func AddMapping(scope, source, target, name, description, policyID string) error {
+	// Validate scope
+	if scope != "database" && scope != "table" {
+		return fmt.Errorf("invalid scope '%s': must be 'database' or 'table'", scope)
+	}
+
+	// Parse source and target
+	sourceDB, sourceTable, err := parseSourceTarget(source)
+	if err != nil {
+		return fmt.Errorf("invalid source format: %v", err)
+	}
+
+	targetDB, targetTable, err := parseSourceTarget(target)
+	if err != nil {
+		return fmt.Errorf("invalid target format: %v", err)
+	}
+
+	// Validate scope-specific requirements
+	if scope == "table" {
+		if sourceTable == "" || targetTable == "" {
+			return fmt.Errorf("table scope requires both source and target to include table names (format: database.table)")
+		}
+	}
+
+	// Generate name and description if not provided
+	if name == "" {
+		name = generateMappingName(scope, sourceDB, sourceTable, targetDB, targetTable)
+	}
+
+	if description == "" {
+		description = generateMappingDescription(scope, sourceDB, sourceTable, targetDB, targetTable)
+	}
+
+	// Create the mapping request
+	mappingReq := struct {
+		MappingName        string `json:"mapping_name"`
+		MappingDescription string `json:"mapping_description"`
+		Scope              string `json:"scope"`
+		Source             string `json:"source"`
+		Target             string `json:"target"`
+		PolicyID           string `json:"policy_id,omitempty"`
+	}{
+		MappingName:        name,
+		MappingDescription: description,
+		Scope:              scope,
+		Source:             source,
+		Target:             target,
+		PolicyID:           policyID,
+	}
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/mappings")
+	if err != nil {
+		return err
+	}
+
+	var response struct {
+		Message string  `json:"message"`
+		Success bool    `json:"success"`
+		Mapping Mapping `json:"mapping"`
+		Status  string  `json:"status"`
+	}
+	if err := client.Post(url, mappingReq, &response); err != nil {
+		return fmt.Errorf("failed to create mapping: %v", err)
+	}
+
+	fmt.Printf("Successfully created %s mapping '%s' (ID: %s)\n", scope, response.Mapping.MappingName, response.Mapping.MappingID)
+	return nil
+}
+
+// parseSourceTarget parses database[.table] format
+func parseSourceTarget(input string) (database, table string, err error) {
+	if input == "" {
+		return "", "", fmt.Errorf("source/target cannot be empty")
+	}
+
+	parts := strings.Split(input, ".")
+	if len(parts) == 1 {
+		// Only database name
+		return parts[0], "", nil
+	} else if len(parts) == 2 {
+		// Database and table name
+		return parts[0], parts[1], nil
+	} else {
+		return "", "", fmt.Errorf("invalid format '%s': expected 'database' or 'database.table'", input)
+	}
+}
+
+// AddTableMapping creates a new table mapping (legacy function for backward compatibility)
 func AddTableMapping(args []string) error {
 	reader := bufio.NewReader(os.Stdin)
 
@@ -326,4 +425,33 @@ func ShowMapping(mappingName string) error {
 	}
 
 	return nil
+}
+
+// generateMappingName creates a mapping name from source and target information
+func generateMappingName(scope, sourceDB, sourceTable, targetDB, targetTable string) string {
+	switch scope {
+	case "database":
+		return fmt.Sprintf("%s_to_%s", sourceDB, targetDB)
+	case "table":
+		return fmt.Sprintf("%s_%s_to_%s_%s", sourceDB, sourceTable, targetDB, targetTable)
+	default:
+		return fmt.Sprintf("%s_to_%s", sourceDB, targetDB)
+	}
+}
+
+// generateMappingDescription creates a verbose description with timestamp
+func generateMappingDescription(scope, sourceDB, sourceTable, targetDB, targetTable string) string {
+	timestamp := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
+
+	switch scope {
+	case "database":
+		return fmt.Sprintf("Auto-generated database mapping from '%s' to '%s' created on %s",
+			sourceDB, targetDB, timestamp)
+	case "table":
+		return fmt.Sprintf("Auto-generated table mapping from '%s.%s' to '%s.%s' created on %s",
+			sourceDB, sourceTable, targetDB, targetTable, timestamp)
+	default:
+		return fmt.Sprintf("Auto-generated mapping from '%s' to '%s' created on %s",
+			sourceDB, targetDB, timestamp)
+	}
 }

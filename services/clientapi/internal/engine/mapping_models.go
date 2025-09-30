@@ -36,6 +36,9 @@ type ShowMappingResponse struct {
 type AddMappingRequest struct {
 	MappingName        string `json:"mapping_name" validate:"required"`
 	MappingDescription string `json:"mapping_description" validate:"required"`
+	Scope              string `json:"scope" validate:"required,oneof=database table"`
+	Source             string `json:"source" validate:"required"`
+	Target             string `json:"target" validate:"required"`
 	PolicyID           string `json:"policy_id,omitempty"`
 }
 

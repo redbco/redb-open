@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
@@ -113,6 +114,48 @@ func (s *Server) ShowMapping(ctx context.Context, req *corev1.ShowMappingRequest
 	return &corev1.ShowMappingResponse{
 		Mapping: protoMapping,
 	}, nil
+}
+
+func (s *Server) AddMapping(ctx context.Context, req *corev1.AddMappingRequest) (*corev1.AddMappingResponse, error) {
+	defer s.trackOperation()()
+
+	// Validate scope
+	if req.Scope != "database" && req.Scope != "table" {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "invalid scope '%s': must be 'database' or 'table'", req.Scope)
+	}
+
+	// Parse source and target
+	sourceDB, sourceTable, err := s.parseSourceTarget(req.Source)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "invalid source format: %v", err)
+	}
+
+	targetDB, targetTable, err := s.parseSourceTarget(req.Target)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "invalid target format: %v", err)
+	}
+
+	// Validate scope-specific requirements
+	if req.Scope == "table" {
+		if sourceTable == "" || targetTable == "" {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.InvalidArgument, "table scope requires both source and target to include table names (format: database.table)")
+		}
+	}
+
+	// Route to appropriate handler based on scope
+	switch req.Scope {
+	case "database":
+		return s.addDatabaseMappingUnified(ctx, req, sourceDB, targetDB)
+	case "table":
+		return s.addTableMappingUnified(ctx, req, sourceDB, sourceTable, targetDB, targetTable)
+	default:
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "unsupported scope: %s", req.Scope)
+	}
 }
 
 func (s *Server) AddTableMapping(ctx context.Context, req *corev1.AddTableMappingRequest) (*corev1.AddMappingResponse, error) {
@@ -1199,4 +1242,264 @@ func (s *Server) filterUnifiedModelEnrichmentForTable(enrichment *unifiedmodelv1
 	}
 
 	return filteredEnrichment
+}
+
+// parseSourceTarget parses database[.table] format
+func (s *Server) parseSourceTarget(input string) (database, table string, err error) {
+	if input == "" {
+		return "", "", fmt.Errorf("source/target cannot be empty")
+	}
+
+	parts := strings.Split(input, ".")
+	if len(parts) == 1 {
+		// Only database name
+		return parts[0], "", nil
+	} else if len(parts) == 2 {
+		// Database and table name
+		return parts[0], parts[1], nil
+	} else {
+		return "", "", fmt.Errorf("invalid format '%s': expected 'database' or 'database.table'", input)
+	}
+}
+
+// addTableMappingUnified handles table-scoped mapping creation from unified request
+func (s *Server) addTableMappingUnified(ctx context.Context, req *corev1.AddMappingRequest, sourceDB, sourceTable, targetDB, targetTable string) (*corev1.AddMappingResponse, error) {
+	// Convert to legacy AddTableMappingRequest format
+	legacyReq := &corev1.AddTableMappingRequest{
+		TenantId:                  req.TenantId,
+		WorkspaceName:             req.WorkspaceName,
+		MappingName:               req.MappingName,
+		MappingDescription:        req.MappingDescription,
+		MappingSourceDatabaseName: sourceDB,
+		MappingSourceTableName:    sourceTable,
+		MappingTargetDatabaseName: targetDB,
+		MappingTargetTableName:    targetTable,
+		OwnerId:                   req.OwnerId,
+	}
+
+	if req.PolicyId != nil {
+		legacyReq.PolicyId = req.PolicyId
+	}
+
+	// Call existing AddTableMapping implementation
+	return s.AddTableMapping(ctx, legacyReq)
+}
+
+// addDatabaseMappingUnified handles database-scoped mapping creation from unified request with enhanced matching
+func (s *Server) addDatabaseMappingUnified(ctx context.Context, req *corev1.AddMappingRequest, sourceDB, targetDB string) (*corev1.AddMappingResponse, error) {
+	// Get workspace service
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID from workspace name
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "workspace not found: %v", err)
+	}
+
+	// Get database service to validate and fetch database schemas
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+
+	// Validate source database exists and belongs to the tenant/workspace
+	sourceDBObj, err := databaseService.Get(ctx, req.TenantId, workspaceID, sourceDB)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "source database not found: %v", err)
+	}
+
+	// Validate target database exists and belongs to the tenant/workspace
+	targetDBObj, err := databaseService.Get(ctx, req.TenantId, workspaceID, targetDB)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "target database not found: %v", err)
+	}
+
+	// Get mapping service
+	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
+
+	// Create the mapping
+	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, "database", req.MappingName, req.MappingDescription, req.OwnerId)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to create mapping: %v", err)
+	}
+
+	// Get unified model client
+	umClient := s.engine.GetUnifiedModelClient()
+	if umClient == nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "unified model service not available")
+	}
+
+	// Convert source database schema to UnifiedModel
+	var sourceUM *unifiedmodelv1.UnifiedModel
+	var sourceEnrichment *unifiedmodelv1.UnifiedModelEnrichment
+
+	if sourceDBObj.Schema != "" {
+		var err error
+		sourceUM, err = s.convertDatabaseSchemaToUnifiedModel(sourceDBObj.Schema)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert source database schema: %v", err)
+		} else {
+			s.engine.logger.Infof("Converted source database schema with %d tables", len(sourceUM.Tables))
+		}
+	}
+
+	// Convert source enrichment data
+	if sourceDBObj.Tables != "" {
+		var err error
+		sourceEnrichment, err = s.convertEnrichedDataToUnifiedModelEnrichment(sourceDBObj.Tables, sourceDBObj.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert source enrichment data: %v", err)
+		} else {
+			s.engine.logger.Infof("Converted source enrichment data with %d table enrichments", len(sourceEnrichment.TableEnrichments))
+		}
+	}
+
+	// Convert target database schema to UnifiedModel
+	var targetUM *unifiedmodelv1.UnifiedModel
+	var targetEnrichment *unifiedmodelv1.UnifiedModelEnrichment
+
+	if targetDBObj.Schema != "" {
+		var err error
+		targetUM, err = s.convertDatabaseSchemaToUnifiedModel(targetDBObj.Schema)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert target database schema: %v", err)
+		} else {
+			s.engine.logger.Infof("Converted target database schema with %d tables", len(targetUM.Tables))
+		}
+	}
+
+	// Convert target enrichment data
+	if targetDBObj.Tables != "" {
+		var err error
+		targetEnrichment, err = s.convertEnrichedDataToUnifiedModelEnrichment(targetDBObj.Tables, targetDBObj.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert target enrichment data: %v", err)
+		} else {
+			s.engine.logger.Infof("Converted target enrichment data with %d table enrichments", len(targetEnrichment.TableEnrichments))
+		}
+	}
+
+	// Perform enhanced database-to-database matching
+	if sourceUM != nil && targetUM != nil {
+		// Create matching request with database-optimized options
+		// For database-level mapping, we prioritize table name matching and structure
+		matchReq := &unifiedmodelv1.MatchUnifiedModelsEnrichedRequest{
+			SourceUnifiedModel: sourceUM,
+			TargetUnifiedModel: targetUM,
+			SourceEnrichment:   sourceEnrichment,
+			TargetEnrichment:   targetEnrichment,
+			Options: &unifiedmodelv1.MatchOptions{
+				NameSimilarityThreshold:  0.2,   // Lower threshold to catch more table name similarities
+				PoorMatchThreshold:       0.3,   // Lower threshold for poor matches
+				NameWeight:               0.6,   // Higher weight for table name similarity
+				TypeWeight:               0.15,  // Moderate weight for data types
+				ClassificationWeight:     0.15,  // Moderate weight for table classification
+				PrivilegedDataWeight:     0.05,  // Lower weight for privileged data
+				TableStructureWeight:     0.05,  // Lower weight for structure
+				EnableCrossTableMatching: false, // Disable cross-table matching for cleaner results
+			},
+		}
+
+		// Call unified model service for matching
+		s.engine.logger.Infof("Starting database-level matching with %d source tables and %d target tables",
+			len(sourceUM.Tables), len(targetUM.Tables))
+
+		matchResp, err := umClient.MatchUnifiedModelsEnriched(ctx, matchReq)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to match unified models: %v", err)
+		} else {
+			// Process matching results and create mapping rules
+			s.engine.logger.Infof("Database matching completed: found %d table matches for mapping %s (overall score: %.3f)",
+				len(matchResp.TableMatches), req.MappingName, matchResp.OverallSimilarityScore)
+
+			for _, tableMatch := range matchResp.TableMatches {
+				s.engine.logger.Infof("Table match: %s -> %s (score: %.3f, %d/%d columns matched)",
+					tableMatch.SourceTable, tableMatch.TargetTable, tableMatch.Score,
+					tableMatch.MatchedColumns, tableMatch.TotalSourceColumns)
+
+				// Create mapping rules for each column match within this table match
+				for _, columnMatch := range tableMatch.ColumnMatches {
+					ruleName := fmt.Sprintf("%s_%s_%s_to_%s_%s_%s",
+						sourceDB, tableMatch.SourceTable, columnMatch.SourceColumn,
+						targetDB, tableMatch.TargetTable, columnMatch.TargetColumn)
+
+					// Create metadata for the mapping rule
+					metadata := map[string]interface{}{
+						"generated_at":      time.Now().UTC().Format(time.RFC3339),
+						"match_score":       columnMatch.Score,
+						"match_type":        "enriched_match",
+						"source_column":     columnMatch.SourceColumn,
+						"source_table":      tableMatch.SourceTable,
+						"target_column":     columnMatch.TargetColumn,
+						"target_table":      tableMatch.TargetTable,
+						"type_compatible":   columnMatch.IsTypeCompatible,
+						"table_match_score": tableMatch.Score,
+					}
+
+					// Create empty transformation options
+					transformationOptions := map[string]interface{}{}
+
+					// Create the mapping rule
+					_, err = mappingService.CreateMappingRule(ctx, req.TenantId, workspaceID, ruleName,
+						fmt.Sprintf("Auto-generated rule for %s.%s.%s -> %s.%s.%s",
+							sourceDB, tableMatch.SourceTable, columnMatch.SourceColumn,
+							targetDB, tableMatch.TargetTable, columnMatch.TargetColumn),
+						fmt.Sprintf("db://%s.%s.%s", sourceDBObj.ID, tableMatch.SourceTable, columnMatch.SourceColumn),
+						fmt.Sprintf("db://%s.%s.%s", targetDBObj.ID, tableMatch.TargetTable, columnMatch.TargetColumn),
+						"direct_mapping", // Default transformation
+						transformationOptions,
+						metadata,
+						req.OwnerId)
+
+					if err != nil {
+						s.engine.logger.Warnf("Failed to create mapping rule %s: %v", ruleName, err)
+						continue
+					}
+
+					// Attach the mapping rule to the mapping
+					err = mappingService.AttachMappingRule(ctx, req.TenantId, workspaceID, req.MappingName, ruleName, nil)
+					if err != nil {
+						s.engine.logger.Warnf("Failed to attach mapping rule %s to mapping: %v", ruleName, err)
+					}
+				}
+			}
+
+			// Log unmatched columns as warnings
+			if len(matchResp.UnmatchedColumns) > 0 {
+				s.engine.logger.Warnf("Found %d unmatched columns in database mapping %s", len(matchResp.UnmatchedColumns), req.MappingName)
+				for _, unmatchedCol := range matchResp.UnmatchedColumns {
+					s.engine.logger.Warnf("Unmatched column: %s.%s", unmatchedCol.SourceTable, unmatchedCol.SourceColumn)
+				}
+			}
+
+			// Log overall warnings
+			for _, warning := range matchResp.Warnings {
+				s.engine.logger.Warnf("Matching warning: %s", warning)
+			}
+		}
+	}
+
+	// Refresh the mapping to get the updated mapping rule count
+	updatedMapping, err := mappingService.Get(ctx, req.TenantId, workspaceID, req.MappingName)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to refresh mapping data: %v", err)
+		// Use the original mapping if refresh fails
+		updatedMapping = createdMapping
+	}
+
+	// Convert to protobuf format
+	protoMapping, err := s.mappingToProto(updatedMapping)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to convert mapping: %v", err)
+	}
+
+	return &corev1.AddMappingResponse{
+		Message: "Database mapping created successfully",
+		Success: true,
+		Mapping: protoMapping,
+		Status:  commonv1.Status_STATUS_SUCCESS,
+	}, nil
 }

@@ -3,7 +3,9 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -218,34 +220,72 @@ func (mh *MappingHandlers) AddMapping(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate required fields
-	if req.MappingName == "" || req.MappingDescription == "" {
-		mh.writeErrorResponse(w, http.StatusBadRequest, "Required fields missing", "mapping_name and mapping_description are required")
+	if req.MappingName == "" || req.MappingDescription == "" || req.Scope == "" || req.Source == "" || req.Target == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "Required fields missing", "mapping_name, mapping_description, scope, source, and target are required")
 		return
+	}
+
+	// Validate scope
+	if req.Scope != "database" && req.Scope != "table" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid scope", "scope must be 'database' or 'table'")
+		return
+	}
+
+	// Parse source and target
+	_, sourceTable, err := mh.parseSourceTarget(req.Source)
+	if err != nil {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid source format", err.Error())
+		return
+	}
+
+	_, targetTable, err := mh.parseSourceTarget(req.Target)
+	if err != nil {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid target format", err.Error())
+		return
+	}
+
+	// Validate scope-specific requirements
+	if req.Scope == "table" {
+		if sourceTable == "" || targetTable == "" {
+			mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid table scope", "table scope requires both source and target to include table names (format: database.table)")
+			return
+		}
 	}
 
 	// Log request
 	if mh.engine.logger != nil {
-		mh.engine.logger.Infof("Add mapping request for mapping: %s, workspace: %s, tenant: %s", req.MappingName, workspaceName, profile.TenantId)
+		mh.engine.logger.Infof("Add %s mapping request for mapping: %s, source: %s, target: %s, workspace: %s, tenant: %s",
+			req.Scope, req.MappingName, req.Source, req.Target, workspaceName, profile.TenantId)
 	}
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	// Call core service gRPC
-	grpcReq := &corev1.AddEmptyMappingRequest{
+	// Ensure mapping name is unique by checking existing mappings
+	uniqueName, err := mh.ensureUniqueMappingName(ctx, profile.TenantId, workspaceName, req.MappingName)
+	if err != nil {
+		mh.writeErrorResponse(w, http.StatusInternalServerError, "Failed to ensure unique mapping name", err.Error())
+		return
+	}
+
+	// Call core service gRPC with unified request
+	grpcReq := &corev1.AddMappingRequest{
 		TenantId:           profile.TenantId,
 		WorkspaceName:      workspaceName,
 		OwnerId:            profile.UserId,
-		MappingName:        req.MappingName,
+		MappingName:        uniqueName,
 		MappingDescription: req.MappingDescription,
+		Scope:              req.Scope,
+		Source:             req.Source,
+		Target:             req.Target,
 	}
 
 	if req.PolicyID != "" {
 		grpcReq.PolicyId = &req.PolicyID
 	}
 
-	grpcResp, err := mh.engine.mappingClient.AddEmptyMapping(ctx, grpcReq)
+	grpcResp, err := mh.engine.mappingClient.AddMapping(ctx, grpcReq)
 	if err != nil {
 		mh.handleGRPCError(w, err, "Failed to add mapping")
 		return
@@ -422,12 +462,19 @@ func (mh *MappingHandlers) AddTableMapping(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
+	// Ensure mapping name is unique by checking existing mappings
+	uniqueName, err := mh.ensureUniqueMappingName(ctx, profile.TenantId, workspaceName, req.MappingName)
+	if err != nil {
+		mh.writeErrorResponse(w, http.StatusInternalServerError, "Failed to ensure unique mapping name", err.Error())
+		return
+	}
+
 	// Call core service gRPC
 	grpcReq := &corev1.AddTableMappingRequest{
 		TenantId:                  profile.TenantId,
 		WorkspaceName:             workspaceName,
 		OwnerId:                   profile.UserId,
-		MappingName:               req.MappingName,
+		MappingName:               uniqueName,
 		MappingDescription:        req.MappingDescription,
 		MappingSourceDatabaseName: req.MappingSourceDatabaseName,
 		MappingSourceTableName:    req.MappingSourceTableName,
@@ -1262,4 +1309,72 @@ func (mh *MappingHandlers) writeErrorResponse(w http.ResponseWriter, statusCode 
 		Status:  StatusError,
 	}
 	mh.writeJSONResponse(w, statusCode, response)
+}
+
+// parseSourceTarget parses database[.table] format
+func (mh *MappingHandlers) parseSourceTarget(input string) (database, table string, err error) {
+	if input == "" {
+		return "", "", fmt.Errorf("source/target cannot be empty")
+	}
+
+	parts := strings.Split(input, ".")
+	if len(parts) == 1 {
+		// Only database name
+		return parts[0], "", nil
+	} else if len(parts) == 2 {
+		// Database and table name
+		return parts[0], parts[1], nil
+	} else {
+		return "", "", fmt.Errorf("invalid format '%s': expected 'database' or 'database.table'", input)
+	}
+}
+
+// ensureUniqueMappingName ensures the mapping name is unique by appending a number if needed
+func (mh *MappingHandlers) ensureUniqueMappingName(ctx context.Context, tenantID, workspaceName, proposedName string) (string, error) {
+	// First, try the proposed name as-is
+	if !mh.mappingNameExists(ctx, tenantID, workspaceName, proposedName) {
+		return proposedName, nil
+	}
+
+	// If it exists, try appending numbers until we find a unique name
+	for i := 2; i <= 100; i++ { // Limit to 100 attempts to avoid infinite loops
+		candidateName := fmt.Sprintf("%s_%d", proposedName, i)
+		if !mh.mappingNameExists(ctx, tenantID, workspaceName, candidateName) {
+			if mh.engine.logger != nil {
+				mh.engine.logger.Infof("Mapping name '%s' already exists, using '%s' instead", proposedName, candidateName)
+			}
+			return candidateName, nil
+		}
+	}
+
+	// If we couldn't find a unique name after 100 attempts, return an error
+	return "", fmt.Errorf("could not generate unique mapping name after 100 attempts for base name '%s'", proposedName)
+}
+
+// mappingNameExists checks if a mapping with the given name already exists
+func (mh *MappingHandlers) mappingNameExists(ctx context.Context, tenantID, workspaceName, mappingName string) bool {
+	// Create a gRPC request to list mappings
+	grpcReq := &corev1.ListMappingsRequest{
+		TenantId:      tenantID,
+		WorkspaceName: workspaceName,
+	}
+
+	// Call the core service to list mappings
+	grpcResp, err := mh.engine.mappingClient.ListMappings(ctx, grpcReq)
+	if err != nil {
+		if mh.engine.logger != nil {
+			mh.engine.logger.Warnf("Failed to list mappings for uniqueness check: %v", err)
+		}
+		// If we can't check, assume it doesn't exist to avoid blocking the operation
+		return false
+	}
+
+	// Check if any existing mapping has the same name
+	for _, mapping := range grpcResp.Mappings {
+		if mapping.MappingName == mappingName {
+			return true
+		}
+	}
+
+	return false
 }

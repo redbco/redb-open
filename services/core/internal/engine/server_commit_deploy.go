@@ -260,6 +260,19 @@ func (s *Server) createNewDatabaseForDeploy(ctx context.Context, tenantID, works
 		return nil, "", status.Errorf(codes.Internal, "failed to create database object: %v", err)
 	}
 
+	// Update the database record with the encrypted password from the instance
+	// This ensures the database_password column is populated correctly
+	if instanceObj.Password != "" {
+		updates := map[string]interface{}{
+			"database_password": instanceObj.Password,
+		}
+		_, err = databaseService.Update(ctx, tenantID, workspaceID, target.DatabaseName, updates)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to update database password: %v", err)
+			// Don't fail the operation, just log the warning
+		}
+	}
+
 	// Connect to anchor service to create the logical database
 	anchorAddr := s.engine.getServiceAddress("anchor")
 	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))

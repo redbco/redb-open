@@ -33,19 +33,49 @@ var showMappingCmd = &cobra.Command{
 	},
 }
 
-// addTableMappingCmd represents the add table-mapping command
-var addTableMappingCmd = &cobra.Command{
-	Use:   "add table-mapping",
-	Short: "Add a new table mapping",
-	Long:  `Add a new table mapping by providing mapping details interactively.`,
+// addMappingCmd represents the add command
+var addMappingCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Add a new mapping",
+	Long: `Add a new mapping with specified scope (database or table).
+
+Examples:
+  # Add table-to-table mapping with auto-generated name and description
+  redb mappings add --scope table --source mydb.users --target targetdb.user_profiles
+  
+  # Add database-to-database mapping with custom name and description
+  redb mappings add --scope database --source sourcedb --target targetdb --name db-migration --description "Migrate entire database"
+  
+  # Add table mapping with custom name only (description auto-generated)
+  redb mappings add --scope table --source mydb.users --target targetdb.profiles --name user-profile-mapping`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return mappings.AddTableMapping(args)
+		scope, _ := cmd.Flags().GetString("scope")
+		source, _ := cmd.Flags().GetString("source")
+		target, _ := cmd.Flags().GetString("target")
+		name, _ := cmd.Flags().GetString("name")
+		description, _ := cmd.Flags().GetString("description")
+		policyID, _ := cmd.Flags().GetString("policy-id")
+
+		return mappings.AddMapping(scope, source, target, name, description, policyID)
 	},
 }
 
 func init() {
+	// Add flags to addMappingCmd
+	addMappingCmd.Flags().String("scope", "", "Mapping scope: 'database' or 'table' (required)")
+	addMappingCmd.Flags().String("source", "", "Source in format 'database_name[.table_name]' (required)")
+	addMappingCmd.Flags().String("target", "", "Target in format 'database_name[.table_name]' (required)")
+	addMappingCmd.Flags().String("name", "", "Mapping name (optional, auto-generated if not provided)")
+	addMappingCmd.Flags().String("description", "", "Mapping description (optional, auto-generated if not provided)")
+	addMappingCmd.Flags().String("policy-id", "", "Policy ID (optional)")
+
+	// Mark required flags
+	addMappingCmd.MarkFlagRequired("scope")
+	addMappingCmd.MarkFlagRequired("source")
+	addMappingCmd.MarkFlagRequired("target")
+
 	// Add subcommands to mappings command
 	mappingsCmd.AddCommand(listMappingsCmd)
 	mappingsCmd.AddCommand(showMappingCmd)
-	mappingsCmd.AddCommand(addTableMappingCmd)
+	mappingsCmd.AddCommand(addMappingCmd)
 }
