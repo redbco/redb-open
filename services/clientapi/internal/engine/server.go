@@ -247,6 +247,7 @@ func (s *Server) setupRoutes() {
 	instances := workspaces.PathPrefix("/{workspace_name}/instances").Subrouter()
 	instances.HandleFunc("", s.instanceHandler.ListInstances).Methods(http.MethodGet)
 	instances.HandleFunc("/connect", s.instanceHandler.ConnectInstance).Methods(http.MethodPost)
+	instances.HandleFunc("/connect-string", s.instanceHandler.ConnectInstanceString).Methods(http.MethodPost)
 	instances.HandleFunc("/{instance_name}", s.instanceHandler.ShowInstance).Methods(http.MethodGet)
 	instances.HandleFunc("/{instance_name}", s.instanceHandler.ModifyInstance).Methods(http.MethodPut)
 	instances.HandleFunc("/{instance_name}/reconnect", s.instanceHandler.ReconnectInstance).Methods(http.MethodPost)
@@ -257,6 +258,7 @@ func (s *Server) setupRoutes() {
 	databases := workspaces.PathPrefix("/{workspace_name}/databases").Subrouter()
 	databases.HandleFunc("", s.databaseHandler.ListDatabases).Methods(http.MethodGet)
 	databases.HandleFunc("/connect", s.databaseHandler.ConnectDatabase).Methods(http.MethodPost)
+	databases.HandleFunc("/connect-string", s.databaseHandler.ConnectDatabaseString).Methods(http.MethodPost)
 	databases.HandleFunc("/connect-with-instance", s.databaseHandler.ConnectDatabaseWithInstance).Methods(http.MethodPost)
 	databases.HandleFunc("/{database_name}", s.databaseHandler.ShowDatabase).Methods(http.MethodGet)
 	databases.HandleFunc("/{database_name}/reconnect", s.databaseHandler.ReconnectDatabase).Methods(http.MethodPost)
@@ -266,6 +268,7 @@ func (s *Server) setupRoutes() {
 	databases.HandleFunc("/{database_name}/wipe", s.databaseHandler.WipeDatabase).Methods(http.MethodPost)
 	databases.HandleFunc("/{database_name}/drop", s.databaseHandler.DropDatabase).Methods(http.MethodPost)
 	databases.HandleFunc("/transform", s.databaseHandler.TransformData).Methods(http.MethodPost)
+	databases.HandleFunc("/clone-database", s.databaseHandler.CloneDatabase).Methods(http.MethodPost)
 
 	// Repo endpoints (workspace-level)
 	repos := workspaces.PathPrefix("/{workspace_name}/repos").Subrouter()
@@ -290,6 +293,9 @@ func (s *Server) setupRoutes() {
 	commits.HandleFunc("/{commit_code}/branch", s.commitHandler.BranchCommit).Methods(http.MethodPost)
 	commits.HandleFunc("/{commit_code}/merge", s.commitHandler.MergeCommit).Methods(http.MethodPost)
 	commits.HandleFunc("/{commit_code}/deploy", s.commitHandler.DeployCommit).Methods(http.MethodPost)
+
+	// Schema deployment endpoints (workspace-level for easier CLI access)
+	workspaces.HandleFunc("/{workspace_name}/commits/deploy-schema", s.commitHandler.DeployCommitSchema).Methods(http.MethodPost)
 
 	// Mapping endpoints (workspace-level)
 	mappings := workspaces.PathPrefix("/{workspace_name}/mappings").Subrouter()

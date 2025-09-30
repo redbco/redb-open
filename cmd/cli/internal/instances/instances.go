@@ -868,3 +868,53 @@ func readPassword() (string, error) {
 	fmt.Println() // Print newline after password input
 	return string(bytePassword), nil
 }
+
+// ConnectInstanceString connects a new instance using a connection string
+func ConnectInstanceString(connectionString, instanceName, description, nodeID, environmentID string, enabled bool) error {
+	if connectionString == "" {
+		return fmt.Errorf("connection string is required")
+	}
+	if instanceName == "" {
+		return fmt.Errorf("instance name is required when using connection string")
+	}
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/instances/connect-string")
+	if err != nil {
+		return err
+	}
+
+	// Create the request
+	connectReq := struct {
+		ConnectionString    string `json:"connection_string"`
+		InstanceName        string `json:"instance_name"`
+		InstanceDescription string `json:"instance_description,omitempty"`
+		NodeID              string `json:"node_id,omitempty"`
+		EnvironmentID       string `json:"environment_id,omitempty"`
+		Enabled             *bool  `json:"enabled,omitempty"`
+	}{
+		ConnectionString:    connectionString,
+		InstanceName:        instanceName,
+		InstanceDescription: description,
+		NodeID:              nodeID,
+		EnvironmentID:       environmentID,
+		Enabled:             &enabled,
+	}
+
+	var connectResponse ConnectInstanceResponse
+	if err := client.Post(url, connectReq, &connectResponse); err != nil {
+		return fmt.Errorf("failed to connect instance: %v", err)
+	}
+
+	fmt.Printf("Successfully connected instance '%s' (ID: %s)\n", connectResponse.Instance.InstanceName, connectResponse.Instance.ID)
+	return nil
+}

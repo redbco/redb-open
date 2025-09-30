@@ -317,7 +317,9 @@ func (dm *DatabaseManager) DeployDatabaseStructure(databaseID string, um *unifie
 func (dm *DatabaseManager) CreateDatabase(databaseID string, options map[string]interface{}) error {
 	dm.safeLog("info", "Creating database %s with options %v", databaseID, options)
 
-	client, err := dm.GetDatabaseClient(databaseID)
+	// For creating new databases, we need to use the instance client, not database client
+	// The databaseID parameter is actually an instance ID in this context
+	client, err := dm.GetInstanceClient(databaseID)
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -326,43 +328,49 @@ func (dm *DatabaseManager) CreateDatabase(databaseID string, options map[string]
 		return fmt.Errorf("database %s is disconnected", databaseID)
 	}
 
-	switch client.DatabaseType {
+	// Extract database name from options
+	databaseName, ok := options["database_name"].(string)
+	if !ok || databaseName == "" {
+		return fmt.Errorf("database_name is required in options")
+	}
+
+	switch client.InstanceType {
 	case string(dbcapabilities.PostgreSQL):
-		return postgres.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return postgres.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.MySQL):
-		return mysql.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return mysql.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.MariaDB):
-		return mariadb.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return mariadb.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.CockroachDB):
-		return cockroach.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return cockroach.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.Redis):
-		return redis.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return redis.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.MongoDB):
-		return mongodb.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return mongodb.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.SQLServer):
-		return mssql.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return mssql.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.Cassandra):
-		return cassandra.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return cassandra.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.EdgeDB):
-		return edgedb.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return edgedb.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.Snowflake):
-		return snowflake.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return snowflake.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.ClickHouse):
-		return clickhouse.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return clickhouse.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.Pinecone):
-		return pinecone.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return pinecone.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.Elasticsearch):
-		return elasticsearch.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return elasticsearch.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.Neo4j):
-		return neo4j.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return neo4j.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.Iceberg):
-		return iceberg.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return iceberg.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.DynamoDB):
-		return dynamodb.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return dynamodb.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	case string(dbcapabilities.CosmosDB):
-		return cosmosdb.CreateDatabase(context.Background(), client.DB, databaseID, options)
+		return cosmosdb.CreateDatabase(context.Background(), client.DB, databaseName, options)
 	default:
-		return fmt.Errorf("unsupported database type: %s", client.DatabaseType)
+		return fmt.Errorf("unsupported database type: %s", client.InstanceType)
 	}
 }
 

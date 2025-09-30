@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/mux"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	securityv1 "github.com/redbco/redb-open/api/proto/security/v1"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -1079,4 +1080,363 @@ func (dh *DatabaseHandlers) writeErrorResponse(w http.ResponseWriter, statusCode
 		Status:  StatusError,
 	}
 	dh.writeJSONResponse(w, statusCode, response)
+}
+
+// ConnectDatabaseString handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/databases/connect-string
+func (dh *DatabaseHandlers) ConnectDatabaseString(w http.ResponseWriter, r *http.Request) {
+	dh.engine.TrackOperation()
+	defer dh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+
+	if tenantURL == "" || workspaceName == "" {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "tenant_url and workspace_name are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		dh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Parse request body
+	var req ConnectDatabaseStringRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+
+	// Validate request
+	if req.ConnectionString == "" {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "connection_string is required", "")
+		return
+	}
+	if req.DatabaseName == "" {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "database_name is required", "")
+		return
+	}
+
+	// Parse connection string
+	connectionDetails, err := dh.parseConnectionString(req.ConnectionString)
+	if err != nil {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "Invalid connection string", err.Error())
+		return
+	}
+
+	// For databases, we should NOT use system database - use the specified database
+	if connectionDetails.IsSystemDB {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "Cannot create database connection to system database", "Use instances connect for system database connections")
+		return
+	}
+
+	// Log request
+	if dh.engine.logger != nil {
+		dh.engine.logger.Infof("Connect database string request: %s, workspace: %s, tenant: %s, type: %s",
+			req.DatabaseName, workspaceName, profile.TenantId, connectionDetails.DatabaseType)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Set default enabled if not provided
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	// Prepare gRPC request for ConnectDatabase (creates both instance and database)
+	grpcReq := &corev1.ConnectDatabaseRequest{
+		TenantId:            profile.TenantId,
+		WorkspaceName:       workspaceName,
+		DatabaseName:        req.DatabaseName,
+		DatabaseDescription: req.DatabaseDescription,
+		DatabaseType:        connectionDetails.DatabaseType,
+		DatabaseVendor:      connectionDetails.DatabaseVendor,
+		Host:                connectionDetails.Host,
+		Port:                connectionDetails.Port,
+		Username:            connectionDetails.Username,
+		Password:            connectionDetails.Password,
+		DbName:              connectionDetails.DatabaseName,
+		NodeId:              &req.NodeID,
+		Enabled:             &enabled,
+		Ssl:                 &connectionDetails.SSL,
+		SslMode:             &connectionDetails.SSLMode,
+		OwnerId:             profile.UserId,
+	}
+
+	// Set optional fields from connection details
+	if req.EnvironmentID != "" {
+		grpcReq.EnvironmentId = &req.EnvironmentID
+	}
+	if sslCert, ok := connectionDetails.Parameters["ssl_cert"]; ok {
+		grpcReq.SslCert = &sslCert
+	}
+	if sslKey, ok := connectionDetails.Parameters["ssl_key"]; ok {
+		grpcReq.SslKey = &sslKey
+	}
+	if sslRootCert, ok := connectionDetails.Parameters["ssl_root_cert"]; ok {
+		grpcReq.SslRootCert = &sslRootCert
+	}
+
+	grpcResp, err := dh.engine.databaseClient.ConnectDatabase(ctx, grpcReq)
+	if err != nil {
+		dh.handleGRPCError(w, err, "Failed to connect database")
+		return
+	}
+
+	// Convert gRPC response to REST response
+	database := Database{
+		TenantID:              grpcResp.Database.TenantId,
+		WorkspaceID:           grpcResp.Database.WorkspaceId,
+		EnvironmentID:         grpcResp.Database.EnvironmentId,
+		ConnectedToNodeID:     grpcResp.Database.ConnectedToNodeId,
+		InstanceID:            grpcResp.Database.InstanceId,
+		InstanceName:          grpcResp.Database.InstanceName,
+		DatabaseID:            grpcResp.Database.DatabaseId,
+		DatabaseName:          grpcResp.Database.DatabaseName,
+		DatabaseDescription:   grpcResp.Database.DatabaseDescription,
+		DatabaseType:          grpcResp.Database.DatabaseType,
+		DatabaseVendor:        grpcResp.Database.DatabaseVendor,
+		DatabaseVersion:       grpcResp.Database.DatabaseVersion,
+		DatabaseUsername:      grpcResp.Database.DatabaseUsername,
+		DatabasePassword:      grpcResp.Database.DatabasePassword,
+		DatabaseDBName:        grpcResp.Database.DatabaseDbName,
+		DatabaseEnabled:       grpcResp.Database.DatabaseEnabled,
+		PolicyIDs:             grpcResp.Database.PolicyIds,
+		OwnerID:               grpcResp.Database.OwnerId,
+		DatabaseStatusMessage: grpcResp.Database.DatabaseStatusMessage,
+		Status:                convertStatus(grpcResp.Status),
+		Created:               grpcResp.Database.Created,
+		Updated:               grpcResp.Database.Updated,
+		DatabaseSchema:        grpcResp.Database.DatabaseSchema,
+		DatabaseTables:        grpcResp.Database.DatabaseTables,
+		InstanceHost:          grpcResp.Database.InstanceHost,
+		InstancePort:          grpcResp.Database.InstancePort,
+		InstanceSSLMode:       grpcResp.Database.InstanceSslMode,
+		InstanceSSLCert:       grpcResp.Database.InstanceSslCert,
+		InstanceSSLKey:        grpcResp.Database.InstanceSslKey,
+		InstanceSSLRootCert:   grpcResp.Database.InstanceSslRootCert,
+		InstanceSSL:           grpcResp.Database.InstanceSsl,
+		InstanceStatusMessage: grpcResp.Database.InstanceStatusMessage,
+		InstanceStatus:        grpcResp.Database.InstanceStatus,
+	}
+
+	response := ConnectDatabaseStringResponse{
+		Message:  grpcResp.Message,
+		Success:  grpcResp.Success,
+		Database: database,
+		Status:   convertStatus(grpcResp.Status),
+	}
+
+	if dh.engine.logger != nil {
+		dh.engine.logger.Infof("Successfully connected database via connection string: %s", req.DatabaseName)
+	}
+
+	dh.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// parseConnectionString parses a connection string and returns connection details
+func (dh *DatabaseHandlers) parseConnectionString(connectionString string) (*dbcapabilities.ConnectionDetails, error) {
+	return dbcapabilities.ParseConnectionString(connectionString)
+}
+
+// CloneDatabaseRequest represents the request payload for cloning a database
+type CloneDatabaseRequest struct {
+	SourceDatabaseName string               `json:"source_database_name"`
+	Target             CloneDatabaseTarget  `json:"target"`
+	Options            CloneDatabaseOptions `json:"options"`
+	SourceNodeID       *uint64              `json:"source_node_id,omitempty"`
+	TargetNodeID       *uint64              `json:"target_node_id,omitempty"`
+}
+
+type CloneDatabaseTarget struct {
+	NewDatabase      *NewDatabaseTarget      `json:"new_database,omitempty"`
+	ExistingDatabase *ExistingDatabaseTarget `json:"existing_database,omitempty"`
+}
+
+type NewDatabaseTarget struct {
+	InstanceName string `json:"instance_name"`
+	DatabaseName string `json:"database_name"`
+}
+
+type ExistingDatabaseTarget struct {
+	DatabaseName string `json:"database_name"`
+	Wipe         bool   `json:"wipe"`
+	Merge        bool   `json:"merge"`
+}
+
+type CloneDatabaseOptions struct {
+	WithData              bool              `json:"with_data"`
+	Wipe                  bool              `json:"wipe"`
+	Merge                 bool              `json:"merge"`
+	TransformationOptions map[string]string `json:"transformation_options,omitempty"`
+}
+
+// CloneDatabaseResponse represents the response from cloning a database
+type CloneDatabaseResponse struct {
+	Message          string   `json:"message"`
+	Success          bool     `json:"success"`
+	Status           string   `json:"status"`
+	TargetDatabaseId string   `json:"target_database_id"`
+	TargetRepoId     string   `json:"target_repo_id"`
+	TargetBranchId   string   `json:"target_branch_id"`
+	TargetCommitId   string   `json:"target_commit_id"`
+	Warnings         []string `json:"warnings"`
+	RowsCopied       int64    `json:"rows_copied"`
+}
+
+// CloneDatabase handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/databases/clone-database
+func (dh *DatabaseHandlers) CloneDatabase(w http.ResponseWriter, r *http.Request) {
+	dh.engine.TrackOperation()
+	defer dh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+
+	if tenantURL == "" {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "tenant_url is required", "")
+		return
+	}
+
+	if workspaceName == "" {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "workspace_name is required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		dh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Parse request body
+	var req CloneDatabaseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+
+	// Validate request
+	if req.SourceDatabaseName == "" {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "source_database_name is required", "")
+		return
+	}
+
+	// Validate target (must have exactly one)
+	if req.Target.NewDatabase == nil && req.Target.ExistingDatabase == nil {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "target must be specified (new_database or existing_database)", "")
+		return
+	}
+
+	if req.Target.NewDatabase != nil && req.Target.ExistingDatabase != nil {
+		dh.writeErrorResponse(w, http.StatusBadRequest, "only one target type can be specified", "")
+		return
+	}
+
+	// Log request
+	if dh.engine.logger != nil {
+		dh.engine.logger.Infof("Clone database request: source=%s, workspace=%s, tenant=%s, user=%s",
+			req.SourceDatabaseName, workspaceName, profile.TenantId, profile.UserId)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 300*time.Second) // 5 minutes for potentially long operation
+	defer cancel()
+
+	// Build gRPC request
+	grpcReq := &corev1.CloneDatabaseRequest{
+		TenantId:           profile.TenantId,
+		WorkspaceName:      workspaceName,
+		SourceDatabaseName: req.SourceDatabaseName,
+		Options: &corev1.CloneOptions{
+			WithData:              req.Options.WithData,
+			Wipe:                  req.Options.Wipe,
+			Merge:                 req.Options.Merge,
+			TransformationOptions: req.Options.TransformationOptions,
+		},
+	}
+
+	// Set target
+	if req.Target.NewDatabase != nil {
+		grpcReq.Target = &corev1.CloneDatabaseRequest_NewDatabase{
+			NewDatabase: &corev1.NewDatabaseTarget{
+				InstanceName: req.Target.NewDatabase.InstanceName,
+				DatabaseName: req.Target.NewDatabase.DatabaseName,
+			},
+		}
+	} else if req.Target.ExistingDatabase != nil {
+		grpcReq.Target = &corev1.CloneDatabaseRequest_ExistingDatabase{
+			ExistingDatabase: &corev1.ExistingDatabaseTarget{
+				DatabaseName: req.Target.ExistingDatabase.DatabaseName,
+				Wipe:         req.Target.ExistingDatabase.Wipe,
+				Merge:        req.Target.ExistingDatabase.Merge,
+			},
+		}
+	}
+
+	// Call appropriate gRPC method based on cross-node requirements
+	var grpcResp *corev1.CloneDatabaseResponse
+	var err error
+
+	if req.SourceNodeID != nil && req.TargetNodeID != nil {
+		// Cross-node operation
+		remoteReq := &corev1.CloneDatabaseRemoteRequest{
+			Request:      grpcReq,
+			SourceNodeId: *req.SourceNodeID,
+			TargetNodeId: *req.TargetNodeID,
+		}
+		remoteResp, err := dh.engine.databaseClient.CloneDatabaseRemote(ctx, remoteReq)
+		if err != nil {
+			dh.handleGRPCError(w, err, "Failed to clone database across nodes")
+			return
+		}
+		// Convert remote response to regular response
+		grpcResp = &corev1.CloneDatabaseResponse{
+			Message:          remoteResp.Message,
+			Success:          remoteResp.Success,
+			Status:           remoteResp.Status,
+			TargetDatabaseId: remoteResp.TargetDatabaseId,
+			TargetRepoId:     remoteResp.TargetRepoId,
+			TargetBranchId:   remoteResp.TargetBranchId,
+			TargetCommitId:   remoteResp.TargetCommitId,
+			Warnings:         remoteResp.Warnings,
+			RowsCopied:       remoteResp.RowsCopied,
+		}
+	} else {
+		// Same-node operation
+		grpcResp, err = dh.engine.databaseClient.CloneDatabase(ctx, grpcReq)
+		if err != nil {
+			dh.handleGRPCError(w, err, "Failed to clone database")
+			return
+		}
+	}
+
+	// Build response
+	response := CloneDatabaseResponse{
+		Message:          grpcResp.Message,
+		Success:          grpcResp.Success,
+		Status:           string(convertStatus(grpcResp.Status)),
+		TargetDatabaseId: grpcResp.TargetDatabaseId,
+		TargetRepoId:     grpcResp.TargetRepoId,
+		TargetBranchId:   grpcResp.TargetBranchId,
+		TargetCommitId:   grpcResp.TargetCommitId,
+		Warnings:         grpcResp.Warnings,
+		RowsCopied:       grpcResp.RowsCopied,
+	}
+
+	if dh.engine.logger != nil {
+		dh.engine.logger.Infof("Successfully cloned database: source=%s, target=%s",
+			req.SourceDatabaseName, grpcResp.TargetDatabaseId)
+	}
+
+	dh.writeJSONResponse(w, http.StatusOK, response)
 }

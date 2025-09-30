@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	securityv1 "github.com/redbco/redb-open/api/proto/security/v1"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -1216,4 +1217,161 @@ func detectVendorFromHost(host string) string {
 
 	// If no pattern matches, return "custom"
 	return "custom"
+}
+
+// ConnectInstanceString handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/instances/connect-string
+func (ih *InstanceHandlers) ConnectInstanceString(w http.ResponseWriter, r *http.Request) {
+	ih.engine.TrackOperation()
+	defer ih.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+
+	if tenantURL == "" || workspaceName == "" {
+		ih.writeErrorResponse(w, http.StatusBadRequest, "tenant_url and workspace_name are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		ih.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Parse request body
+	var req ConnectInstanceStringRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ih.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+
+	// Validate request
+	if req.ConnectionString == "" {
+		ih.writeErrorResponse(w, http.StatusBadRequest, "connection_string is required", "")
+		return
+	}
+	if req.InstanceName == "" {
+		ih.writeErrorResponse(w, http.StatusBadRequest, "instance_name is required", "")
+		return
+	}
+
+	// Parse connection string
+	connectionDetails, err := ih.parseConnectionString(req.ConnectionString)
+	if err != nil {
+		ih.writeErrorResponse(w, http.StatusBadRequest, "Invalid connection string", err.Error())
+		return
+	}
+
+	// For instances, ensure we use system database if available
+	if connectionDetails.IsSystemDB && connectionDetails.SystemDBName != "" {
+		connectionDetails.DatabaseName = connectionDetails.SystemDBName
+	}
+
+	// Log request
+	if ih.engine.logger != nil {
+		ih.engine.logger.Infof("Connect instance string request: %s, workspace: %s, tenant: %s, type: %s",
+			req.InstanceName, workspaceName, profile.TenantId, connectionDetails.DatabaseType)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Set default enabled if not provided
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	// Prepare gRPC request
+	grpcReq := &corev1.ConnectInstanceRequest{
+		TenantId:            profile.TenantId,
+		WorkspaceName:       workspaceName,
+		InstanceName:        req.InstanceName,
+		InstanceDescription: req.InstanceDescription,
+		InstanceType:        connectionDetails.DatabaseType,
+		InstanceVendor:      connectionDetails.DatabaseVendor,
+		Host:                connectionDetails.Host,
+		Port:                connectionDetails.Port,
+		Username:            connectionDetails.Username,
+		Password:            connectionDetails.Password,
+		NodeId:              &req.NodeID,
+		OwnerId:             profile.UserId,
+		Enabled:             &enabled,
+		Ssl:                 &connectionDetails.SSL,
+		SslMode:             &connectionDetails.SSLMode,
+	}
+
+	// Set optional fields from connection details
+	if req.EnvironmentID != "" {
+		grpcReq.EnvironmentId = &req.EnvironmentID
+	}
+	if sslCert, ok := connectionDetails.Parameters["ssl_cert"]; ok {
+		grpcReq.SslCert = &sslCert
+	}
+	if sslKey, ok := connectionDetails.Parameters["ssl_key"]; ok {
+		grpcReq.SslKey = &sslKey
+	}
+	if sslRootCert, ok := connectionDetails.Parameters["ssl_root_cert"]; ok {
+		grpcReq.SslRootCert = &sslRootCert
+	}
+
+	grpcResp, err := ih.engine.instanceClient.ConnectInstance(ctx, grpcReq)
+	if err != nil {
+		ih.handleGRPCError(w, err, "Failed to connect instance")
+		return
+	}
+
+	// Convert gRPC response to REST response
+	instance := Instance{
+		TenantID:                 grpcResp.Instance.TenantId,
+		WorkspaceID:              grpcResp.Instance.WorkspaceId,
+		EnvironmentID:            grpcResp.Instance.EnvironmentId,
+		InstanceID:               grpcResp.Instance.InstanceId,
+		InstanceName:             grpcResp.Instance.InstanceName,
+		InstanceDescription:      grpcResp.Instance.InstanceDescription,
+		InstanceType:             grpcResp.Instance.InstanceType,
+		InstanceVendor:           grpcResp.Instance.InstanceVendor,
+		InstanceVersion:          grpcResp.Instance.InstanceVersion,
+		InstanceUniqueIdentifier: grpcResp.Instance.InstanceUniqueIdentifier,
+		ConnectedToNodeID:        grpcResp.Instance.ConnectedToNodeId,
+		InstanceHost:             grpcResp.Instance.InstanceHost,
+		InstancePort:             grpcResp.Instance.InstancePort,
+		InstanceUsername:         grpcResp.Instance.InstanceUsername,
+		InstancePassword:         grpcResp.Instance.InstancePassword,
+		InstanceSystemDBName:     grpcResp.Instance.InstanceSystemDbName,
+		InstanceEnabled:          grpcResp.Instance.InstanceEnabled,
+		InstanceSSL:              grpcResp.Instance.InstanceSsl,
+		InstanceSSLMode:          grpcResp.Instance.InstanceSslMode,
+		InstanceSSLCert:          grpcResp.Instance.InstanceSslCert,
+		InstanceSSLKey:           grpcResp.Instance.InstanceSslKey,
+		InstanceSSLRootCert:      grpcResp.Instance.InstanceSslRootCert,
+		PolicyIDs:                grpcResp.Instance.PolicyIds,
+		OwnerID:                  grpcResp.Instance.OwnerId,
+		InstanceStatusMessage:    grpcResp.Instance.InstanceStatusMessage,
+		Status:                   convertStatus(grpcResp.Status),
+		Created:                  grpcResp.Instance.Created,
+		Updated:                  grpcResp.Instance.Updated,
+	}
+
+	response := ConnectInstanceStringResponse{
+		Message:  grpcResp.Message,
+		Success:  grpcResp.Success,
+		Instance: instance,
+		Status:   convertStatus(grpcResp.Status),
+	}
+
+	if ih.engine.logger != nil {
+		ih.engine.logger.Infof("Successfully connected instance via connection string: %s", req.InstanceName)
+	}
+
+	ih.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// parseConnectionString parses a connection string and returns connection details
+func (ih *InstanceHandlers) parseConnectionString(connectionString string) (*dbcapabilities.ConnectionDetails, error) {
+	return dbcapabilities.ParseConnectionString(connectionString)
 }

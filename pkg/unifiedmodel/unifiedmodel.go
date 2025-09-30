@@ -4,7 +4,11 @@
 
 package unifiedmodel
 
-import "github.com/redbco/redb-open/pkg/dbcapabilities"
+import (
+	"encoding/json"
+
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+)
 
 // Type safety enums for common object types
 type ObjectType string
@@ -625,6 +629,92 @@ type Sequence struct {
 	Cache     *int64         `json:"cache,omitempty"`
 	Cycle     bool           `json:"cycle,omitempty"`
 	Options   map[string]any `json:"options,omitempty"`
+}
+
+// UnmarshalJSON provides custom JSON unmarshaling for Sequence to handle large numbers
+// that exceed int64 range by capping them at the maximum int64 value
+func (s *Sequence) UnmarshalJSON(data []byte) error {
+	// Define a temporary struct with the same fields but using json.Number for numeric fields
+	type TempSequence struct {
+		Name      string                 `json:"name"`
+		Start     json.Number            `json:"start,omitempty"`
+		Increment json.Number            `json:"increment,omitempty"`
+		Min       *json.Number           `json:"min,omitempty"`
+		Max       *json.Number           `json:"max,omitempty"`
+		Cache     *json.Number           `json:"cache,omitempty"`
+		Cycle     bool                   `json:"cycle,omitempty"`
+		Options   map[string]interface{} `json:"options,omitempty"`
+	}
+
+	var temp TempSequence
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return err
+	}
+
+	// Helper function to safely convert json.Number to int64 with overflow protection
+	safeInt64 := func(num json.Number) (int64, error) {
+		if num == "" {
+			return 0, nil
+		}
+
+		// Try to parse as int64 first
+		if val, err := num.Int64(); err == nil {
+			return val, nil
+		}
+
+		// If that fails, try as float64 and check bounds
+		if val, err := num.Float64(); err == nil {
+			const maxInt64 = 9223372036854775807
+			const minInt64 = -9223372036854775808
+
+			if val > maxInt64 {
+				return maxInt64, nil // Cap at max int64
+			}
+			if val < minInt64 {
+				return minInt64, nil // Cap at min int64
+			}
+			return int64(val), nil
+		}
+
+		// If both fail, return 0
+		return 0, nil
+	}
+
+	// Helper function to safely convert *json.Number to *int64
+	safeInt64Ptr := func(num *json.Number) (*int64, error) {
+		if num == nil {
+			return nil, nil
+		}
+		val, err := safeInt64(*num)
+		if err != nil {
+			return nil, err
+		}
+		return &val, nil
+	}
+
+	// Convert all fields
+	s.Name = temp.Name
+	s.Cycle = temp.Cycle
+	s.Options = temp.Options
+
+	var err error
+	if s.Start, err = safeInt64(temp.Start); err != nil {
+		return err
+	}
+	if s.Increment, err = safeInt64(temp.Increment); err != nil {
+		return err
+	}
+	if s.Min, err = safeInt64Ptr(temp.Min); err != nil {
+		return err
+	}
+	if s.Max, err = safeInt64Ptr(temp.Max); err != nil {
+		return err
+	}
+	if s.Cache, err = safeInt64Ptr(temp.Cache); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type Identity struct {

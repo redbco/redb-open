@@ -197,3 +197,21 @@ type ReconnectDatabaseResponse struct {
 	Database Database `json:"database"`
 	Status   Status   `json:"status"`
 }
+
+// ConnectDatabaseStringRequest represents a request to connect a database using a connection string
+type ConnectDatabaseStringRequest struct {
+	ConnectionString    string `json:"connection_string" validate:"required"`
+	DatabaseName        string `json:"database_name" validate:"required"`
+	DatabaseDescription string `json:"database_description,omitempty"`
+	NodeID              string `json:"node_id,omitempty"`
+	EnvironmentID       string `json:"environment_id,omitempty"`
+	Enabled             *bool  `json:"enabled,omitempty"`
+}
+
+// ConnectDatabaseStringResponse represents the response for connecting a database via connection string
+type ConnectDatabaseStringResponse struct {
+	Message  string   `json:"message"`
+	Success  bool     `json:"success"`
+	Database Database `json:"database"`
+	Status   Status   `json:"status"`
+}

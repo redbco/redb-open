@@ -88,6 +88,19 @@ func (stc *ScalableTypeConverter) createPostgreSQLMetadata() DatabaseTypeMetadat
 				NativeName:   "timestamp",
 				UnifiedType:  UnifiedTypeTimestamp,
 				SupportsNull: true,
+				Aliases:      []string{"timestamp without time zone"},
+			},
+			"timestamp without time zone": {
+				NativeName:   "timestamp without time zone",
+				UnifiedType:  UnifiedTypeTimestamp,
+				SupportsNull: true,
+				Aliases:      []string{"timestamp"},
+			},
+			"timestamp with time zone": {
+				NativeName:   "timestamp with time zone",
+				UnifiedType:  UnifiedTypeTimestamp,
+				SupportsNull: true,
+				Aliases:      []string{"timestamptz"},
 			},
 			"uuid": {
 				NativeName:   "uuid",
@@ -110,6 +123,11 @@ func (stc *ScalableTypeConverter) createPostgreSQLMetadata() DatabaseTypeMetadat
 				MaxScale:         func() *int64 { v := int64(30); return &v }(),
 				SupportsNull:     true,
 				Aliases:          []string{"numeric"},
+			},
+			"enum": {
+				NativeName:   "enum",
+				UnifiedType:  UnifiedTypeEnum,
+				SupportsNull: true,
 			},
 		},
 		CustomTypeSupport: CustomTypeSupportInfo{
@@ -151,6 +169,7 @@ func (stc *ScalableTypeConverter) createPostgreSQLMetadata() DatabaseTypeMetadat
 			UnifiedTypeUUID:      "uuid",
 			UnifiedTypeJSON:      "jsonb",
 			UnifiedTypeDecimal:   "decimal",
+			UnifiedTypeEnum:      "enum",
 		},
 	}
 }
@@ -213,6 +232,19 @@ func (stc *ScalableTypeConverter) createMySQLMetadata() DatabaseTypeMetadata {
 				SupportsNull:     true,
 				Aliases:          []string{"numeric", "dec"},
 			},
+			"char": {
+				NativeName:    "char",
+				UnifiedType:   UnifiedTypeChar,
+				HasLength:     true,
+				DefaultLength: func() *int64 { v := int64(1); return &v }(),
+				MaxLength:     func() *int64 { v := int64(255); return &v }(),
+				SupportsNull:  true,
+			},
+			"enum": {
+				NativeName:   "enum",
+				UnifiedType:  UnifiedTypeEnum,
+				SupportsNull: true,
+			},
 		},
 		CustomTypeSupport: CustomTypeSupportInfo{
 			SupportsEnum:      true,
@@ -246,8 +278,10 @@ func (stc *ScalableTypeConverter) createMySQLMetadata() DatabaseTypeMetadata {
 			UnifiedTypeVarchar:   "varchar(255)",
 			UnifiedTypeBoolean:   "boolean",
 			UnifiedTypeTimestamp: "datetime",
+			UnifiedTypeUUID:      "char(36)",
 			UnifiedTypeJSON:      "json",
 			UnifiedTypeDecimal:   "decimal",
+			UnifiedTypeEnum:      "enum",
 		},
 	}
 }

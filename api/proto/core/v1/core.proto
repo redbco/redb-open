@@ -110,6 +110,10 @@ service DatabaseService {
   rpc StoreDatabaseTables(StoreDatabaseTablesRequest) returns (StoreDatabaseTablesResponse);
   rpc GetDatabaseSchema(GetDatabaseSchemaRequest) returns (GetDatabaseSchemaResponse);
   rpc GetDatabaseTables(GetDatabaseTablesRequest) returns (GetDatabaseTablesResponse);
+
+  // Schema deployment services
+  rpc CloneDatabase(CloneDatabaseRequest) returns (CloneDatabaseResponse);
+  rpc CloneDatabaseRemote(CloneDatabaseRemoteRequest) returns (CloneDatabaseRemoteResponse);
 }
 
 // Repo service for repository management
@@ -144,6 +148,10 @@ service CommitService {
   rpc DeployCommit(DeployCommitRequest) returns (DeployCommitResponse);
 
   rpc CreateCommitByAnchor(CreateCommitByAnchorRequest) returns (CreateCommitByAnchorResponse);
+
+  // Schema deployment from commits
+  rpc DeployCommitSchema(DeployCommitSchemaRequest) returns (DeployCommitSchemaResponse);
+  rpc DeployCommitSchemaRemote(DeployCommitSchemaRemoteRequest) returns (DeployCommitSchemaRemoteResponse);
 }
 
 // Mapping service for mapping management
@@ -4005,4 +4013,126 @@ message ImportUserPermissionsResponse {
     repeated string errors = 5;
     bool dry_run = 6;
     redbco.redbopen.common.v1.Status status = 7;
+}
+
+// ============================================================================
+// Schema Deployment Messages
+// ============================================================================
+
+// Target options for schema deployment
+message NewDatabaseTarget {
+    string instance_name = 1;
+    string database_name = 2;
+}
+
+message ExistingDatabaseTarget {
+    string database_name = 1;
+    bool wipe = 2;
+    bool merge = 3;
+}
+
+// Deployment options
+message DeploymentOptions {
+    bool wipe = 1;
+    bool merge = 2;
+    map<string, string> transformation_options = 3;
+}
+
+// Clone options for database cloning
+message CloneOptions {
+    bool with_data = 1;
+    bool wipe = 2;
+    bool merge = 3;
+    map<string, string> transformation_options = 4;
+}
+
+// Commit-based schema deployment
+message DeployCommitSchemaRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string branch_name = 4;
+    string commit_code = 5;
+    
+    // Target options (mutually exclusive)
+    oneof target {
+        NewDatabaseTarget new_database = 6;
+        ExistingDatabaseTarget existing_database = 7;
+    }
+    
+    DeploymentOptions options = 8;
+}
+
+message DeployCommitSchemaResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string target_database_id = 4;
+    string target_repo_id = 5;
+    string target_branch_id = 6;
+    string target_commit_id = 7;
+    repeated string warnings = 8;
+}
+
+// Database cloning (current schema + optional data)
+message CloneDatabaseRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string source_database_name = 3;
+    
+    // Target options (mutually exclusive)
+    oneof target {
+        NewDatabaseTarget new_database = 4;
+        ExistingDatabaseTarget existing_database = 5;
+    }
+    
+    CloneOptions options = 6;
+}
+
+message CloneDatabaseResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string target_database_id = 4;
+    string target_repo_id = 5;
+    string target_branch_id = 6;
+    string target_commit_id = 7;
+    repeated string warnings = 8;
+    int64 rows_copied = 9; // Number of rows copied if with_data was true
+}
+
+// Remote operations (cross-node)
+message DeployCommitSchemaRemoteRequest {
+    DeployCommitSchemaRequest request = 1;
+    uint64 source_node_id = 2;  // Node containing the source commit
+    uint64 target_node_id = 3;  // Node containing the target instance
+}
+
+message DeployCommitSchemaRemoteResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string target_database_id = 4;
+    string target_repo_id = 5;
+    string target_branch_id = 6;
+    string target_commit_id = 7;
+    repeated string warnings = 8;
+}
+
+message CloneDatabaseRemoteRequest {
+    CloneDatabaseRequest request = 1;
+    uint64 source_node_id = 2;  // Node containing the source database
+    uint64 target_node_id = 3;  // Node containing the target instance
+}
+
+message CloneDatabaseRemoteResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string target_database_id = 4;
+    string target_repo_id = 5;
+    string target_branch_id = 6;
+    string target_commit_id = 7;
+    repeated string warnings = 8;
+    int64 rows_copied = 9; // Number of rows copied if with_data was true
 }

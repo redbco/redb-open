@@ -126,3 +126,21 @@ type CreateDatabaseResponse struct {
 	Database Database `json:"database"`
 	Status   Status   `json:"status"`
 }
+
+// ConnectInstanceStringRequest represents a request to connect an instance using a connection string
+type ConnectInstanceStringRequest struct {
+	ConnectionString    string `json:"connection_string" validate:"required"`
+	InstanceName        string `json:"instance_name" validate:"required"`
+	InstanceDescription string `json:"instance_description,omitempty"`
+	NodeID              string `json:"node_id,omitempty"`
+	EnvironmentID       string `json:"environment_id,omitempty"`
+	Enabled             *bool  `json:"enabled,omitempty"`
+}
+
+// ConnectInstanceStringResponse represents the response for connecting an instance via connection string
+type ConnectInstanceStringResponse struct {
+	Message  string   `json:"message"`
+	Success  bool     `json:"success"`
+	Instance Instance `json:"instance"`
+	Status   Status   `json:"status"`
+}

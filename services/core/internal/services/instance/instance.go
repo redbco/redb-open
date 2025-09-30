@@ -12,6 +12,7 @@ import (
 	"github.com/redbco/redb-open/pkg/encryption"
 	"github.com/redbco/redb-open/pkg/logger"
 	databaseService "github.com/redbco/redb-open/services/core/internal/services/database"
+	"github.com/redbco/redb-open/services/core/internal/services/workspace"
 )
 
 // System database mapping for database types that have separate system databases
@@ -267,14 +268,17 @@ func (s *Service) Create(ctx context.Context, tenantID, workspaceName, name, des
 
 // Get retrieves an instance by ID
 func (s *Service) Get(ctx context.Context, tenantID, workspaceName, name string) (*Instance, error) {
-	s.logger.Infof("Retrieving instance from database with ID: %s", name)
+	s.logger.Infof("Retrieving instance from database with name: %s", name)
 
-	// Get the workspace ID from the workspace name
-	var workspaceID string
-	err := s.db.Pool().QueryRow(ctx, "SELECT workspace_id FROM workspaces WHERE workspace_name = $1 AND tenant_id = $2", workspaceName, tenantID).Scan(&workspaceID)
+	// Get the workspace ID from the workspace name using workspace service
+	s.logger.Infof("Looking up workspace: name='%s', tenant_id='%s'", workspaceName, tenantID)
+	workspaceService := workspace.NewService(s.db, s.logger)
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, tenantID, workspaceName)
 	if err != nil {
+		s.logger.Errorf("Workspace lookup failed: name='%s', tenant_id='%s', error=%v", workspaceName, tenantID, err)
 		return nil, fmt.Errorf("failed to get workspace ID: %w", err)
 	}
+	s.logger.Infof("Found workspace_id='%s' for name='%s'", workspaceID, workspaceName)
 
 	query := `
 		SELECT instance_id, tenant_id, workspace_id, environment_id, connected_to_node_id, instance_name, instance_description, instance_type, instance_vendor, instance_version, instance_unique_identifier, instance_host, instance_port, instance_username, instance_password, instance_system_db_name, instance_enabled, instance_ssl, instance_ssl_mode, instance_ssl_cert, instance_ssl_key, instance_ssl_root_cert, instance_metadata, policy_ids, owner_id, instance_status_message, status, created, updated

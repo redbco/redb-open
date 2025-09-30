@@ -38,8 +38,27 @@ var showInstanceCmd = &cobra.Command{
 var connectInstanceCmd = &cobra.Command{
 	Use:   "connect",
 	Short: "Connect a new instance",
-	Long:  `Connect a new instance by providing instance details interactively.`,
+	Long: `Connect a new instance by providing instance details interactively or using a connection string.
+
+Examples:
+  # Interactive mode
+  redb instances connect
+
+  # Using connection string
+  redb instances connect --string "postgresql://user:pass@localhost:5432/postgres" --name "my-postgres"
+  redb instances connect --string "mysql://root:password@localhost:3306/mysql" --name "my-mysql"
+  redb instances connect --string "mongodb://user:pass@localhost:27017/admin" --name "my-mongo"`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		connectionString, _ := cmd.Flags().GetString("string")
+		instanceName, _ := cmd.Flags().GetString("name")
+		description, _ := cmd.Flags().GetString("description")
+		nodeID, _ := cmd.Flags().GetString("node-id")
+		environmentID, _ := cmd.Flags().GetString("environment-id")
+		enabled, _ := cmd.Flags().GetBool("enabled")
+
+		if connectionString != "" {
+			return instances.ConnectInstanceString(connectionString, instanceName, description, nodeID, environmentID, enabled)
+		}
 		return instances.ConnectInstance(args)
 	},
 }
@@ -78,6 +97,14 @@ var disconnectInstanceCmd = &cobra.Command{
 }
 
 func init() {
+	// Add flags to connectInstanceCmd
+	connectInstanceCmd.Flags().String("string", "", "Connection string (e.g., postgresql://user:pass@host:port/db)")
+	connectInstanceCmd.Flags().String("name", "", "Instance name (required when using --string)")
+	connectInstanceCmd.Flags().String("description", "", "Instance description")
+	connectInstanceCmd.Flags().String("node-id", "", "Node ID")
+	connectInstanceCmd.Flags().String("environment-id", "", "Environment ID")
+	connectInstanceCmd.Flags().Bool("enabled", true, "Enable the instance")
+
 	// Add subcommands to instances command
 	instancesCmd.AddCommand(listInstancesCmd)
 	instancesCmd.AddCommand(showInstanceCmd)

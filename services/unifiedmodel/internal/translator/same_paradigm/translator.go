@@ -3,6 +3,7 @@ package same_paradigm
 import (
 	"fmt"
 
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/unifiedmodel/internal/translator/core"
 )
@@ -652,7 +653,7 @@ func (spt *SameParadigmTranslatorImpl) processSequences(ctx *core.TranslationCon
 				sequenceName,
 				"Sequences are not supported in target database",
 				"medium",
-				"Consider using auto-increment or application-generated IDs",
+				spt.getSequenceFallbackSuggestion(ctx.TargetDatabase),
 			)
 			ctx.IncrementObjectDropped()
 			continue
@@ -699,7 +700,7 @@ func (spt *SameParadigmTranslatorImpl) processTypes(ctx *core.TranslationContext
 				typeName,
 				"Custom types are not supported in target database",
 				"high",
-				"Consider using built-in types or application-level validation",
+				spt.getCustomTypeFallbackSuggestion(customType, ctx.TargetDatabase),
 			)
 			ctx.IncrementObjectDropped()
 			continue
@@ -799,4 +800,46 @@ func (spt *SameParadigmTranslatorImpl) convertNodeDataTypes(node unifiedmodel.No
 
 	node.Properties = convertedProperties
 	return node, nil
+}
+
+// Helper methods for better fallback suggestions
+
+// getSequenceFallbackSuggestion provides database-specific suggestions for sequence alternatives
+func (spt *SameParadigmTranslatorImpl) getSequenceFallbackSuggestion(targetDB dbcapabilities.DatabaseType) string {
+	switch targetDB {
+	case dbcapabilities.MySQL, dbcapabilities.MariaDB:
+		return "Use AUTO_INCREMENT columns for auto-incrementing primary keys"
+	case dbcapabilities.MongoDB:
+		return "Use ObjectId or implement application-level ID generation"
+	case dbcapabilities.Redis:
+		return "Use INCR command for atomic counter increments"
+	default:
+		return "Consider using auto-increment columns or application-generated IDs"
+	}
+}
+
+// getCustomTypeFallbackSuggestion provides database-specific suggestions for custom type alternatives
+func (spt *SameParadigmTranslatorImpl) getCustomTypeFallbackSuggestion(customType unifiedmodel.Type, targetDB dbcapabilities.DatabaseType) string {
+	switch customType.Category {
+	case string(unifiedmodel.CustomTypeCategoryEnum):
+		switch targetDB {
+		case dbcapabilities.MySQL, dbcapabilities.MariaDB:
+			return "Convert to MySQL ENUM type or use VARCHAR with CHECK constraint"
+		case dbcapabilities.MongoDB:
+			return "Use string field with application-level validation"
+		default:
+			return "Use VARCHAR with application-level validation or CHECK constraints"
+		}
+	case string(unifiedmodel.CustomTypeCategoryComposite):
+		switch targetDB {
+		case dbcapabilities.MySQL, dbcapabilities.MariaDB:
+			return "Flatten to multiple columns or use JSON type"
+		case dbcapabilities.MongoDB:
+			return "Use nested document structure"
+		default:
+			return "Consider flattening to multiple columns or using JSON representation"
+		}
+	default:
+		return "Consider using built-in types or application-level validation"
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/redbco/redb-open/cmd/cli/internal/common"
+	"github.com/spf13/pflag"
 )
 
 type Commit struct {
@@ -242,5 +243,126 @@ func DeployCommit(repoBranchCommitStr string, _ []string) error {
 	}
 
 	fmt.Printf("Successfully deployed commit '%s' from branch '%s' in repository '%s' to the attached database\n", commitCode, branchName, repoName)
+	return nil
+}
+
+// DeploySchema deploys schema from a specific commit to a target database
+func DeploySchema(repoBranchCommitStr string, flags interface{}) error {
+	repoName, branchName, commitCode, err := parseRepoBranchCommit(repoBranchCommitStr)
+	if err != nil {
+		return err
+	}
+
+	if repoName == "" || branchName == "" || commitCode == "" {
+		return fmt.Errorf("repository name, branch name, and commit code are required")
+	}
+
+	// Parse flags
+	flagSet, ok := flags.(*pflag.FlagSet)
+	if !ok {
+		return fmt.Errorf("invalid flags type")
+	}
+
+	// Get flag values
+	instanceName, _ := flagSet.GetString("instance")
+	dbName, _ := flagSet.GetString("db-name")
+	databaseName, _ := flagSet.GetString("database")
+	wipe, _ := flagSet.GetBool("wipe")
+	merge, _ := flagSet.GetBool("merge")
+	sourceNodeID, _ := flagSet.GetUint64("source-node")
+	targetNodeID, _ := flagSet.GetUint64("target-node")
+
+	// Validate target options
+	if instanceName != "" && databaseName != "" {
+		return fmt.Errorf("cannot specify both --instance and --database")
+	}
+	if instanceName == "" && databaseName == "" {
+		return fmt.Errorf("must specify either --instance with --db-name or --database")
+	}
+	if instanceName != "" && dbName == "" {
+		return fmt.Errorf("--db-name is required when using --instance")
+	}
+
+	fmt.Printf("Deploying schema from commit '%s' in branch '%s' of repository '%s'\n", commitCode, branchName, repoName)
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	// Build the request payload based on parsed flags
+	requestPayload := map[string]interface{}{
+		"repo_name":   repoName,
+		"branch_name": branchName,
+		"commit_code": commitCode,
+		"options": map[string]interface{}{
+			"wipe":  wipe,
+			"merge": merge,
+		},
+	}
+
+	// Set target based on flags
+	if instanceName != "" {
+		requestPayload["target"] = map[string]interface{}{
+			"new_database": map[string]interface{}{
+				"instance_name": instanceName,
+				"database_name": dbName,
+			},
+		}
+	} else {
+		requestPayload["target"] = map[string]interface{}{
+			"existing_database": map[string]interface{}{
+				"database_name": databaseName,
+				"wipe":          wipe,
+				"merge":         merge,
+			},
+		}
+	}
+
+	// Add cross-node options if specified
+	if sourceNodeID > 0 && targetNodeID > 0 {
+		requestPayload["source_node_id"] = sourceNodeID
+		requestPayload["target_node_id"] = targetNodeID
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/commits/deploy-schema")
+	if err != nil {
+		return err
+	}
+
+	var deployResponse struct {
+		Message          string   `json:"message"`
+		Success          bool     `json:"success"`
+		Status           string   `json:"status"`
+		TargetDatabaseId string   `json:"target_database_id"`
+		TargetRepoId     string   `json:"target_repo_id"`
+		TargetBranchId   string   `json:"target_branch_id"`
+		TargetCommitId   string   `json:"target_commit_id"`
+		Warnings         []string `json:"warnings"`
+	}
+
+	if err := client.Post(url, requestPayload, &deployResponse); err != nil {
+		return fmt.Errorf("failed to deploy schema: %v", err)
+	}
+
+	if !deployResponse.Success {
+		return fmt.Errorf("schema deployment failed: %s", deployResponse.Message)
+	}
+
+	fmt.Printf("Successfully deployed schema from commit '%s' to target database '%s'\n",
+		commitCode, deployResponse.TargetDatabaseId)
+
+	if len(deployResponse.Warnings) > 0 {
+		fmt.Println("Warnings:")
+		for _, warning := range deployResponse.Warnings {
+			fmt.Printf("  - %s\n", warning)
+		}
+	}
+
 	return nil
 }

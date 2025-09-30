@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/redbco/redb-open/cmd/cli/internal/common"
+	"github.com/spf13/pflag"
 	"golang.org/x/term"
 )
 
@@ -1329,5 +1330,182 @@ func CloneTableData(mappingName string, _ []string) error {
 	}
 
 	fmt.Printf("Successfully executed table data transformation using mapping '%s'\n", mappingName)
+	return nil
+}
+
+// ConnectDatabaseString connects a new database using a connection string
+func ConnectDatabaseString(connectionString, databaseName, description, nodeID, environmentID string, enabled bool) error {
+	if connectionString == "" {
+		return fmt.Errorf("connection string is required")
+	}
+	if databaseName == "" {
+		return fmt.Errorf("database name is required when using connection string")
+	}
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/databases/connect-string")
+	if err != nil {
+		return err
+	}
+
+	// Create the request
+	connectReq := struct {
+		ConnectionString    string `json:"connection_string"`
+		DatabaseName        string `json:"database_name"`
+		DatabaseDescription string `json:"database_description,omitempty"`
+		NodeID              string `json:"node_id,omitempty"`
+		EnvironmentID       string `json:"environment_id,omitempty"`
+		Enabled             *bool  `json:"enabled,omitempty"`
+	}{
+		ConnectionString:    connectionString,
+		DatabaseName:        databaseName,
+		DatabaseDescription: description,
+		NodeID:              nodeID,
+		EnvironmentID:       environmentID,
+		Enabled:             &enabled,
+	}
+
+	var connectResponse struct {
+		Message  string   `json:"message"`
+		Success  bool     `json:"success"`
+		Database Database `json:"database"`
+		Status   string   `json:"status"`
+	}
+	if err := client.Post(url, connectReq, &connectResponse); err != nil {
+		return fmt.Errorf("failed to connect database: %v", err)
+	}
+
+	fmt.Printf("Successfully connected database '%s' (ID: %s)\n", connectResponse.Database.DatabaseName, connectResponse.Database.DatabaseID)
+	return nil
+}
+
+// CloneDatabase clones current schema (and optionally data) from source database
+func CloneDatabase(sourceDatabaseName string, flags interface{}) error {
+	sourceDatabaseName = strings.TrimSpace(sourceDatabaseName)
+	if sourceDatabaseName == "" {
+		return fmt.Errorf("source database name is required")
+	}
+
+	// Parse flags
+	flagSet, ok := flags.(*pflag.FlagSet)
+	if !ok {
+		return fmt.Errorf("invalid flags type")
+	}
+
+	// Get flag values
+	instanceName, _ := flagSet.GetString("instance")
+	dbName, _ := flagSet.GetString("db-name")
+	databaseName, _ := flagSet.GetString("database")
+	withData, _ := flagSet.GetBool("with-data")
+	wipe, _ := flagSet.GetBool("wipe")
+	merge, _ := flagSet.GetBool("merge")
+	sourceNodeID, _ := flagSet.GetUint64("source-node")
+	targetNodeID, _ := flagSet.GetUint64("target-node")
+
+	// Validate target options
+	if instanceName != "" && databaseName != "" {
+		return fmt.Errorf("cannot specify both --instance and --database")
+	}
+	if instanceName == "" && databaseName == "" {
+		return fmt.Errorf("must specify either --instance with --db-name or --database")
+	}
+	if instanceName != "" && dbName == "" {
+		return fmt.Errorf("--db-name is required when using --instance")
+	}
+
+	fmt.Printf("Cloning database '%s'\n", sourceDatabaseName)
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	// Build the request payload based on parsed flags
+	requestPayload := map[string]interface{}{
+		"source_database_name": sourceDatabaseName,
+		"options": map[string]interface{}{
+			"with_data": withData,
+			"wipe":      wipe,
+			"merge":     merge,
+		},
+	}
+
+	// Set target based on flags
+	if instanceName != "" {
+		requestPayload["target"] = map[string]interface{}{
+			"new_database": map[string]interface{}{
+				"instance_name": instanceName,
+				"database_name": dbName,
+			},
+		}
+	} else {
+		requestPayload["target"] = map[string]interface{}{
+			"existing_database": map[string]interface{}{
+				"database_name": databaseName,
+				"wipe":          wipe,
+				"merge":         merge,
+			},
+		}
+	}
+
+	// Add cross-node options if specified
+	if sourceNodeID > 0 && targetNodeID > 0 {
+		requestPayload["source_node_id"] = sourceNodeID
+		requestPayload["target_node_id"] = targetNodeID
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/databases/clone-database")
+	if err != nil {
+		return err
+	}
+
+	var cloneResponse struct {
+		Message          string   `json:"message"`
+		Success          bool     `json:"success"`
+		Status           string   `json:"status"`
+		TargetDatabaseId string   `json:"target_database_id"`
+		TargetRepoId     string   `json:"target_repo_id"`
+		TargetBranchId   string   `json:"target_branch_id"`
+		TargetCommitId   string   `json:"target_commit_id"`
+		Warnings         []string `json:"warnings"`
+		RowsCopied       int64    `json:"rows_copied"`
+	}
+
+	if err := client.Post(url, requestPayload, &cloneResponse); err != nil {
+		return fmt.Errorf("failed to clone database: %v", err)
+	}
+
+	if !cloneResponse.Success {
+		return fmt.Errorf("database cloning failed: %s", cloneResponse.Message)
+	}
+
+	fmt.Printf("Successfully cloned database '%s' to target database '%s'\n",
+		sourceDatabaseName, cloneResponse.TargetDatabaseId)
+
+	if cloneResponse.RowsCopied > 0 {
+		fmt.Printf("Copied %d rows of data\n", cloneResponse.RowsCopied)
+	}
+
+	if len(cloneResponse.Warnings) > 0 {
+		fmt.Println("Warnings:")
+		for _, warning := range cloneResponse.Warnings {
+			fmt.Printf("  - %s\n", warning)
+		}
+	}
+
 	return nil
 }

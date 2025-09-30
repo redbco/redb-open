@@ -366,12 +366,33 @@ func (tc *TypeConverter) ConvertDataTypeWithCustomTypes(sourceDB, targetDB dbcap
 
 // extractBaseType extracts the base type from a parameterized type
 // e.g., "varchar(255)" -> "varchar", "decimal(10,2)" -> "decimal"
+// Also handles PostgreSQL modifiers like "timestamp without time zone"
 func (tc *TypeConverter) extractBaseType(dataType string) string {
-	// Find the first opening parenthesis
-	if idx := strings.Index(dataType, "("); idx != -1 {
-		return dataType[:idx]
+	// Normalize the type name
+	normalizedType := strings.ToLower(strings.TrimSpace(dataType))
+
+	// Handle PostgreSQL timestamp variants
+	if strings.Contains(normalizedType, "timestamp without time zone") {
+		return "timestamp without time zone"
 	}
-	return dataType
+	if strings.Contains(normalizedType, "timestamp with time zone") {
+		return "timestamp with time zone"
+	}
+	if strings.HasPrefix(normalizedType, "timestamp") {
+		return "timestamp"
+	}
+
+	// Handle custom enum types (ending with _enum)
+	if strings.HasSuffix(normalizedType, "_enum") {
+		return "enum"
+	}
+
+	// Find the first opening parenthesis for parameterized types
+	if idx := strings.Index(normalizedType, "("); idx != -1 {
+		return normalizedType[:idx]
+	}
+
+	return normalizedType
 }
 
 // preserveTypeParameters preserves parameters from source type in target type

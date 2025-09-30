@@ -351,6 +351,184 @@ func (ch *CommitHandlers) DeployCommit(w http.ResponseWriter, r *http.Request) {
 	ch.writeJSONResponse(w, http.StatusOK, response)
 }
 
+// DeployCommitSchemaRequest represents the request payload for deploying commit schema
+type DeployCommitSchemaRequest struct {
+	RepoName     string                    `json:"repo_name"`
+	BranchName   string                    `json:"branch_name"`
+	CommitCode   string                    `json:"commit_code"`
+	Target       DeployCommitSchemaTarget  `json:"target"`
+	Options      DeployCommitSchemaOptions `json:"options"`
+	SourceNodeID *uint64                   `json:"source_node_id,omitempty"`
+	TargetNodeID *uint64                   `json:"target_node_id,omitempty"`
+}
+
+type DeployCommitSchemaTarget struct {
+	NewDatabase      *NewDatabaseTarget      `json:"new_database,omitempty"`
+	ExistingDatabase *ExistingDatabaseTarget `json:"existing_database,omitempty"`
+}
+
+type DeployCommitSchemaOptions struct {
+	Wipe                  bool              `json:"wipe"`
+	Merge                 bool              `json:"merge"`
+	TransformationOptions map[string]string `json:"transformation_options,omitempty"`
+}
+
+// DeployCommitSchemaResponse represents the response from deploying commit schema
+type DeployCommitSchemaResponse struct {
+	Message          string   `json:"message"`
+	Success          bool     `json:"success"`
+	Status           string   `json:"status"`
+	TargetDatabaseId string   `json:"target_database_id"`
+	TargetRepoId     string   `json:"target_repo_id"`
+	TargetBranchId   string   `json:"target_branch_id"`
+	TargetCommitId   string   `json:"target_commit_id"`
+	Warnings         []string `json:"warnings"`
+}
+
+// DeployCommitSchema handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/commits/deploy-schema
+func (ch *CommitHandlers) DeployCommitSchema(w http.ResponseWriter, r *http.Request) {
+	ch.engine.TrackOperation()
+	defer ch.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+
+	if tenantURL == "" || workspaceName == "" {
+		ch.writeErrorResponse(w, http.StatusBadRequest, "tenant_url and workspace_name are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		ch.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Parse request body
+	var req DeployCommitSchemaRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ch.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+
+	// Validate request
+	if req.RepoName == "" || req.BranchName == "" || req.CommitCode == "" {
+		ch.writeErrorResponse(w, http.StatusBadRequest, "repo_name, branch_name, and commit_code are required", "")
+		return
+	}
+
+	// Validate target (must have exactly one)
+	if req.Target.NewDatabase == nil && req.Target.ExistingDatabase == nil {
+		ch.writeErrorResponse(w, http.StatusBadRequest, "target must be specified (new_database or existing_database)", "")
+		return
+	}
+
+	if req.Target.NewDatabase != nil && req.Target.ExistingDatabase != nil {
+		ch.writeErrorResponse(w, http.StatusBadRequest, "only one target type can be specified", "")
+		return
+	}
+
+	// Log request
+	if ch.engine.logger != nil {
+		ch.engine.logger.Infof("Deploy commit schema request: repo=%s, branch=%s, commit=%s, workspace=%s, tenant=%s, user=%s",
+			req.RepoName, req.BranchName, req.CommitCode, workspaceName, profile.TenantId, profile.UserId)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 300*time.Second) // 5 minutes for potentially long operation
+	defer cancel()
+
+	// Build gRPC request
+	grpcReq := &corev1.DeployCommitSchemaRequest{
+		TenantId:      profile.TenantId,
+		WorkspaceName: workspaceName,
+		RepoName:      req.RepoName,
+		BranchName:    req.BranchName,
+		CommitCode:    req.CommitCode,
+		Options: &corev1.DeploymentOptions{
+			Wipe:                  req.Options.Wipe,
+			Merge:                 req.Options.Merge,
+			TransformationOptions: req.Options.TransformationOptions,
+		},
+	}
+
+	// Set target
+	if req.Target.NewDatabase != nil {
+		grpcReq.Target = &corev1.DeployCommitSchemaRequest_NewDatabase{
+			NewDatabase: &corev1.NewDatabaseTarget{
+				InstanceName: req.Target.NewDatabase.InstanceName,
+				DatabaseName: req.Target.NewDatabase.DatabaseName,
+			},
+		}
+	} else if req.Target.ExistingDatabase != nil {
+		grpcReq.Target = &corev1.DeployCommitSchemaRequest_ExistingDatabase{
+			ExistingDatabase: &corev1.ExistingDatabaseTarget{
+				DatabaseName: req.Target.ExistingDatabase.DatabaseName,
+				Wipe:         req.Target.ExistingDatabase.Wipe,
+				Merge:        req.Target.ExistingDatabase.Merge,
+			},
+		}
+	}
+
+	// Call appropriate gRPC method based on cross-node requirements
+	var grpcResp *corev1.DeployCommitSchemaResponse
+	var err error
+
+	if req.SourceNodeID != nil && req.TargetNodeID != nil {
+		// Cross-node operation
+		remoteReq := &corev1.DeployCommitSchemaRemoteRequest{
+			Request:      grpcReq,
+			SourceNodeId: *req.SourceNodeID,
+			TargetNodeId: *req.TargetNodeID,
+		}
+		remoteResp, err := ch.engine.commitClient.DeployCommitSchemaRemote(ctx, remoteReq)
+		if err != nil {
+			ch.handleGRPCError(w, err, "Failed to deploy commit schema across nodes")
+			return
+		}
+		// Convert remote response to regular response
+		grpcResp = &corev1.DeployCommitSchemaResponse{
+			Message:          remoteResp.Message,
+			Success:          remoteResp.Success,
+			Status:           remoteResp.Status,
+			TargetDatabaseId: remoteResp.TargetDatabaseId,
+			TargetRepoId:     remoteResp.TargetRepoId,
+			TargetBranchId:   remoteResp.TargetBranchId,
+			TargetCommitId:   remoteResp.TargetCommitId,
+			Warnings:         remoteResp.Warnings,
+		}
+	} else {
+		// Same-node operation
+		grpcResp, err = ch.engine.commitClient.DeployCommitSchema(ctx, grpcReq)
+		if err != nil {
+			ch.handleGRPCError(w, err, "Failed to deploy commit schema")
+			return
+		}
+	}
+
+	// Build response
+	response := DeployCommitSchemaResponse{
+		Message:          grpcResp.Message,
+		Success:          grpcResp.Success,
+		Status:           string(convertStatus(grpcResp.Status)),
+		TargetDatabaseId: grpcResp.TargetDatabaseId,
+		TargetRepoId:     grpcResp.TargetRepoId,
+		TargetBranchId:   grpcResp.TargetBranchId,
+		TargetCommitId:   grpcResp.TargetCommitId,
+		Warnings:         grpcResp.Warnings,
+	}
+
+	if ch.engine.logger != nil {
+		ch.engine.logger.Infof("Successfully deployed commit schema: repo=%s, branch=%s, commit=%s, target=%s",
+			req.RepoName, req.BranchName, req.CommitCode, grpcResp.TargetDatabaseId)
+	}
+
+	ch.writeJSONResponse(w, http.StatusOK, response)
+}
+
 // Helper methods
 
 func (ch *CommitHandlers) handleGRPCError(w http.ResponseWriter, err error, defaultMessage string) {

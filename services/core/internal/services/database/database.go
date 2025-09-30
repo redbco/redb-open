@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/redbco/redb-open/pkg/database"
+	"github.com/redbco/redb-open/pkg/encryption"
 	"github.com/redbco/redb-open/pkg/logger"
 )
 
@@ -139,6 +140,17 @@ func (s *Service) Create(ctx context.Context, tenantID, workspaceID, name, descr
 		return nil, errors.New("database with this name already exists in the workspace")
 	}
 
+	// Create the encrypted password (If "" is password, no encryption is done)
+	var encryptedPassword string
+	if password != "" {
+		encryptedPassword, err = encryption.EncryptPassword(tenantID, password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encrypt password: %w", err)
+		}
+	} else {
+		encryptedPassword = password
+	}
+
 	// Insert the database into the database
 	query := `
 		INSERT INTO databases (tenant_id, workspace_id, environment_id, connected_to_node_id, instance_id, database_name, database_description, database_type, database_vendor, database_version, database_username, database_password, database_db_name, database_enabled, owner_id)
@@ -152,7 +164,7 @@ func (s *Service) Create(ctx context.Context, tenantID, workspaceID, name, descr
 		envID = &environmentID
 	}
 
-	err = s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, envID, finalNodeID, instanceID, name, description, dbType, vendor, "1.0.0", username, password, dbName, enabled, ownerID).Scan(
+	err = s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, envID, finalNodeID, instanceID, name, description, dbType, vendor, "1.0.0", username, encryptedPassword, dbName, enabled, ownerID).Scan(
 		&database.ID,
 		&database.TenantID,
 		&database.WorkspaceID,
