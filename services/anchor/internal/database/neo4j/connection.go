@@ -374,6 +374,211 @@ func ExecuteCommand(ctx context.Context, db interface{}, command string) ([]byte
 	return jsonBytes, nil
 }
 
+// ExecuteQuery executes a Cypher query on Neo4j and returns results as a slice of maps
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	driver, ok := db.(neo4j.DriverWithContext)
+	if !ok {
+		return nil, fmt.Errorf("invalid neo4j connection type")
+	}
+
+	ctx := context.Background()
+	session := driver.NewSession(ctx, neo4j.SessionConfig{
+		AccessMode: neo4j.AccessModeRead,
+	})
+	defer session.Close(ctx)
+
+	// Convert args to map for Neo4j
+	params := make(map[string]interface{})
+	for i, arg := range args {
+		params[fmt.Sprintf("arg%d", i)] = arg
+	}
+
+	// Execute the Cypher query
+	result, err := session.Run(ctx, query, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute neo4j query: %w", err)
+	}
+
+	// Collect results
+	var results []interface{}
+	for result.Next(ctx) {
+		record := result.Record()
+		row := make(map[string]interface{})
+
+		// Extract all values from the record
+		for _, key := range record.Keys {
+			value, found := record.Get(key)
+			if found {
+				row[key] = value
+			}
+		}
+		results = append(results, row)
+	}
+
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("neo4j query iteration error: %w", err)
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query on Neo4j and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	driver, ok := db.(neo4j.DriverWithContext)
+	if !ok {
+		return 0, fmt.Errorf("invalid neo4j connection type")
+	}
+
+	ctx := context.Background()
+	session := driver.NewSession(ctx, neo4j.SessionConfig{
+		AccessMode: neo4j.AccessModeRead,
+	})
+	defer session.Close(ctx)
+
+	// Execute the Cypher count query
+	result, err := session.Run(ctx, query, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to execute neo4j count query: %w", err)
+	}
+
+	// Get the count result
+	if result.Next(ctx) {
+		record := result.Record()
+		if len(record.Values) > 0 {
+			if count, ok := record.Values[0].(int64); ok {
+				return count, nil
+			}
+			if count, ok := record.Values[0].(int); ok {
+				return int64(count), nil
+			}
+		}
+	}
+
+	if err := result.Err(); err != nil {
+		return 0, fmt.Errorf("failed to get neo4j count result: %w", err)
+	}
+
+	return 0, fmt.Errorf("no count result returned from neo4j query")
+}
+
+// StreamTableData streams data from Neo4j nodes/relationships in batches for efficient data copying
+// For Neo4j, tableName represents a node label or relationship type
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	driver, ok := db.(neo4j.DriverWithContext)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid neo4j connection type")
+	}
+
+	ctx := context.Background()
+	session := driver.NewSession(ctx, neo4j.SessionConfig{
+		AccessMode: neo4j.AccessModeRead,
+	})
+	defer session.Close(ctx)
+
+	// Build Cypher query for nodes or relationships
+	var query string
+	if len(columns) > 0 {
+		// Specific properties requested
+		propertyList := strings.Join(columns, ", n.")
+		query = fmt.Sprintf("MATCH (n:%s) RETURN n.%s SKIP %d LIMIT %d", tableName, propertyList, offset, batchSize)
+	} else {
+		// Return entire nodes
+		query = fmt.Sprintf("MATCH (n:%s) RETURN n SKIP %d LIMIT %d", tableName, offset, batchSize)
+	}
+
+	// Execute the query
+	result, err := session.Run(ctx, query, nil)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to execute neo4j streaming query: %w", err)
+	}
+
+	// Collect results
+	var results []map[string]interface{}
+	for result.Next(ctx) {
+		record := result.Record()
+		row := make(map[string]interface{})
+
+		// Extract all values from the record
+		for _, key := range record.Keys {
+			value, found := record.Get(key)
+			if found {
+				// If it's a node, extract its properties
+				if node, ok := value.(neo4j.Node); ok {
+					for propKey, propValue := range node.Props {
+						row[propKey] = propValue
+					}
+					// Also include node metadata
+					row["_id"] = node.ElementId
+					row["_labels"] = node.Labels
+				} else {
+					row[key] = value
+				}
+			}
+		}
+		results = append(results, row)
+	}
+
+	if err := result.Err(); err != nil {
+		return nil, false, "", fmt.Errorf("neo4j query iteration error: %w", err)
+	}
+
+	rowCount := len(results)
+	isComplete := rowCount < int(batchSize)
+
+	// For simple offset-based pagination, we don't use cursor values
+	nextCursorValue := ""
+
+	return results, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of nodes with a specific label in Neo4j, optionally with a WHERE clause
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	driver, ok := db.(neo4j.DriverWithContext)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid neo4j connection type")
+	}
+
+	ctx := context.Background()
+	session := driver.NewSession(ctx, neo4j.SessionConfig{
+		AccessMode: neo4j.AccessModeRead,
+	})
+	defer session.Close(ctx)
+
+	// Build count query for nodes with the specified label
+	var query string
+	if whereClause != "" {
+		query = fmt.Sprintf("MATCH (n:%s) WHERE %s RETURN count(n)", tableName, whereClause)
+	} else {
+		query = fmt.Sprintf("MATCH (n:%s) RETURN count(n)", tableName)
+	}
+
+	// Execute the count query
+	result, err := session.Run(ctx, query, nil)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to execute neo4j count query: %w", err)
+	}
+
+	// Get the count result
+	if result.Next(ctx) {
+		record := result.Record()
+		if len(record.Values) > 0 {
+			if count, ok := record.Values[0].(int64); ok {
+				return count, false, nil
+			}
+			if count, ok := record.Values[0].(int); ok {
+				return int64(count), false, nil
+			}
+		}
+	}
+
+	if err := result.Err(); err != nil {
+		return 0, false, fmt.Errorf("failed to get neo4j count result: %w", err)
+	}
+
+	// Neo4j count is always exact, not an estimate
+	return 0, false, nil
+}
+
 // CreateDatabase creates a new Neo4j database with optional parameters
 func CreateDatabase(ctx context.Context, db interface{}, databaseName string, options map[string]interface{}) error {
 	driver, ok := db.(neo4j.DriverWithContext)

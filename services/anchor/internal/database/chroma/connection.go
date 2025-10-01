@@ -2,7 +2,10 @@ package chroma
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -388,6 +391,178 @@ func getCollectionCount(client *ChromaClient, collectionName string) (int64, err
 		return 0, err
 	}
 	return int64(count), nil
+}
+
+// ExecuteQuery executes a vector search query on Chroma and returns results as a slice of maps
+// For Chroma, the query should be a JSON string representing a vector query
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	client, ok := db.(*ChromaClient)
+	if !ok {
+		return nil, fmt.Errorf("invalid chroma connection type")
+	}
+
+	// Parse the query as a Chroma vector query
+	// Expected format: {"collection": "name", "query_embeddings": [[...]], "n_results": 10}
+	var queryReq map[string]interface{}
+	if err := json.Unmarshal([]byte(query), &queryReq); err != nil {
+		return nil, fmt.Errorf("failed to parse chroma query: %w", err)
+	}
+
+	// Extract collection name
+	collectionName, ok := queryReq["collection"].(string)
+	if !ok {
+		return nil, fmt.Errorf("collection name is required in chroma query")
+	}
+
+	// Make HTTP request to Chroma API
+	queryURL := fmt.Sprintf("%s/api/v1/collections/%s/query", client.BaseURL, collectionName)
+
+	jsonData, err := json.Marshal(queryReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal query request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", queryURL, strings.NewReader(string(jsonData)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	// Chroma client doesn't use API key in this implementation
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute chroma query: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("chroma query failed: %s", string(body))
+	}
+
+	var queryResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&queryResp); err != nil {
+		return nil, fmt.Errorf("failed to decode chroma response: %w", err)
+	}
+
+	// Convert results to slice of maps
+	var queryResults []interface{}
+	if results, ok := queryResp["results"].([]interface{}); ok {
+		for _, result := range results {
+			if resultMap, ok := result.(map[string]interface{}); ok {
+				queryResults = append(queryResults, resultMap)
+			}
+		}
+	}
+
+	return queryResults, nil
+}
+
+// ExecuteCountQuery executes a count query on Chroma and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	client, ok := db.(*ChromaClient)
+	if !ok {
+		return 0, fmt.Errorf("invalid chroma connection type")
+	}
+
+	// Parse query to extract collection name
+	var queryReq map[string]interface{}
+	if err := json.Unmarshal([]byte(query), &queryReq); err != nil {
+		return 0, fmt.Errorf("failed to parse chroma count query: %w", err)
+	}
+
+	collectionName, ok := queryReq["collection"].(string)
+	if !ok {
+		return 0, fmt.Errorf("collection name is required in chroma count query")
+	}
+
+	return getCollectionCount(client, collectionName)
+}
+
+// StreamTableData streams vectors from a Chroma collection in batches for efficient data copying
+// For Chroma, tableName represents the collection name
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	client, ok := db.(*ChromaClient)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid chroma connection type")
+	}
+
+	// Build URL with limit and offset
+	url := fmt.Sprintf("%s/api/v1/collections/%s/get?limit=%d&offset=%d", client.BaseURL, tableName, batchSize, offset)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	// Chroma client doesn't use API key in this implementation
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to execute chroma streaming query: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, false, "", fmt.Errorf("chroma streaming query failed: %s", string(body))
+	}
+
+	var streamResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&streamResp); err != nil {
+		return nil, false, "", fmt.Errorf("failed to decode chroma response: %w", err)
+	}
+
+	// Convert results to slice of maps
+	var streamResults []map[string]interface{}
+
+	// Process results from HTTP response
+	if ids, ok := streamResp["ids"].([]interface{}); ok {
+		for i, id := range ids {
+			result := make(map[string]interface{})
+			result["id"] = id
+
+			if documents, ok := streamResp["documents"].([]interface{}); ok && len(documents) > i {
+				result["document"] = documents[i]
+			}
+			if metadatas, ok := streamResp["metadatas"].([]interface{}); ok && len(metadatas) > i {
+				result["metadata"] = metadatas[i]
+			}
+			if embeddings, ok := streamResp["embeddings"].([]interface{}); ok && len(embeddings) > i {
+				result["embedding"] = embeddings[i]
+			}
+
+			streamResults = append(streamResults, result)
+		}
+	}
+
+	rowCount := len(streamResults)
+	isComplete := rowCount < int(batchSize)
+
+	// For simple offset-based pagination, we don't use cursor values
+	nextCursorValue := ""
+
+	return streamResults, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of vectors in a Chroma collection
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	client, ok := db.(*ChromaClient)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid chroma connection type")
+	}
+
+	count, err := getCollectionCount(client, tableName)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to get chroma collection count: %w", err)
+	}
+
+	// Chroma count is always exact, not an estimate
+	return count, false, nil
 }
 
 // ExecuteCommand executes a command on a Chroma database

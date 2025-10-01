@@ -391,6 +391,168 @@ func ExecuteCommand(ctx context.Context, db interface{}, command string) ([]byte
 	return jsonBytes, nil
 }
 
+// ExecuteQuery executes a SQL query on ClickHouse and returns results as a slice of maps
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	conn, ok := db.(chdriver.Conn)
+	if !ok {
+		return nil, fmt.Errorf("invalid clickhouse connection type")
+	}
+
+	ctx := context.Background()
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute clickhouse query: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column information
+	columnTypes := rows.ColumnTypes()
+	columnNames := make([]string, len(columnTypes))
+	for i, colType := range columnTypes {
+		columnNames[i] = colType.Name()
+	}
+
+	// Collect results
+	var results []interface{}
+	for rows.Next() {
+		values := make([]interface{}, len(columnNames))
+		valuePtrs := make([]interface{}, len(columnNames))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan clickhouse result: %w", err)
+		}
+
+		row := make(map[string]interface{})
+		for i, colName := range columnNames {
+			row[colName] = values[i]
+		}
+		results = append(results, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("clickhouse rows iteration error: %w", err)
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query on ClickHouse and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	conn, ok := db.(chdriver.Conn)
+	if !ok {
+		return 0, fmt.Errorf("invalid clickhouse connection type")
+	}
+
+	ctx := context.Background()
+	var count int64
+	row := conn.QueryRow(ctx, query)
+	if err := row.Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to scan clickhouse count result: %w", err)
+	}
+
+	return count, nil
+}
+
+// StreamTableData streams data from a ClickHouse table in batches for efficient data copying
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	conn, ok := db.(chdriver.Conn)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid clickhouse connection type")
+	}
+
+	// Build column list for SELECT
+	columnList := "*"
+	if len(columns) > 0 {
+		// Quote column names for ClickHouse
+		quotedColumns := make([]string, len(columns))
+		for i, col := range columns {
+			quotedColumns[i] = quoteClickHouseIdentifier(col)
+		}
+		columnList = strings.Join(quotedColumns, ", ")
+	}
+
+	// Build query with LIMIT and OFFSET - ClickHouse supports standard SQL pagination
+	query := fmt.Sprintf("SELECT %s FROM %s ORDER BY 1 LIMIT %d OFFSET %d", columnList, quoteClickHouseIdentifier(tableName), batchSize, offset)
+
+	ctx := context.Background()
+	rows, err := conn.Query(ctx, query)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to execute clickhouse streaming query: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column information
+	columnTypes := rows.ColumnTypes()
+	columnNames := make([]string, len(columnTypes))
+	for i, colType := range columnTypes {
+		columnNames[i] = colType.Name()
+	}
+
+	// Collect results
+	var results []map[string]interface{}
+	for rows.Next() {
+		values := make([]interface{}, len(columnNames))
+		valuePtrs := make([]interface{}, len(columnNames))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, false, "", fmt.Errorf("failed to scan clickhouse result: %w", err)
+		}
+
+		row := make(map[string]interface{})
+		for i, colName := range columnNames {
+			row[colName] = values[i]
+		}
+		results = append(results, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, false, "", fmt.Errorf("clickhouse rows iteration error: %w", err)
+	}
+
+	rowCount := len(results)
+	isComplete := rowCount < int(batchSize)
+
+	// For simple offset-based pagination, we don't use cursor values
+	nextCursorValue := ""
+
+	return results, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of rows in a ClickHouse table, optionally with a WHERE clause
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	conn, ok := db.(chdriver.Conn)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid clickhouse connection type")
+	}
+
+	// Build count query
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteClickHouseIdentifier(tableName))
+	if whereClause != "" {
+		query += " WHERE " + whereClause
+	}
+
+	ctx := context.Background()
+	var count int64
+	row := conn.QueryRow(ctx, query)
+	if err := row.Scan(&count); err != nil {
+		return 0, false, fmt.Errorf("failed to scan clickhouse count result: %w", err)
+	}
+
+	// ClickHouse COUNT(*) is always exact, not an estimate
+	return count, false, nil
+}
+
+// quoteClickHouseIdentifier quotes ClickHouse identifiers with backticks
+func quoteClickHouseIdentifier(identifier string) string {
+	return fmt.Sprintf("`%s`", strings.ReplaceAll(identifier, "`", "``"))
+}
+
 // CreateDatabase creates a new ClickHouse database with optional parameters
 func CreateDatabase(ctx context.Context, db interface{}, databaseName string, options map[string]interface{}) error {
 	conn, ok := db.(chdriver.Conn)

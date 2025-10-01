@@ -443,6 +443,161 @@ func ExecuteCommand(ctx context.Context, db interface{}, command string) ([]byte
 	return jsonBytes, nil
 }
 
+// ExecuteQuery executes a SQL query on Snowflake and returns results as a slice of maps
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	sqlDB, ok := db.(*sql.DB)
+	if !ok {
+		return nil, fmt.Errorf("invalid snowflake connection type")
+	}
+
+	ctx := context.Background()
+	rows, err := sqlDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute snowflake query: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column names
+	columnNames, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get snowflake column names: %w", err)
+	}
+
+	// Collect results
+	var results []interface{}
+	for rows.Next() {
+		values := make([]interface{}, len(columnNames))
+		valuePtrs := make([]interface{}, len(columnNames))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan snowflake result: %w", err)
+		}
+
+		row := make(map[string]interface{})
+		for i, colName := range columnNames {
+			row[colName] = values[i]
+		}
+		results = append(results, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("snowflake rows iteration error: %w", err)
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query on Snowflake and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	sqlDB, ok := db.(*sql.DB)
+	if !ok {
+		return 0, fmt.Errorf("invalid snowflake connection type")
+	}
+
+	ctx := context.Background()
+	var count int64
+	row := sqlDB.QueryRowContext(ctx, query)
+	if err := row.Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to scan snowflake count result: %w", err)
+	}
+
+	return count, nil
+}
+
+// StreamTableData streams data from a Snowflake table in batches for efficient data copying
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	sqlDB, ok := db.(*sql.DB)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid snowflake connection type")
+	}
+
+	// Build column list for SELECT
+	columnList := "*"
+	if len(columns) > 0 {
+		// Quote column names for Snowflake
+		quotedColumns := make([]string, len(columns))
+		for i, col := range columns {
+			quotedColumns[i] = quoteIdentifier(col)
+		}
+		columnList = strings.Join(quotedColumns, ", ")
+	}
+
+	// Build query with LIMIT and OFFSET - Snowflake supports standard SQL pagination
+	query := fmt.Sprintf("SELECT %s FROM %s ORDER BY 1 LIMIT %d OFFSET %d", columnList, quoteIdentifier(tableName), batchSize, offset)
+
+	ctx := context.Background()
+	rows, err := sqlDB.QueryContext(ctx, query)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to execute snowflake streaming query: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column names
+	columnNames, err := rows.Columns()
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to get snowflake column names: %w", err)
+	}
+
+	// Collect results
+	var results []map[string]interface{}
+	for rows.Next() {
+		values := make([]interface{}, len(columnNames))
+		valuePtrs := make([]interface{}, len(columnNames))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, false, "", fmt.Errorf("failed to scan snowflake result: %w", err)
+		}
+
+		row := make(map[string]interface{})
+		for i, colName := range columnNames {
+			row[colName] = values[i]
+		}
+		results = append(results, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, false, "", fmt.Errorf("snowflake rows iteration error: %w", err)
+	}
+
+	rowCount := len(results)
+	isComplete := rowCount < int(batchSize)
+
+	// For simple offset-based pagination, we don't use cursor values
+	nextCursorValue := ""
+
+	return results, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of rows in a Snowflake table, optionally with a WHERE clause
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	sqlDB, ok := db.(*sql.DB)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid snowflake connection type")
+	}
+
+	// Build count query
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(tableName))
+	if whereClause != "" {
+		query += " WHERE " + whereClause
+	}
+
+	ctx := context.Background()
+	var count int64
+	row := sqlDB.QueryRowContext(ctx, query)
+	if err := row.Scan(&count); err != nil {
+		return 0, false, fmt.Errorf("failed to scan snowflake count result: %w", err)
+	}
+
+	// Snowflake COUNT(*) is always exact, not an estimate
+	return count, false, nil
+}
+
 // CreateDatabase creates a new Snowflake database with optional parameters
 func CreateDatabase(ctx context.Context, db interface{}, databaseName string, options map[string]interface{}) error {
 	sqlDB, ok := db.(*sql.DB)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -301,6 +302,251 @@ func describeCollection(client *MilvusClient, collectionName string) (*MilvusCol
 	}
 
 	return &collection, nil
+}
+
+// ExecuteQuery executes a vector search query on Milvus and returns results as a slice of maps
+// For Milvus, the query should be a JSON string representing a vector search
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	client, ok := db.(*MilvusClient)
+	if !ok {
+		return nil, fmt.Errorf("invalid milvus connection type")
+	}
+
+	// Parse the query as a Milvus vector search
+	var queryReq map[string]interface{}
+	if err := json.Unmarshal([]byte(query), &queryReq); err != nil {
+		return nil, fmt.Errorf("failed to parse milvus query: %w", err)
+	}
+
+	// Extract collection name
+	collectionName, ok := queryReq["collection"].(string)
+	if !ok {
+		return nil, fmt.Errorf("collection name is required in milvus query")
+	}
+
+	// Execute search request
+	searchURL := fmt.Sprintf("%s/collections/%s/search", client.BaseURL, collectionName)
+
+	jsonData, err := json.Marshal(queryReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal search request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", searchURL, strings.NewReader(string(jsonData)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if client.Username != "" && client.Password != "" {
+		req.SetBasicAuth(client.Username, client.Password)
+	}
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute milvus query: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("milvus query failed: %s", string(body))
+	}
+
+	var searchResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("failed to decode milvus response: %w", err)
+	}
+
+	// Convert results to slice of maps
+	var results []interface{}
+	if data, ok := searchResp["data"].([]interface{}); ok {
+		for _, item := range data {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				results = append(results, itemMap)
+			}
+		}
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query on Milvus and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	client, ok := db.(*MilvusClient)
+	if !ok {
+		return 0, fmt.Errorf("invalid milvus connection type")
+	}
+
+	// Parse query to extract collection name
+	var queryReq map[string]interface{}
+	if err := json.Unmarshal([]byte(query), &queryReq); err != nil {
+		return 0, fmt.Errorf("failed to parse milvus count query: %w", err)
+	}
+
+	collectionName, ok := queryReq["collection"].(string)
+	if !ok {
+		return 0, fmt.Errorf("collection name is required in milvus count query")
+	}
+
+	// Get collection statistics
+	statsURL := fmt.Sprintf("%s/collections/%s/stats", client.BaseURL, collectionName)
+
+	req, err := http.NewRequest("GET", statsURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if client.Username != "" && client.Password != "" {
+		req.SetBasicAuth(client.Username, client.Password)
+	}
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get milvus stats: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("milvus stats request failed: %s", string(body))
+	}
+
+	var statsResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&statsResp); err != nil {
+		return 0, fmt.Errorf("failed to decode milvus stats: %w", err)
+	}
+
+	// Extract row count
+	if data, ok := statsResp["data"].(map[string]interface{}); ok {
+		if rowCount, ok := data["row_count"].(float64); ok {
+			return int64(rowCount), nil
+		}
+	}
+
+	return 0, nil
+}
+
+// StreamTableData streams vectors from a Milvus collection in batches for efficient data copying
+// For Milvus, tableName represents the collection name
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	client, ok := db.(*MilvusClient)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid milvus connection type")
+	}
+
+	// Build query request for getting vectors
+	queryReq := map[string]interface{}{
+		"collection_name": tableName,
+		"limit":           batchSize,
+		"offset":          offset,
+	}
+
+	if len(columns) > 0 {
+		queryReq["output_fields"] = columns
+	}
+
+	// Execute query request
+	queryURL := fmt.Sprintf("%s/collections/%s/entities", client.BaseURL, tableName)
+
+	jsonData, err := json.Marshal(queryReq)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to marshal query request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", queryURL, strings.NewReader(string(jsonData)))
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if client.Username != "" && client.Password != "" {
+		req.SetBasicAuth(client.Username, client.Password)
+	}
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to execute milvus streaming query: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, false, "", fmt.Errorf("milvus streaming query failed: %s", string(body))
+	}
+
+	var queryResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&queryResp); err != nil {
+		return nil, false, "", fmt.Errorf("failed to decode milvus response: %w", err)
+	}
+
+	// Convert results to slice of maps
+	var results []map[string]interface{}
+	if data, ok := queryResp["data"].([]interface{}); ok {
+		for _, item := range data {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				results = append(results, itemMap)
+			}
+		}
+	}
+
+	rowCount := len(results)
+	isComplete := rowCount < int(batchSize)
+
+	// For simple offset-based pagination, we don't use cursor values
+	nextCursorValue := ""
+
+	return results, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of vectors in a Milvus collection
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	client, ok := db.(*MilvusClient)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid milvus connection type")
+	}
+
+	// Get collection statistics
+	statsURL := fmt.Sprintf("%s/collections/%s/stats", client.BaseURL, tableName)
+
+	req, err := http.NewRequest("GET", statsURL, nil)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if client.Username != "" && client.Password != "" {
+		req.SetBasicAuth(client.Username, client.Password)
+	}
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to get milvus stats: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, false, fmt.Errorf("milvus stats request failed: %s", string(body))
+	}
+
+	var statsResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&statsResp); err != nil {
+		return 0, false, fmt.Errorf("failed to decode milvus stats: %w", err)
+	}
+
+	// Extract row count
+	if data, ok := statsResp["data"].(map[string]interface{}); ok {
+		if rowCount, ok := data["row_count"].(float64); ok {
+			return int64(rowCount), false, nil
+		}
+	}
+
+	// Milvus count is always exact, not an estimate
+	return 0, false, nil
 }
 
 // ExecuteCommand executes a command on a Milvus database

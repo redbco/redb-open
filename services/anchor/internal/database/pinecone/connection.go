@@ -508,6 +508,292 @@ func ExecuteCommand(ctx context.Context, db interface{}, command string) ([]byte
 	return jsonBytes, nil
 }
 
+// ExecuteQuery executes a vector search query on Pinecone and returns results as a slice of maps
+// For Pinecone, the query should be a JSON string representing a vector query
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	client, ok := db.(*PineconeClient)
+	if !ok {
+		return nil, fmt.Errorf("invalid pinecone connection type")
+	}
+
+	ctx := context.Background()
+
+	// Parse the query as a Pinecone vector query
+	var queryReq map[string]interface{}
+	if err := json.Unmarshal([]byte(query), &queryReq); err != nil {
+		return nil, fmt.Errorf("failed to parse pinecone query: %w", err)
+	}
+
+	// Execute the vector query
+	jsonData, err := json.Marshal(queryReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal query request: %w", err)
+	}
+
+	// Make HTTP request to query vectors
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/query", client.BaseURL), strings.NewReader(string(jsonData)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Api-Key", client.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute pinecone query: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("pinecone query failed: %s", string(body))
+	}
+
+	// Parse response
+	var queryResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&queryResp); err != nil {
+		return nil, fmt.Errorf("failed to decode pinecone response: %w", err)
+	}
+
+	// Convert matches to slice of maps
+	var results []interface{}
+	if matches, ok := queryResp["matches"].([]interface{}); ok {
+		for _, match := range matches {
+			if matchMap, ok := match.(map[string]interface{}); ok {
+				results = append(results, matchMap)
+			}
+		}
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query on Pinecone and returns the result
+// For Pinecone, this returns the total vector count in the index
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	client, ok := db.(*PineconeClient)
+	if !ok {
+		return 0, fmt.Errorf("invalid pinecone connection type")
+	}
+
+	ctx := context.Background()
+
+	// Get index stats to get vector count
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/describe_index_stats", client.BaseURL), nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Api-Key", client.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get pinecone stats: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("pinecone stats request failed: %s", string(body))
+	}
+
+	// Parse response
+	var statsResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&statsResp); err != nil {
+		return 0, fmt.Errorf("failed to decode pinecone stats: %w", err)
+	}
+
+	// Extract total vector count
+	if totalVectorCount, ok := statsResp["totalVectorCount"].(float64); ok {
+		return int64(totalVectorCount), nil
+	}
+
+	return 0, nil
+}
+
+// StreamTableData streams vectors from a Pinecone index in batches for efficient data copying
+// For Pinecone, tableName represents the namespace (empty string for default namespace)
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	client, ok := db.(*PineconeClient)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid pinecone connection type")
+	}
+
+	// Note: Pinecone doesn't support direct pagination/streaming of all vectors
+	// This is a limitation of the Pinecone API - it's designed for similarity search, not full table scans
+	// We'll implement a workaround using query with dummy vectors, but this is not ideal for production
+
+	ctx := context.Background()
+
+	// Create a query request to get vectors (this is a workaround)
+	queryReq := map[string]interface{}{
+		"topK":            batchSize,
+		"includeValues":   true,
+		"includeMetadata": true,
+	}
+
+	// Add namespace if specified
+	if tableName != "" {
+		queryReq["namespace"] = tableName
+	}
+
+	// For streaming, we'll use a dummy vector query
+	// This is not ideal but Pinecone doesn't support listing all vectors directly
+	dimension := 1536 // Default dimension, should be configurable
+	dummyVector := make([]float64, dimension)
+	for i := range dummyVector {
+		dummyVector[i] = 0.0
+	}
+	queryReq["vector"] = dummyVector
+
+	jsonData, err := json.Marshal(queryReq)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to marshal query request: %w", err)
+	}
+
+	// Make HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/query", client.BaseURL), strings.NewReader(string(jsonData)))
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Api-Key", client.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to execute pinecone streaming query: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, false, "", fmt.Errorf("pinecone streaming query failed: %s", string(body))
+	}
+
+	// Parse response
+	var queryResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&queryResp); err != nil {
+		return nil, false, "", fmt.Errorf("failed to decode pinecone response: %w", err)
+	}
+
+	// Convert matches to slice of maps
+	var results []map[string]interface{}
+	if matches, ok := queryResp["matches"].([]interface{}); ok {
+		for _, match := range matches {
+			if matchMap, ok := match.(map[string]interface{}); ok {
+				row := make(map[string]interface{})
+
+				// Extract vector data
+				if id, ok := matchMap["id"]; ok {
+					row["id"] = id
+				}
+				if score, ok := matchMap["score"]; ok {
+					row["score"] = score
+				}
+				if values, ok := matchMap["values"]; ok {
+					row["values"] = values
+				}
+				if metadata, ok := matchMap["metadata"]; ok {
+					row["metadata"] = metadata
+				}
+
+				results = append(results, row)
+			}
+		}
+	}
+
+	rowCount := len(results)
+	isComplete := rowCount < int(batchSize)
+
+	// Pinecone doesn't support traditional cursor-based pagination
+	nextCursorValue := ""
+
+	return results, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of vectors in a Pinecone index/namespace
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	client, ok := db.(*PineconeClient)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid pinecone connection type")
+	}
+
+	ctx := context.Background()
+
+	// Build stats request
+	statsReq := map[string]interface{}{}
+
+	// Add namespace filter if specified
+	if tableName != "" {
+		statsReq["filter"] = map[string]interface{}{
+			"namespace": tableName,
+		}
+	}
+
+	var req *http.Request
+	var err error
+
+	if len(statsReq) > 0 {
+		jsonData, err := json.Marshal(statsReq)
+		if err != nil {
+			return 0, false, fmt.Errorf("failed to marshal stats request: %w", err)
+		}
+		req, err = http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/describe_index_stats", client.BaseURL), strings.NewReader(string(jsonData)))
+	} else {
+		req, err = http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/describe_index_stats", client.BaseURL), nil)
+	}
+
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Api-Key", client.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to get pinecone stats: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, false, fmt.Errorf("pinecone stats request failed: %s", string(body))
+	}
+
+	// Parse response
+	var statsResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&statsResp); err != nil {
+		return 0, false, fmt.Errorf("failed to decode pinecone stats: %w", err)
+	}
+
+	// Extract vector count
+	if tableName != "" {
+		// Look for namespace-specific count
+		if namespaces, ok := statsResp["namespaces"].(map[string]interface{}); ok {
+			if nsStats, ok := namespaces[tableName].(map[string]interface{}); ok {
+				if vectorCount, ok := nsStats["vectorCount"].(float64); ok {
+					return int64(vectorCount), false, nil
+				}
+			}
+		}
+	} else {
+		// Get total vector count
+		if totalVectorCount, ok := statsResp["totalVectorCount"].(float64); ok {
+			return int64(totalVectorCount), false, nil
+		}
+	}
+
+	return 0, false, nil
+}
+
 // CreateDatabase creates a new Pinecone index (equivalent to a database) with optional parameters
 func CreateDatabase(ctx context.Context, db interface{}, databaseName string, options map[string]interface{}) error {
 	client, ok := db.(*PineconeClient)

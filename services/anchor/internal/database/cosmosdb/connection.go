@@ -2,6 +2,7 @@ package cosmosdb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -186,4 +187,235 @@ func listDatabases(client *azcosmos.Client) ([]string, error) {
 	}
 
 	return databases, nil
+}
+
+// ExecuteQuery executes a SQL query on CosmosDB and returns results as a slice of maps
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	client, ok := db.(*azcosmos.Client)
+	if !ok {
+		return nil, fmt.Errorf("invalid cosmosdb connection type")
+	}
+
+	ctx := context.Background()
+
+	// Parse query to extract database and container information
+	// Expected format: {"database": "db_name", "container": "container_name", "query": "SELECT * FROM c"}
+	var queryReq map[string]interface{}
+	if err := json.Unmarshal([]byte(query), &queryReq); err != nil {
+		return nil, fmt.Errorf("failed to parse cosmosdb query: %w", err)
+	}
+
+	databaseName, ok := queryReq["database"].(string)
+	if !ok {
+		return nil, fmt.Errorf("database name is required in cosmosdb query")
+	}
+
+	containerName, ok := queryReq["container"].(string)
+	if !ok {
+		return nil, fmt.Errorf("container name is required in cosmosdb query")
+	}
+
+	sqlQuery, ok := queryReq["query"].(string)
+	if !ok {
+		return nil, fmt.Errorf("SQL query is required in cosmosdb query")
+	}
+
+	// Get container client
+	containerClient, err := client.NewContainer(databaseName, containerName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cosmosdb container: %w", err)
+	}
+
+	// Execute query
+	queryPager := containerClient.NewQueryItemsPager(sqlQuery, azcosmos.PartitionKey{}, nil)
+
+	var results []interface{}
+	for queryPager.More() {
+		response, err := queryPager.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to execute cosmosdb query: %w", err)
+		}
+
+		for _, item := range response.Items {
+			var document map[string]interface{}
+			if err := json.Unmarshal(item, &document); err != nil {
+				continue
+			}
+			results = append(results, document)
+		}
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query on CosmosDB and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	client, ok := db.(*azcosmos.Client)
+	if !ok {
+		return 0, fmt.Errorf("invalid cosmosdb connection type")
+	}
+
+	ctx := context.Background()
+
+	// Parse query to extract database and container information
+	var queryReq map[string]interface{}
+	if err := json.Unmarshal([]byte(query), &queryReq); err != nil {
+		return 0, fmt.Errorf("failed to parse cosmosdb count query: %w", err)
+	}
+
+	databaseName, ok := queryReq["database"].(string)
+	if !ok {
+		return 0, fmt.Errorf("database name is required in cosmosdb count query")
+	}
+
+	containerName, ok := queryReq["container"].(string)
+	if !ok {
+		return 0, fmt.Errorf("container name is required in cosmosdb count query")
+	}
+
+	// Get container client
+	containerClient, err := client.NewContainer(databaseName, containerName)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get cosmosdb container: %w", err)
+	}
+
+	// Execute count query
+	countQuery := "SELECT VALUE COUNT(1) FROM c"
+	if whereClause, ok := queryReq["where"]; ok && whereClause != "" {
+		countQuery = fmt.Sprintf("SELECT VALUE COUNT(1) FROM c WHERE %s", whereClause)
+	}
+
+	queryPager := containerClient.NewQueryItemsPager(countQuery, azcosmos.PartitionKey{}, nil)
+
+	for queryPager.More() {
+		response, err := queryPager.NextPage(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("failed to execute cosmosdb count query: %w", err)
+		}
+
+		if len(response.Items) > 0 {
+			var count int64
+			if err := json.Unmarshal(response.Items[0], &count); err != nil {
+				return 0, fmt.Errorf("failed to parse count result: %w", err)
+			}
+			return count, nil
+		}
+	}
+
+	return 0, nil
+}
+
+// StreamTableData streams documents from a CosmosDB container in batches for efficient data copying
+// For CosmosDB, tableName represents the container name
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	client, ok := db.(*azcosmos.Client)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid cosmosdb connection type")
+	}
+
+	ctx := context.Background()
+
+	// Parse tableName to extract database and container
+	// Expected format: "database.container"
+	parts := strings.Split(tableName, ".")
+	if len(parts) != 2 {
+		return nil, false, "", fmt.Errorf("tableName must be in format 'database.container'")
+	}
+
+	databaseName := parts[0]
+	containerName := parts[1]
+
+	// Get container client
+	containerClient, err := client.NewContainer(databaseName, containerName)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to get cosmosdb container: %w", err)
+	}
+
+	// Build query with OFFSET and LIMIT
+	query := "SELECT * FROM c"
+	if len(columns) > 0 {
+		// Build SELECT clause with specific columns
+		columnList := strings.Join(columns, ", c.")
+		query = fmt.Sprintf("SELECT c.%s FROM c", columnList)
+	}
+	query = fmt.Sprintf("%s OFFSET %d LIMIT %d", query, offset, batchSize)
+
+	// Execute streaming query
+	queryPager := containerClient.NewQueryItemsPager(query, azcosmos.PartitionKey{}, nil)
+
+	var results []map[string]interface{}
+	for queryPager.More() {
+		response, err := queryPager.NextPage(ctx)
+		if err != nil {
+			return nil, false, "", fmt.Errorf("failed to execute cosmosdb streaming query: %w", err)
+		}
+
+		for _, item := range response.Items {
+			var document map[string]interface{}
+			if err := json.Unmarshal(item, &document); err != nil {
+				continue
+			}
+			results = append(results, document)
+		}
+	}
+
+	rowCount := len(results)
+	isComplete := rowCount < int(batchSize)
+
+	// For simple offset-based pagination, we don't use cursor values
+	nextCursorValue := ""
+
+	return results, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of documents in a CosmosDB container
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	client, ok := db.(*azcosmos.Client)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid cosmosdb connection type")
+	}
+
+	ctx := context.Background()
+
+	// Parse tableName to extract database and container
+	parts := strings.Split(tableName, ".")
+	if len(parts) != 2 {
+		return 0, false, fmt.Errorf("tableName must be in format 'database.container'")
+	}
+
+	databaseName := parts[0]
+	containerName := parts[1]
+
+	// Get container client
+	containerClient, err := client.NewContainer(databaseName, containerName)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to get cosmosdb container: %w", err)
+	}
+
+	// Build count query
+	countQuery := "SELECT VALUE COUNT(1) FROM c"
+	if whereClause != "" {
+		countQuery = fmt.Sprintf("SELECT VALUE COUNT(1) FROM c WHERE %s", whereClause)
+	}
+
+	// Execute count query
+	queryPager := containerClient.NewQueryItemsPager(countQuery, azcosmos.PartitionKey{}, nil)
+
+	for queryPager.More() {
+		response, err := queryPager.NextPage(ctx)
+		if err != nil {
+			return 0, false, fmt.Errorf("failed to execute cosmosdb count query: %w", err)
+		}
+
+		if len(response.Items) > 0 {
+			var count int64
+			if err := json.Unmarshal(response.Items[0], &count); err != nil {
+				return 0, false, fmt.Errorf("failed to parse count result: %w", err)
+			}
+			// CosmosDB count is always exact, not an estimate
+			return count, false, nil
+		}
+	}
+
+	return 0, false, nil
 }

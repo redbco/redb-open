@@ -654,13 +654,42 @@ func (dm *DatabaseManager) ExecuteQuery(databaseID string, query string, args ..
 		return postgres.ExecuteQuery(client.DB, query, args...)
 	case string(dbcapabilities.MySQL):
 		return mysql.ExecuteQuery(client.DB, query, args...)
-	// TODO: Add support for other database types as needed
-	// case string(dbcapabilities.MariaDB):
-	//	return mariadb.ExecuteQuery(client.DB, query, args...)
-	// case string(dbcapabilities.CockroachDB):
-	//	return cockroach.ExecuteQuery(client.DB, query, args...)
-	// case string(dbcapabilities.SQLServer):
-	//	return mssql.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.MariaDB):
+		return mariadb.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.CockroachDB):
+		return cockroach.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.SQLServer):
+		return mssql.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.MongoDB):
+		return mongodb.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.Cassandra):
+		return cassandra.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.EdgeDB):
+		return edgedb.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.Snowflake):
+		return snowflake.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.ClickHouse):
+		return clickhouse.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.Neo4j):
+		return neo4j.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.Pinecone):
+		return pinecone.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.Chroma):
+		return chroma.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.Milvus):
+		return milvus.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.Weaviate):
+		return weaviate.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.CosmosDB):
+		return cosmosdb.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.DynamoDB):
+		return dynamodb.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.Iceberg):
+		return iceberg.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.Elasticsearch):
+		return elasticsearch.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.Redis):
+		return redis.ExecuteQuery(client.DB, query, args...)
 	default:
 		return nil, fmt.Errorf("query execution not supported for database type: %s", client.DatabaseType)
 	}
@@ -684,13 +713,42 @@ func (dm *DatabaseManager) ExecuteCountQuery(databaseID string, query string) (i
 		return postgres.ExecuteCountQuery(client.DB, query)
 	case string(dbcapabilities.MySQL):
 		return mysql.ExecuteCountQuery(client.DB, query)
-	// TODO: Add support for other database types as needed
-	// case string(dbcapabilities.MariaDB):
-	//	return mariadb.ExecuteCountQuery(client.DB, query)
-	// case string(dbcapabilities.CockroachDB):
-	//	return cockroach.ExecuteCountQuery(client.DB, query)
-	// case string(dbcapabilities.SQLServer):
-	//	return mssql.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.MariaDB):
+		return mariadb.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.CockroachDB):
+		return cockroach.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.SQLServer):
+		return mssql.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.MongoDB):
+		return mongodb.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.Cassandra):
+		return cassandra.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.EdgeDB):
+		return edgedb.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.Snowflake):
+		return snowflake.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.ClickHouse):
+		return clickhouse.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.Neo4j):
+		return neo4j.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.Pinecone):
+		return pinecone.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.Chroma):
+		return chroma.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.Milvus):
+		return milvus.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.Weaviate):
+		return weaviate.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.CosmosDB):
+		return cosmosdb.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.DynamoDB):
+		return dynamodb.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.Iceberg):
+		return iceberg.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.Elasticsearch):
+		return elasticsearch.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.Redis):
+		return redis.ExecuteCountQuery(client.DB, query)
 	default:
 		return 0, fmt.Errorf("count query execution not supported for database type: %s", client.DatabaseType)
 	}
@@ -714,13 +772,42 @@ func (dm *DatabaseManager) StreamTableData(databaseID string, tableName string, 
 		return postgres.StreamTableData(client.DB, tableName, batchSize, offset, columns)
 	case string(dbcapabilities.MySQL):
 		return mysql.StreamTableData(client.DB, tableName, batchSize, offset, columns)
-	// TODO: Add support for other database types as needed
-	// case string(dbcapabilities.MariaDB):
-	//	return mariadb.StreamTableData(client.DB, tableName, batchSize, offset, columns)
-	// case string(dbcapabilities.CockroachDB):
-	//	return cockroach.StreamTableData(client.DB, tableName, batchSize, offset, columns)
-	// case string(dbcapabilities.SQLServer):
-	//	return mssql.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.MariaDB):
+		return mariadb.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.CockroachDB):
+		return cockroach.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.SQLServer):
+		return mssql.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.MongoDB):
+		return mongodb.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.Cassandra):
+		return cassandra.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.EdgeDB):
+		return edgedb.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.Snowflake):
+		return snowflake.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.ClickHouse):
+		return clickhouse.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.Neo4j):
+		return neo4j.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.Pinecone):
+		return pinecone.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.Chroma):
+		return chroma.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.Milvus):
+		return milvus.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.Weaviate):
+		return weaviate.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.CosmosDB):
+		return cosmosdb.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.DynamoDB):
+		return dynamodb.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.Iceberg):
+		return iceberg.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.Elasticsearch):
+		return elasticsearch.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.Redis):
+		return redis.StreamTableData(client.DB, tableName, batchSize, offset, columns)
 	default:
 		return nil, false, "", fmt.Errorf("table data streaming not supported for database type: %s", client.DatabaseType)
 	}
@@ -744,13 +831,42 @@ func (dm *DatabaseManager) GetTableRowCount(databaseID string, tableName string,
 		return postgres.GetTableRowCount(client.DB, tableName, whereClause)
 	case string(dbcapabilities.MySQL):
 		return mysql.GetTableRowCount(client.DB, tableName, whereClause)
-	// TODO: Add support for other database types as needed
-	// case string(dbcapabilities.MariaDB):
-	//	return mariadb.GetTableRowCount(client.DB, tableName, whereClause)
-	// case string(dbcapabilities.CockroachDB):
-	//	return cockroach.GetTableRowCount(client.DB, tableName, whereClause)
-	// case string(dbcapabilities.SQLServer):
-	//	return mssql.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.MariaDB):
+		return mariadb.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.CockroachDB):
+		return cockroach.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.SQLServer):
+		return mssql.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.MongoDB):
+		return mongodb.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.Cassandra):
+		return cassandra.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.EdgeDB):
+		return edgedb.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.Snowflake):
+		return snowflake.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.ClickHouse):
+		return clickhouse.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.Neo4j):
+		return neo4j.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.Pinecone):
+		return pinecone.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.Chroma):
+		return chroma.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.Milvus):
+		return milvus.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.Weaviate):
+		return weaviate.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.CosmosDB):
+		return cosmosdb.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.DynamoDB):
+		return dynamodb.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.Iceberg):
+		return iceberg.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.Elasticsearch):
+		return elasticsearch.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.Redis):
+		return redis.GetTableRowCount(client.DB, tableName, whereClause)
 	default:
 		return 0, false, fmt.Errorf("row count retrieval not supported for database type: %s", client.DatabaseType)
 	}

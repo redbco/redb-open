@@ -461,6 +461,173 @@ func ExecuteCommand(ctx context.Context, db interface{}, command string) ([]byte
 	return jsonBytes, nil
 }
 
+// ExecuteQuery executes a CQL query and returns results as a slice of maps
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	session, ok := db.(*gocql.Session)
+	if !ok {
+		return nil, fmt.Errorf("invalid cassandra connection type")
+	}
+
+	// Execute the CQL query
+	iter := session.Query(query, args...).Iter()
+	defer iter.Close()
+
+	// Get column metadata
+	columns := iter.Columns()
+	columnNames := make([]string, len(columns))
+	for i, col := range columns {
+		columnNames[i] = col.Name
+	}
+
+	// Collect results
+	var results []interface{}
+	for {
+		// Create a slice to hold the values for this row
+		values := make([]interface{}, len(columnNames))
+		if !iter.Scan(values...) {
+			break
+		}
+
+		// Convert to map
+		row := make(map[string]interface{})
+		for i, colName := range columnNames {
+			row[colName] = values[i]
+		}
+		results = append(results, row)
+	}
+
+	if err := iter.Close(); err != nil {
+		return nil, fmt.Errorf("cassandra query iteration error: %w", err)
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query on Cassandra and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	session, ok := db.(*gocql.Session)
+	if !ok {
+		return 0, fmt.Errorf("invalid cassandra connection type")
+	}
+
+	var count int64
+	if err := session.Query(query).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to execute cassandra count query: %w", err)
+	}
+
+	return count, nil
+}
+
+// StreamTableData streams data from a Cassandra table in batches for efficient data copying
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	session, ok := db.(*gocql.Session)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid cassandra connection type")
+	}
+
+	// Build column list for SELECT
+	columnList := "*"
+	if len(columns) > 0 {
+		// Quote column names for Cassandra
+		quotedColumns := make([]string, len(columns))
+		for i, col := range columns {
+			quotedColumns[i] = quoteCassandraIdentifier(col)
+		}
+		columnList = strings.Join(quotedColumns, ", ")
+	}
+
+	// Note: Cassandra doesn't support OFFSET directly, so we use token-based pagination
+	// For simplicity in this implementation, we'll use LIMIT with a warning about pagination
+	query := fmt.Sprintf("SELECT %s FROM %s LIMIT %d", columnList, quoteCassandraIdentifier(tableName), batchSize)
+
+	// Execute find query
+	iter := session.Query(query).Iter()
+	defer iter.Close()
+
+	// Get column metadata
+	columnMeta := iter.Columns()
+	columnNames := make([]string, len(columnMeta))
+	for i, col := range columnMeta {
+		columnNames[i] = col.Name
+	}
+
+	// Collect results
+	var results []map[string]interface{}
+	for {
+		// Create a slice to hold the values for this row
+		values := make([]interface{}, len(columnNames))
+		if !iter.Scan(values...) {
+			break
+		}
+
+		// Convert to map
+		row := make(map[string]interface{})
+		for i, colName := range columnNames {
+			row[colName] = values[i]
+		}
+		results = append(results, row)
+	}
+
+	if err := iter.Close(); err != nil {
+		return nil, false, "", fmt.Errorf("cassandra query iteration error: %w", err)
+	}
+
+	rowCount := len(results)
+	isComplete := rowCount < int(batchSize)
+
+	// For Cassandra, proper pagination requires token-based pagination
+	// This is a simplified implementation - proper token-based pagination should be implemented for production use
+	nextCursorValue := ""
+
+	return results, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of rows in a Cassandra table, optionally with a WHERE clause
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	session, ok := db.(*gocql.Session)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid cassandra connection type")
+	}
+
+	// Build count query
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteCassandraIdentifier(tableName))
+	if whereClause != "" {
+		query += " WHERE " + whereClause
+	}
+
+	var count int64
+	if err := session.Query(query).Scan(&count); err != nil {
+		return 0, false, fmt.Errorf("failed to count cassandra rows: %w", err)
+	}
+
+	// Cassandra COUNT(*) can be expensive and may timeout on large tables
+	// Consider it as potentially an estimate for very large tables
+	isEstimate := count > 1000000 // Arbitrary threshold for considering it an estimate
+
+	return count, isEstimate, nil
+}
+
+// quoteCassandraIdentifier quotes Cassandra identifiers with double quotes if needed
+func quoteCassandraIdentifier(identifier string) string {
+	// Cassandra is case-insensitive unless quoted
+	// We'll quote identifiers that contain special characters or are mixed case
+	needsQuoting := false
+
+	// Check if identifier contains special characters or mixed case
+	for _, r := range identifier {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+			needsQuoting = true
+			break
+		}
+	}
+
+	if needsQuoting {
+		return fmt.Sprintf("\"%s\"", strings.ReplaceAll(identifier, "\"", "\"\""))
+	}
+
+	return identifier
+}
+
 // CreateDatabase creates a new Cassandra keyspace with optional parameters
 func CreateDatabase(ctx context.Context, db interface{}, databaseName string, options map[string]interface{}) error {
 	session, ok := db.(*gocql.Session)

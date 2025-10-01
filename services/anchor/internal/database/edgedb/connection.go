@@ -386,6 +386,136 @@ func ExecuteCommand(ctx context.Context, db interface{}, command string) ([]byte
 	return jsonBytes, nil
 }
 
+// ExecuteQuery executes an EdgeQL query and returns results as a slice of maps
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	client, ok := db.(*gel.Client)
+	if !ok {
+		return nil, fmt.Errorf("invalid edgedb connection type")
+	}
+
+	ctx := context.Background()
+
+	// Execute the EdgeQL query
+	var result interface{}
+	err := client.Query(ctx, query, &result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute edgedb query: %w", err)
+	}
+
+	// Convert result to slice of maps
+	var results []interface{}
+
+	switch r := result.(type) {
+	case []interface{}:
+		// Multiple results
+		for _, item := range r {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				results = append(results, itemMap)
+			} else {
+				// Convert scalar to map
+				results = append(results, map[string]interface{}{"value": item})
+			}
+		}
+	case map[string]interface{}:
+		// Single object result
+		results = append(results, r)
+	default:
+		// Scalar result
+		results = append(results, map[string]interface{}{"value": result})
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query on EdgeDB and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	client, ok := db.(*gel.Client)
+	if !ok {
+		return 0, fmt.Errorf("invalid edgedb connection type")
+	}
+
+	ctx := context.Background()
+
+	var count int64
+	err := client.QuerySingle(ctx, query, &count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to execute edgedb count query: %w", err)
+	}
+
+	return count, nil
+}
+
+// StreamTableData streams data from an EdgeDB object type in batches for efficient data copying
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	client, ok := db.(*gel.Client)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid edgedb connection type")
+	}
+
+	ctx := context.Background()
+
+	// Build EdgeQL query with OFFSET and LIMIT
+	var queryBuilder strings.Builder
+	queryBuilder.WriteString("SELECT ")
+
+	// Build column selection
+	if len(columns) > 0 {
+		queryBuilder.WriteString(tableName)
+		queryBuilder.WriteString(" { ")
+		queryBuilder.WriteString(strings.Join(columns, ", "))
+		queryBuilder.WriteString(" }")
+	} else {
+		queryBuilder.WriteString(tableName)
+	}
+
+	// Add OFFSET and LIMIT
+	queryBuilder.WriteString(fmt.Sprintf(" OFFSET %d LIMIT %d", offset, batchSize))
+
+	query := queryBuilder.String()
+
+	// Execute the query
+	var result []map[string]interface{}
+	err := client.Query(ctx, query, &result)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to execute edgedb streaming query: %w", err)
+	}
+
+	rowCount := len(result)
+	isComplete := rowCount < int(batchSize)
+
+	// For EdgeDB, we use simple offset-based pagination
+	nextCursorValue := ""
+
+	return result, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of objects in an EdgeDB object type, optionally with a filter
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	client, ok := db.(*gel.Client)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid edgedb connection type")
+	}
+
+	ctx := context.Background()
+
+	// Build count query
+	var query string
+	if whereClause != "" {
+		query = fmt.Sprintf("SELECT count((SELECT %s FILTER %s))", tableName, whereClause)
+	} else {
+		query = fmt.Sprintf("SELECT count(%s)", tableName)
+	}
+
+	var count int64
+	err := client.QuerySingle(ctx, query, &count)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to count edgedb objects: %w", err)
+	}
+
+	// EdgeDB count is always exact, not an estimate
+	return count, false, nil
+}
+
 // CreateDatabase creates a new EdgeDB database with optional parameters
 func CreateDatabase(ctx context.Context, db interface{}, databaseName string, options map[string]interface{}) error {
 	client, ok := db.(*gel.Client)

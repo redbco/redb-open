@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -344,6 +345,171 @@ func getClassCount(client *WeaviateClient, className string) (int64, error) {
 	}
 
 	return response.TotalResults, nil
+}
+
+// ExecuteQuery executes a GraphQL query on Weaviate and returns results as a slice of maps
+// For Weaviate, the query should be a GraphQL query string
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	client, ok := db.(*WeaviateClient)
+	if !ok {
+		return nil, fmt.Errorf("invalid weaviate connection type")
+	}
+
+	// Build GraphQL request
+	graphqlReq := map[string]interface{}{
+		"query": query,
+	}
+
+	if len(args) > 0 {
+		// Convert args to variables map
+		variables := make(map[string]interface{})
+		for i, arg := range args {
+			variables[fmt.Sprintf("var%d", i)] = arg
+		}
+		graphqlReq["variables"] = variables
+	}
+
+	// Execute GraphQL query
+	graphqlURL := fmt.Sprintf("%s/graphql", client.BaseURL)
+
+	jsonData, err := json.Marshal(graphqlReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal graphql request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", graphqlURL, strings.NewReader(string(jsonData)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if client.Username != "" && client.Password != "" {
+		req.SetBasicAuth(client.Username, client.Password)
+	}
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute weaviate query: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("weaviate query failed: %s", string(body))
+	}
+
+	var graphqlResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&graphqlResp); err != nil {
+		return nil, fmt.Errorf("failed to decode weaviate response: %w", err)
+	}
+
+	// Extract data from GraphQL response
+	var results []interface{}
+	if data, ok := graphqlResp["data"].(map[string]interface{}); ok {
+		// Convert nested data structure to flat results
+		for _, value := range data {
+			if valueMap, ok := value.(map[string]interface{}); ok {
+				for _, items := range valueMap {
+					if itemsArray, ok := items.([]interface{}); ok {
+						results = append(results, itemsArray...)
+					}
+				}
+			}
+		}
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query on Weaviate and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	client, ok := db.(*WeaviateClient)
+	if !ok {
+		return 0, fmt.Errorf("invalid weaviate connection type")
+	}
+
+	// Parse query to extract class name
+	var queryReq map[string]interface{}
+	if err := json.Unmarshal([]byte(query), &queryReq); err != nil {
+		return 0, fmt.Errorf("failed to parse weaviate count query: %w", err)
+	}
+
+	className, ok := queryReq["class"].(string)
+	if !ok {
+		return 0, fmt.Errorf("class name is required in weaviate count query")
+	}
+
+	return getClassCount(client, className)
+}
+
+// StreamTableData streams objects from a Weaviate class in batches for efficient data copying
+// For Weaviate, tableName represents the class name
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	client, ok := db.(*WeaviateClient)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid weaviate connection type")
+	}
+
+	// Build URL with limit and offset
+	url := fmt.Sprintf("%s/objects?class=%s&limit=%d&offset=%d", client.BaseURL, tableName, batchSize, offset)
+
+	// Add specific properties if requested
+	if len(columns) > 0 {
+		url += "&include=" + strings.Join(columns, ",")
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if client.Username != "" && client.Password != "" {
+		req.SetBasicAuth(client.Username, client.Password)
+	}
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to execute weaviate streaming query: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, false, "", fmt.Errorf("weaviate streaming query failed: %s", string(body))
+	}
+
+	var objectsResp struct {
+		Objects []map[string]interface{} `json:"objects"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&objectsResp); err != nil {
+		return nil, false, "", fmt.Errorf("failed to decode weaviate response: %w", err)
+	}
+
+	rowCount := len(objectsResp.Objects)
+	isComplete := rowCount < int(batchSize)
+
+	// For simple offset-based pagination, we don't use cursor values
+	nextCursorValue := ""
+
+	return objectsResp.Objects, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of objects in a Weaviate class
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	client, ok := db.(*WeaviateClient)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid weaviate connection type")
+	}
+
+	count, err := getClassCount(client, tableName)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to get weaviate class count: %w", err)
+	}
+
+	// Weaviate count is always exact, not an estimate
+	return count, false, nil
 }
 
 // ExecuteCommand executes a command on a Weaviate database

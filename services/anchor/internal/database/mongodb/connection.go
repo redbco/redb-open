@@ -428,6 +428,199 @@ func ExecuteCommand(ctx context.Context, db interface{}, command string) ([]byte
 	return jsonBytes, nil
 }
 
+// ExecuteQuery executes a MongoDB query and returns results as a slice of maps
+// For MongoDB, the query should be a JSON string representing a MongoDB find query
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	database, ok := db.(*mongo.Database)
+	if !ok {
+		return nil, fmt.Errorf("invalid mongodb connection type")
+	}
+
+	ctx := context.Background()
+
+	// Parse the query as a MongoDB command
+	var queryDoc bson.M
+	if err := bson.UnmarshalExtJSON([]byte(query), false, &queryDoc); err != nil {
+		return nil, fmt.Errorf("failed to parse mongodb query: %w", err)
+	}
+
+	// Extract collection name from query
+	var collectionName string
+	if find, ok := queryDoc["find"].(string); ok {
+		collectionName = find
+	} else {
+		return nil, fmt.Errorf("query must specify collection name with 'find' field")
+	}
+
+	collection := database.Collection(collectionName)
+
+	// Extract filter from query
+	filter := bson.M{}
+	if filterDoc, ok := queryDoc["filter"].(bson.M); ok {
+		filter = filterDoc
+	}
+
+	// Execute find query
+	cursor, err := collection.Find(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute mongodb find: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	// Collect results
+	var results []interface{}
+	for cursor.Next(ctx) {
+		var doc bson.M
+		if err := cursor.Decode(&doc); err != nil {
+			return nil, fmt.Errorf("failed to decode mongodb document: %w", err)
+		}
+
+		// Convert BSON to map[string]interface{} for consistency
+		docMap := make(map[string]interface{})
+		for k, v := range doc {
+			docMap[k] = v
+		}
+		results = append(results, docMap)
+	}
+
+	if err := cursor.Err(); err != nil {
+		return nil, fmt.Errorf("mongodb cursor iteration error: %w", err)
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query on MongoDB and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	database, ok := db.(*mongo.Database)
+	if !ok {
+		return 0, fmt.Errorf("invalid mongodb connection type")
+	}
+
+	ctx := context.Background()
+
+	// Parse the query as a MongoDB command
+	var queryDoc bson.M
+	if err := bson.UnmarshalExtJSON([]byte(query), false, &queryDoc); err != nil {
+		return 0, fmt.Errorf("failed to parse mongodb count query: %w", err)
+	}
+
+	// Extract collection name from query
+	var collectionName string
+	if find, ok := queryDoc["find"].(string); ok {
+		collectionName = find
+	} else if count, ok := queryDoc["count"].(string); ok {
+		collectionName = count
+	} else {
+		return 0, fmt.Errorf("query must specify collection name with 'find' or 'count' field")
+	}
+
+	collection := database.Collection(collectionName)
+
+	// Extract filter from query
+	filter := bson.M{}
+	if filterDoc, ok := queryDoc["filter"].(bson.M); ok {
+		filter = filterDoc
+	}
+
+	// Execute count query
+	count, err := collection.CountDocuments(ctx, filter)
+	if err != nil {
+		return 0, fmt.Errorf("failed to execute mongodb count: %w", err)
+	}
+
+	return count, nil
+}
+
+// StreamTableData streams data from a MongoDB collection in batches for efficient data copying
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	database, ok := db.(*mongo.Database)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid mongodb connection type")
+	}
+
+	ctx := context.Background()
+	collection := database.Collection(tableName)
+
+	// Build find options with skip and limit
+	findOptions := options.Find()
+	findOptions.SetSkip(offset)
+	findOptions.SetLimit(int64(batchSize))
+
+	// Build projection if specific columns are requested
+	if len(columns) > 0 {
+		projection := bson.M{}
+		for _, col := range columns {
+			projection[col] = 1
+		}
+		findOptions.SetProjection(projection)
+	}
+
+	// Execute find query
+	cursor, err := collection.Find(ctx, bson.M{}, findOptions)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to execute mongodb streaming find: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	// Collect results
+	var results []map[string]interface{}
+	for cursor.Next(ctx) {
+		var doc bson.M
+		if err := cursor.Decode(&doc); err != nil {
+			return nil, false, "", fmt.Errorf("failed to decode mongodb document: %w", err)
+		}
+
+		// Convert BSON to map[string]interface{} for consistency
+		docMap := make(map[string]interface{})
+		for k, v := range doc {
+			docMap[k] = v
+		}
+		results = append(results, docMap)
+	}
+
+	if err := cursor.Err(); err != nil {
+		return nil, false, "", fmt.Errorf("mongodb cursor iteration error: %w", err)
+	}
+
+	rowCount := len(results)
+	isComplete := rowCount < int(batchSize)
+
+	// For MongoDB, we use simple offset-based pagination
+	nextCursorValue := ""
+
+	return results, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of documents in a MongoDB collection, optionally with a filter
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	database, ok := db.(*mongo.Database)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid mongodb connection type")
+	}
+
+	ctx := context.Background()
+	collection := database.Collection(tableName)
+
+	// Build filter from whereClause if provided
+	filter := bson.M{}
+	if whereClause != "" {
+		// Parse whereClause as JSON BSON filter
+		if err := bson.UnmarshalExtJSON([]byte(whereClause), false, &filter); err != nil {
+			return 0, false, fmt.Errorf("failed to parse mongodb filter: %w", err)
+		}
+	}
+
+	// Execute count query
+	count, err := collection.CountDocuments(ctx, filter)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to count mongodb documents: %w", err)
+	}
+
+	// MongoDB CountDocuments is always exact, not an estimate
+	return count, false, nil
+}
+
 // CreateDatabase creates a new MongoDB database with optional parameters
 func CreateDatabase(ctx context.Context, db interface{}, databaseName string, options map[string]interface{}) error {
 	database, ok := db.(*mongo.Database)
