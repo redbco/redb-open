@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"unicode"
 
 	"github.com/redbco/redb-open/cmd/cli/internal/common"
 )
@@ -58,6 +59,41 @@ func parseRepoBranch(repoBranchStr string) (repoName, branchName string, err err
 		return "", "", fmt.Errorf("invalid format. Expected repo/branch")
 	}
 	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), nil
+}
+
+// formatCommitMessage formats a commit message for display in table format
+// It handles multi-line messages and truncates long messages for readability
+func formatCommitMessage(message string, maxWidth int) string {
+	if maxWidth <= 0 {
+		maxWidth = 80 // Default max width
+	}
+
+	// Replace all whitespace sequences (including newlines) with single spaces
+	// and trim leading/trailing whitespace
+	cleaned := strings.TrimSpace(strings.ReplaceAll(strings.Join(strings.Fields(message), " "), "\n", " "))
+
+	// If the message is empty after cleaning, return a placeholder
+	if cleaned == "" {
+		return "(empty commit message)"
+	}
+
+	// Truncate if longer than maxWidth and add ellipsis
+	if len(cleaned) > maxWidth {
+		// Find a good break point near maxWidth (prefer breaking at word boundaries)
+		breakPoint := maxWidth - 3 // Leave space for "..."
+
+		// Try to break at a word boundary within the last 20 characters
+		for i := breakPoint; i > breakPoint-20 && i > 0; i-- {
+			if unicode.IsSpace(rune(cleaned[i])) {
+				breakPoint = i
+				break
+			}
+		}
+
+		cleaned = strings.TrimSpace(cleaned[:breakPoint]) + "..."
+	}
+
+	return cleaned
 }
 
 // ShowBranch displays details of a specific branch
@@ -118,9 +154,11 @@ func ShowBranch(repoBranchStr string) error {
 			if commit.IsHead {
 				head = "Yes"
 			}
+			// Format the commit message for better readability
+			formattedMessage := formatCommitMessage(commit.CommitMessage, 60)
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 				commit.CommitCode,
-				commit.CommitMessage,
+				formattedMessage,
 				head,
 				commit.CommitDate)
 		}
