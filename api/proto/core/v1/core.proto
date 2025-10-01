@@ -173,6 +173,10 @@ service MappingService {
   rpc AddMappingRule(AddMappingRuleRequest) returns (AddMappingRuleResponse);
   rpc ModifyMappingRule(ModifyMappingRuleRequest) returns (ModifyMappingRuleResponse);
   rpc DeleteMappingRule(DeleteMappingRuleRequest) returns (DeleteMappingRuleResponse);
+
+  // Data copying services
+  rpc CopyMappingData(CopyMappingDataRequest) returns (stream CopyMappingDataResponse);
+  rpc GetCopyStatus(GetCopyStatusRequest) returns (GetCopyStatusResponse);
 }
 
 // Relationship service for relationship management
@@ -2268,6 +2272,48 @@ message DeleteMappingRuleResponse {
     string message = 1;
     bool success = 2;
     redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Data copying messages
+
+// Copy mapping data request
+message CopyMappingDataRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    optional int32 batch_size = 4;          // Default: 1000
+    optional int32 parallel_workers = 5;    // Default: 4
+    optional bool dry_run = 6;              // Default: false
+}
+
+// Copy mapping data response (streamed)
+message CopyMappingDataResponse {
+    string status = 1;              // "started", "progress", "completed", "error"
+    string message = 2;
+    int64 rows_processed = 3;
+    int64 total_rows = 4;
+    string current_table = 5;
+    repeated string errors = 6;
+    string operation_id = 7;        // Unique identifier for this copy operation
+}
+
+// Get copy status request
+message GetCopyStatusRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string operation_id = 3;
+}
+
+// Get copy status response
+message GetCopyStatusResponse {
+    string status = 1;              // "running", "completed", "error", "not_found"
+    string message = 2;
+    int64 rows_processed = 3;
+    int64 total_rows = 4;
+    string current_table = 5;
+    repeated string errors = 6;
+    string started_at = 7;
+    string completed_at = 8;
 }
 
 // Relationship messages

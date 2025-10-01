@@ -1162,3 +1162,321 @@ func derefString(ptr *string) string {
 	}
 	return ""
 }
+
+// StreamTableData streams data from a table in batches for efficient data copying
+func (s *Server) StreamTableData(req *pb.StreamTableDataRequest, stream pb.AnchorService_StreamTableDataServer) error {
+	defer s.trackOperation()()
+
+	// Validate request
+	if req.DatabaseId == "" || req.TableName == "" {
+		return stream.Send(&pb.StreamTableDataResponse{
+			Success:    false,
+			Message:    "database_id and table_name are required",
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		})
+	}
+
+	// Set defaults
+	batchSize := int32(1000)
+	if req.BatchSize != nil && *req.BatchSize > 0 {
+		batchSize = *req.BatchSize
+	}
+
+	offset := int64(0)
+	if req.Offset != nil {
+		offset = *req.Offset
+	}
+
+	// Get database client
+	dbManager := s.engine.GetState().GetDatabaseManager()
+	_, err := dbManager.GetDatabaseClient(req.DatabaseId)
+	if err != nil {
+		return stream.Send(&pb.StreamTableDataResponse{
+			Success:    false,
+			Message:    fmt.Sprintf("Database connection not found for ID: %s", req.DatabaseId),
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		})
+	}
+
+	// Build column list for SELECT
+	// Note: columns will be handled by the database manager's StreamTableData method
+
+	// Note: Cursor-based pagination will be handled by the database manager
+	// For now, we use simple offset-based pagination
+
+	batchNumber := int64(1)
+	currentOffset := offset
+
+	for {
+		// Execute query using database manager
+		dbManager := s.engine.GetState().GetDatabaseManager()
+		rows, isComplete, nextCursorValue, err := dbManager.StreamTableData(
+			req.DatabaseId,
+			req.TableName,
+			batchSize,
+			currentOffset,
+			req.Columns,
+		)
+		if err != nil {
+			return stream.Send(&pb.StreamTableDataResponse{
+				Success:    false,
+				Message:    fmt.Sprintf("Failed to stream data: %v", err),
+				Status:     commonv1.Status_STATUS_ERROR,
+				DatabaseId: req.DatabaseId,
+				TableName:  req.TableName,
+			})
+		}
+
+		// Convert rows to JSON
+		jsonData, err := json.Marshal(rows)
+		if err != nil {
+			return stream.Send(&pb.StreamTableDataResponse{
+				Success:    false,
+				Message:    fmt.Sprintf("Failed to serialize data: %v", err),
+				Status:     commonv1.Status_STATUS_ERROR,
+				DatabaseId: req.DatabaseId,
+				TableName:  req.TableName,
+			})
+		}
+
+		rowCount := int64(len(rows))
+
+		// Send batch response
+		err = stream.Send(&pb.StreamTableDataResponse{
+			Success:         true,
+			Message:         fmt.Sprintf("Batch %d streamed successfully", batchNumber),
+			Status:          commonv1.Status_STATUS_SUCCESS,
+			DatabaseId:      req.DatabaseId,
+			TableName:       req.TableName,
+			Data:            jsonData,
+			IsComplete:      isComplete,
+			NextCursorValue: nextCursorValue,
+			BatchNumber:     batchNumber,
+			RowsInBatch:     rowCount,
+		})
+
+		if err != nil {
+			return err
+		}
+
+		// Break if this was the last batch
+		if isComplete {
+			break
+		}
+
+		// Prepare for next batch
+		batchNumber++
+		currentOffset += int64(batchSize)
+	}
+
+	return nil
+}
+
+// InsertBatchData inserts a batch of data into a table efficiently
+func (s *Server) InsertBatchData(ctx context.Context, req *pb.InsertBatchDataRequest) (*pb.InsertBatchDataResponse, error) {
+	defer s.trackOperation()()
+
+	// Validate request
+	if req.DatabaseId == "" || req.TableName == "" || req.Data == nil {
+		return &pb.InsertBatchDataResponse{
+			Success:    false,
+			Message:    "database_id, table_name, and data are required",
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		}, nil
+	}
+
+	// Get database client
+	dbManager := s.engine.GetState().GetDatabaseManager()
+	client, err := dbManager.GetDatabaseClient(req.DatabaseId)
+	if err != nil {
+		return &pb.InsertBatchDataResponse{
+			Success:    false,
+			Message:    fmt.Sprintf("Database connection not found for ID: %s", req.DatabaseId),
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		}, nil
+	}
+
+	// Parse JSON data
+	var rows []map[string]interface{}
+	if err := json.Unmarshal(req.Data, &rows); err != nil {
+		return &pb.InsertBatchDataResponse{
+			Success:    false,
+			Message:    fmt.Sprintf("Failed to parse data: %v", err),
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		}, nil
+	}
+
+	if len(rows) == 0 {
+		return &pb.InsertBatchDataResponse{
+			Success:      true,
+			Message:      "No data to insert",
+			Status:       commonv1.Status_STATUS_SUCCESS,
+			DatabaseId:   req.DatabaseId,
+			TableName:    req.TableName,
+			RowsAffected: 0,
+		}, nil
+	}
+
+	// Use transaction if requested
+	useTransaction := req.UseTransaction != nil && *req.UseTransaction
+
+	var rowsAffected int64
+	var errors []string
+
+	if useTransaction {
+		// Execute as a single transaction
+		affected, err := s.insertBatchWithTransaction(client, req.TableName, rows)
+		if err != nil {
+			errors = append(errors, err.Error())
+		} else {
+			rowsAffected = affected
+		}
+	} else {
+		// Execute row by row for better error handling
+		for i, row := range rows {
+			affected, err := s.insertSingleRow(client, req.TableName, row)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("Row %d: %v", i+1, err))
+			} else {
+				rowsAffected += affected
+			}
+		}
+	}
+
+	success := len(errors) == 0
+	message := fmt.Sprintf("Inserted %d rows successfully", rowsAffected)
+	if len(errors) > 0 {
+		message = fmt.Sprintf("Inserted %d rows with %d errors", rowsAffected, len(errors))
+	}
+
+	operationID := ""
+	if req.OperationId != nil {
+		operationID = *req.OperationId
+	}
+
+	return &pb.InsertBatchDataResponse{
+		Success:      success,
+		Message:      message,
+		Status:       commonv1.Status_STATUS_SUCCESS,
+		DatabaseId:   req.DatabaseId,
+		TableName:    req.TableName,
+		RowsAffected: rowsAffected,
+		Errors:       errors,
+		OperationId:  operationID,
+	}, nil
+}
+
+// GetTableRowCount returns the number of rows in a table for progress estimation
+func (s *Server) GetTableRowCount(ctx context.Context, req *pb.GetTableRowCountRequest) (*pb.GetTableRowCountResponse, error) {
+	defer s.trackOperation()()
+
+	// Validate request
+	if req.DatabaseId == "" || req.TableName == "" {
+		return &pb.GetTableRowCountResponse{
+			Success:    false,
+			Message:    "database_id and table_name are required",
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		}, nil
+	}
+
+	// Get database client
+	dbManager := s.engine.GetState().GetDatabaseManager()
+	_, err := dbManager.GetDatabaseClient(req.DatabaseId)
+	if err != nil {
+		return &pb.GetTableRowCountResponse{
+			Success:    false,
+			Message:    fmt.Sprintf("Database connection not found for ID: %s", req.DatabaseId),
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		}, nil
+	}
+
+	// Get row count using database manager
+	whereClause := ""
+	if req.WhereClause != nil && *req.WhereClause != "" {
+		whereClause = *req.WhereClause
+	}
+
+	rowCount, isEstimate, err := dbManager.GetTableRowCount(req.DatabaseId, req.TableName, whereClause)
+	if err != nil {
+		return &pb.GetTableRowCountResponse{
+			Success:    false,
+			Message:    fmt.Sprintf("Failed to count rows: %v", err),
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		}, nil
+	}
+
+	return &pb.GetTableRowCountResponse{
+		Success:    true,
+		Message:    "Row count retrieved successfully",
+		Status:     commonv1.Status_STATUS_SUCCESS,
+		DatabaseId: req.DatabaseId,
+		TableName:  req.TableName,
+		RowCount:   rowCount,
+		IsEstimate: isEstimate,
+	}, nil
+}
+
+// Helper methods for database operations
+
+func (s *Server) executeQuery(client *dbclient.DatabaseClient, query string, args ...interface{}) ([]interface{}, error) {
+	// Use database manager to execute query in a database-neutral way
+	dbManager := s.engine.GetState().GetDatabaseManager()
+	return dbManager.ExecuteQuery(client.DatabaseID, query, args...)
+}
+
+func (s *Server) executeCountQuery(client *dbclient.DatabaseClient, query string, result *int64) error {
+	// Use database manager to execute count query in a database-neutral way
+	dbManager := s.engine.GetState().GetDatabaseManager()
+	count, err := dbManager.ExecuteCountQuery(client.DatabaseID, query)
+	if err != nil {
+		return err
+	}
+	*result = count
+	return nil
+}
+
+func (s *Server) insertBatchWithTransaction(client *dbclient.DatabaseClient, tableName string, rows []map[string]interface{}) (int64, error) {
+	// Use database manager to insert data in a database-neutral way
+	dbManager := s.engine.GetState().GetDatabaseManager()
+
+	// Use the existing InsertDataToDatabase method from the database manager
+	return dbManager.InsertDataToDatabase(client.DatabaseID, tableName, rows)
+}
+
+func (s *Server) insertSingleRow(client *dbclient.DatabaseClient, tableName string, row map[string]interface{}) (int64, error) {
+	// Use database manager to insert single row in a database-neutral way
+	dbManager := s.engine.GetState().GetDatabaseManager()
+
+	// Convert single row to slice for the existing InsertDataToDatabase method
+	rows := []map[string]interface{}{row}
+	return dbManager.InsertDataToDatabase(client.DatabaseID, tableName, rows)
+}
+
+// Note: Database-specific query execution and data manipulation methods
+// have been moved to the database manager abstraction layer.
+// The database manager handles routing to appropriate database-specific adapters.
+//
+// Required database manager methods for full functionality:
+// - ExecuteQuery(databaseID, query, args) ([]interface{}, error)
+// - ExecuteCountQuery(databaseID, query) (int64, error)
+// - StreamTableData(databaseID, tableName, batchSize, offset, columns) (stream, error)
+// - GetTableRowCount(databaseID, tableName, whereClause) (int64, bool, error)
+//
+// These methods need to be implemented in the database manager and
+// corresponding database-specific adapters (starting with PostgreSQL and MySQL).

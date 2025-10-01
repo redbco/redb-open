@@ -36,6 +36,11 @@ service AnchorService {
     rpc InsertDataFromCache(InsertDataFromCacheRequest) returns (InsertDataFromCacheResponse) {}
     rpc WipeDatabase(WipeDatabaseRequest) returns (WipeDatabaseResponse) {}
 
+    // Data copying endpoints
+    rpc StreamTableData(StreamTableDataRequest) returns (stream StreamTableDataResponse) {}
+    rpc InsertBatchData(InsertBatchDataRequest) returns (InsertBatchDataResponse) {}
+    rpc GetTableRowCount(GetTableRowCountRequest) returns (GetTableRowCountResponse) {}
+
     // Data transformation endpoints
     rpc TransformData(TransformDataRequest) returns (TransformDataResponse) {}
     rpc TransformDataStream(TransformDataStreamRequest) returns (stream TransformDataStreamResponse) {}
@@ -473,4 +478,76 @@ message RemoveReplicationSourceResponse {
     bool success = 2;
     redbco.redbopen.common.v1.Status status = 3;
     string replication_source_id = 4;
+}
+
+// Data copying endpoints
+
+// Stream table data request for efficient data copying
+message StreamTableDataRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    optional int32 batch_size = 5;      // Number of rows per batch
+    optional int64 offset = 6;          // Starting offset for pagination
+    optional string cursor_column = 7;  // Column to use for cursor-based pagination
+    optional string cursor_value = 8;   // Last cursor value for continuation
+    repeated string columns = 9;        // Specific columns to fetch (empty = all)
+}
+
+// Stream table data response
+message StreamTableDataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    bytes data = 6;                     // JSON encoded array of rows
+    bool is_complete = 7;               // True if this is the last batch
+    string next_cursor_value = 8;       // Cursor value for next batch
+    int64 batch_number = 9;             // Sequential batch number
+    int64 rows_in_batch = 10;           // Number of rows in this batch
+}
+
+// Insert batch data request for efficient bulk inserts
+message InsertBatchDataRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    bytes data = 5;                     // JSON encoded array of records
+    optional bool use_transaction = 6;   // Whether to wrap in transaction
+    optional string operation_id = 7;    // Identifier for tracking the operation
+}
+
+// Insert batch data response
+message InsertBatchDataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    int64 rows_affected = 6;
+    repeated string errors = 7;         // Row-level errors if any
+    string operation_id = 8;
+}
+
+// Get table row count request for progress estimation
+message GetTableRowCountRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    optional string where_clause = 5;   // Optional WHERE condition
+}
+
+// Get table row count response
+message GetTableRowCountResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    int64 row_count = 6;
+    bool is_estimate = 7;               // True if count is estimated (for performance)
 }

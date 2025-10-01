@@ -333,6 +333,156 @@ func ExecuteCommand(ctx context.Context, db interface{}, command string) ([]byte
 	return jsonBytes, nil
 }
 
+// ExecuteQuery executes a generic SQL query and returns results as a slice of maps
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	sqlDB, ok := db.(*sql.DB)
+	if !ok {
+		return nil, fmt.Errorf("invalid mysql connection type")
+	}
+
+	ctx := context.Background()
+	rows, err := sqlDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute mysql query: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column names
+	columnNames, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mysql column names: %w", err)
+	}
+
+	// Collect results
+	var results []interface{}
+	for rows.Next() {
+		values := make([]interface{}, len(columnNames))
+		valuePtrs := make([]interface{}, len(columnNames))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan mysql result: %w", err)
+		}
+
+		row := make(map[string]interface{})
+		for i, colName := range columnNames {
+			row[colName] = values[i]
+		}
+		results = append(results, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mysql rows iteration error: %w", err)
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	sqlDB, ok := db.(*sql.DB)
+	if !ok {
+		return 0, fmt.Errorf("invalid mysql connection type")
+	}
+
+	ctx := context.Background()
+	var count int64
+	row := sqlDB.QueryRowContext(ctx, query)
+	if err := row.Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to scan mysql count result: %w", err)
+	}
+
+	return count, nil
+}
+
+// StreamTableData streams data from a table in batches for efficient data copying
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	sqlDB, ok := db.(*sql.DB)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid mysql connection type")
+	}
+
+	// Build column list for SELECT
+	columnList := "*"
+	if len(columns) > 0 {
+		columnList = strings.Join(columns, ", ")
+	}
+
+	// Build query with LIMIT and OFFSET
+	query := fmt.Sprintf("SELECT %s FROM %s ORDER BY 1 LIMIT ? OFFSET ?", columnList, QuoteIdentifier(tableName))
+
+	ctx := context.Background()
+	rows, err := sqlDB.QueryContext(ctx, query, batchSize, offset)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to execute mysql streaming query: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column names
+	columnNames, err := rows.Columns()
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to get mysql column names: %w", err)
+	}
+
+	// Collect results
+	var results []map[string]interface{}
+	for rows.Next() {
+		values := make([]interface{}, len(columnNames))
+		valuePtrs := make([]interface{}, len(columnNames))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, false, "", fmt.Errorf("failed to scan mysql result: %w", err)
+		}
+
+		row := make(map[string]interface{})
+		for i, colName := range columnNames {
+			row[colName] = values[i]
+		}
+		results = append(results, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, false, "", fmt.Errorf("mysql rows iteration error: %w", err)
+	}
+
+	rowCount := len(results)
+	isComplete := rowCount < int(batchSize)
+
+	// For simple offset-based pagination, we don't use cursor values
+	nextCursorValue := ""
+
+	return results, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of rows in a table, optionally with a WHERE clause
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	sqlDB, ok := db.(*sql.DB)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid mysql connection type")
+	}
+
+	// Build count query
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", QuoteIdentifier(tableName))
+	if whereClause != "" {
+		query += " WHERE " + whereClause
+	}
+
+	ctx := context.Background()
+	var count int64
+	row := sqlDB.QueryRowContext(ctx, query)
+	if err := row.Scan(&count); err != nil {
+		return 0, false, fmt.Errorf("failed to scan mysql count result: %w", err)
+	}
+
+	// MySQL COUNT(*) is always exact, not an estimate
+	return count, false, nil
+}
+
 // CreateDatabase creates a new MySQL database with optional parameters
 func CreateDatabase(ctx context.Context, db interface{}, databaseName string, options map[string]interface{}) error {
 	sqlDB, ok := db.(*sql.DB)

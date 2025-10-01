@@ -351,6 +351,158 @@ func ExecuteCommand(ctx context.Context, db interface{}, command string) ([]byte
 	return jsonBytes, nil
 }
 
+// ExecuteQuery executes a generic SQL query and returns results as a slice of maps
+func ExecuteQuery(db interface{}, query string, args ...interface{}) ([]interface{}, error) {
+	pool, ok := db.(*pgxpool.Pool)
+	if !ok {
+		return nil, fmt.Errorf("invalid postgres connection type")
+	}
+
+	ctx := context.Background()
+	rows, err := pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute postgres query: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column descriptions
+	fieldDescriptions := rows.FieldDescriptions()
+	columnNames := make([]string, len(fieldDescriptions))
+	for i, desc := range fieldDescriptions {
+		columnNames[i] = string(desc.Name)
+	}
+
+	// Collect results
+	var results []interface{}
+	for rows.Next() {
+		values := make([]interface{}, len(columnNames))
+		valuePtrs := make([]interface{}, len(columnNames))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan postgres result: %w", err)
+		}
+
+		row := make(map[string]interface{})
+		for i, colName := range columnNames {
+			row[colName] = values[i]
+		}
+		results = append(results, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres rows iteration error: %w", err)
+	}
+
+	return results, nil
+}
+
+// ExecuteCountQuery executes a count query and returns the result
+func ExecuteCountQuery(db interface{}, query string) (int64, error) {
+	pool, ok := db.(*pgxpool.Pool)
+	if !ok {
+		return 0, fmt.Errorf("invalid postgres connection type")
+	}
+
+	ctx := context.Background()
+	var count int64
+	row := pool.QueryRow(ctx, query)
+	if err := row.Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to scan postgres count result: %w", err)
+	}
+
+	return count, nil
+}
+
+// StreamTableData streams data from a table in batches for efficient data copying
+func StreamTableData(db interface{}, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	pool, ok := db.(*pgxpool.Pool)
+	if !ok {
+		return nil, false, "", fmt.Errorf("invalid postgres connection type")
+	}
+
+	// Build column list for SELECT
+	columnList := "*"
+	if len(columns) > 0 {
+		columnList = strings.Join(columns, ", ")
+	}
+
+	// Build query with LIMIT and OFFSET
+	query := fmt.Sprintf("SELECT %s FROM %s ORDER BY 1 LIMIT $1 OFFSET $2", columnList, quoteIdentifier(tableName))
+
+	ctx := context.Background()
+	rows, err := pool.Query(ctx, query, batchSize, offset)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to execute postgres streaming query: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column descriptions
+	fieldDescriptions := rows.FieldDescriptions()
+	columnNames := make([]string, len(fieldDescriptions))
+	for i, desc := range fieldDescriptions {
+		columnNames[i] = string(desc.Name)
+	}
+
+	// Collect results
+	var results []map[string]interface{}
+	for rows.Next() {
+		values := make([]interface{}, len(columnNames))
+		valuePtrs := make([]interface{}, len(columnNames))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, false, "", fmt.Errorf("failed to scan postgres result: %w", err)
+		}
+
+		row := make(map[string]interface{})
+		for i, colName := range columnNames {
+			row[colName] = values[i]
+		}
+		results = append(results, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, false, "", fmt.Errorf("postgres rows iteration error: %w", err)
+	}
+
+	rowCount := len(results)
+	isComplete := rowCount < int(batchSize)
+
+	// For simple offset-based pagination, we don't use cursor values
+	nextCursorValue := ""
+
+	return results, isComplete, nextCursorValue, nil
+}
+
+// GetTableRowCount returns the number of rows in a table, optionally with a WHERE clause
+func GetTableRowCount(db interface{}, tableName string, whereClause string) (int64, bool, error) {
+	pool, ok := db.(*pgxpool.Pool)
+	if !ok {
+		return 0, false, fmt.Errorf("invalid postgres connection type")
+	}
+
+	// Build count query
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(tableName))
+	if whereClause != "" {
+		query += " WHERE " + whereClause
+	}
+
+	ctx := context.Background()
+	var count int64
+	row := pool.QueryRow(ctx, query)
+	if err := row.Scan(&count); err != nil {
+		return 0, false, fmt.Errorf("failed to scan postgres count result: %w", err)
+	}
+
+	// PostgreSQL COUNT(*) is always exact, not an estimate
+	return count, false, nil
+}
+
 // CreateDatabase creates a new PostgreSQL database with optional parameters
 func CreateDatabase(ctx context.Context, db interface{}, databaseName string, options map[string]interface{}) error {
 	pool, ok := db.(*pgxpool.Pool)

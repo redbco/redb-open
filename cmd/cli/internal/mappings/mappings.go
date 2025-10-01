@@ -455,3 +455,100 @@ func generateMappingDescription(scope, sourceDB, sourceTable, targetDB, targetTa
 			sourceDB, targetDB, timestamp)
 	}
 }
+
+// CopyMappingData copies data from source to target using the specified mapping
+func CopyMappingData(mappingName string, batchSize, parallelWorkers int32, dryRun, progress bool) error {
+	mappingName = strings.TrimSpace(mappingName)
+	if mappingName == "" {
+		return fmt.Errorf("mapping name is required")
+	}
+
+	// Set default values if not provided
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	if parallelWorkers <= 0 {
+		parallelWorkers = 4
+	}
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/mappings/%s/copy-data", mappingName))
+	if err != nil {
+		return err
+	}
+
+	// Create the copy data request
+	copyDataReq := struct {
+		BatchSize       int32 `json:"batch_size"`
+		ParallelWorkers int32 `json:"parallel_workers"`
+		DryRun          bool  `json:"dry_run"`
+		Progress        bool  `json:"progress"`
+	}{
+		BatchSize:       batchSize,
+		ParallelWorkers: parallelWorkers,
+		DryRun:          dryRun,
+		Progress:        progress,
+	}
+
+	fmt.Printf("Starting data copy for mapping '%s'...\n", mappingName)
+	if dryRun {
+		fmt.Println("DRY RUN MODE: No data will be actually copied")
+	}
+	fmt.Printf("Configuration: batch_size=%d, parallel_workers=%d\n", batchSize, parallelWorkers)
+	fmt.Println()
+
+	// For now, make a simple POST request. In the future, this should be a streaming request
+	// to handle real-time progress updates
+	var response struct {
+		Message       string   `json:"message"`
+		Success       bool     `json:"success"`
+		Status        string   `json:"status"`
+		RowsProcessed int64    `json:"rows_processed"`
+		TotalRows     int64    `json:"total_rows"`
+		CurrentTable  string   `json:"current_table"`
+		Errors        []string `json:"errors"`
+		OperationID   string   `json:"operation_id"`
+	}
+
+	if err := client.Post(url, copyDataReq, &response); err != nil {
+		return fmt.Errorf("failed to start data copy: %v", err)
+	}
+
+	if !response.Success {
+		fmt.Printf("Data copy failed: %s\n", response.Message)
+		if len(response.Errors) > 0 {
+			fmt.Println("Errors:")
+			for _, errMsg := range response.Errors {
+				fmt.Printf("  - %s\n", errMsg)
+			}
+		}
+		return fmt.Errorf("data copy operation failed")
+	}
+
+	fmt.Printf("Data copy completed successfully!\n")
+	fmt.Printf("Operation ID: %s\n", response.OperationID)
+	if response.TotalRows > 0 {
+		fmt.Printf("Rows processed: %d/%d\n", response.RowsProcessed, response.TotalRows)
+	}
+	if response.CurrentTable != "" {
+		fmt.Printf("Last table processed: %s\n", response.CurrentTable)
+	}
+
+	if len(response.Errors) > 0 {
+		fmt.Println("\nWarnings/Non-fatal errors:")
+		for _, errMsg := range response.Errors {
+			fmt.Printf("  - %s\n", errMsg)
+		}
+	}
+
+	return nil
+}

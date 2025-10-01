@@ -635,3 +635,123 @@ func (dm *DatabaseManager) WipeDatabase(databaseID string) error {
 		return fmt.Errorf("wiping not supported for database type: %s", client.DatabaseType)
 	}
 }
+
+// ExecuteQuery executes a generic SQL query and returns results
+func (dm *DatabaseManager) ExecuteQuery(databaseID string, query string, args ...interface{}) ([]interface{}, error) {
+	dm.safeLog("info", "Executing query on database %s: %s", databaseID, query)
+
+	client, err := dm.GetDatabaseClient(databaseID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	if atomic.LoadInt32(&client.IsConnected) == 0 {
+		return nil, fmt.Errorf("database %s is disconnected", databaseID)
+	}
+
+	switch client.DatabaseType {
+	case string(dbcapabilities.PostgreSQL):
+		return postgres.ExecuteQuery(client.DB, query, args...)
+	case string(dbcapabilities.MySQL):
+		return mysql.ExecuteQuery(client.DB, query, args...)
+	// TODO: Add support for other database types as needed
+	// case string(dbcapabilities.MariaDB):
+	//	return mariadb.ExecuteQuery(client.DB, query, args...)
+	// case string(dbcapabilities.CockroachDB):
+	//	return cockroach.ExecuteQuery(client.DB, query, args...)
+	// case string(dbcapabilities.SQLServer):
+	//	return mssql.ExecuteQuery(client.DB, query, args...)
+	default:
+		return nil, fmt.Errorf("query execution not supported for database type: %s", client.DatabaseType)
+	}
+}
+
+// ExecuteCountQuery executes a count query and returns the result
+func (dm *DatabaseManager) ExecuteCountQuery(databaseID string, query string) (int64, error) {
+	dm.safeLog("info", "Executing count query on database %s: %s", databaseID, query)
+
+	client, err := dm.GetDatabaseClient(databaseID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	if atomic.LoadInt32(&client.IsConnected) == 0 {
+		return 0, fmt.Errorf("database %s is disconnected", databaseID)
+	}
+
+	switch client.DatabaseType {
+	case string(dbcapabilities.PostgreSQL):
+		return postgres.ExecuteCountQuery(client.DB, query)
+	case string(dbcapabilities.MySQL):
+		return mysql.ExecuteCountQuery(client.DB, query)
+	// TODO: Add support for other database types as needed
+	// case string(dbcapabilities.MariaDB):
+	//	return mariadb.ExecuteCountQuery(client.DB, query)
+	// case string(dbcapabilities.CockroachDB):
+	//	return cockroach.ExecuteCountQuery(client.DB, query)
+	// case string(dbcapabilities.SQLServer):
+	//	return mssql.ExecuteCountQuery(client.DB, query)
+	default:
+		return 0, fmt.Errorf("count query execution not supported for database type: %s", client.DatabaseType)
+	}
+}
+
+// StreamTableData streams data from a table in batches for efficient data copying
+func (dm *DatabaseManager) StreamTableData(databaseID string, tableName string, batchSize int32, offset int64, columns []string) ([]map[string]interface{}, bool, string, error) {
+	dm.safeLog("info", "Streaming data from database %s, table %s, batch_size %d, offset %d", databaseID, tableName, batchSize, offset)
+
+	client, err := dm.GetDatabaseClient(databaseID)
+	if err != nil {
+		return nil, false, "", fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	if atomic.LoadInt32(&client.IsConnected) == 0 {
+		return nil, false, "", fmt.Errorf("database %s is disconnected", databaseID)
+	}
+
+	switch client.DatabaseType {
+	case string(dbcapabilities.PostgreSQL):
+		return postgres.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	case string(dbcapabilities.MySQL):
+		return mysql.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	// TODO: Add support for other database types as needed
+	// case string(dbcapabilities.MariaDB):
+	//	return mariadb.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	// case string(dbcapabilities.CockroachDB):
+	//	return cockroach.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	// case string(dbcapabilities.SQLServer):
+	//	return mssql.StreamTableData(client.DB, tableName, batchSize, offset, columns)
+	default:
+		return nil, false, "", fmt.Errorf("table data streaming not supported for database type: %s", client.DatabaseType)
+	}
+}
+
+// GetTableRowCount returns the number of rows in a table, optionally with a WHERE clause
+func (dm *DatabaseManager) GetTableRowCount(databaseID string, tableName string, whereClause string) (int64, bool, error) {
+	dm.safeLog("info", "Getting row count from database %s, table %s", databaseID, tableName)
+
+	client, err := dm.GetDatabaseClient(databaseID)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	if atomic.LoadInt32(&client.IsConnected) == 0 {
+		return 0, false, fmt.Errorf("database %s is disconnected", databaseID)
+	}
+
+	switch client.DatabaseType {
+	case string(dbcapabilities.PostgreSQL):
+		return postgres.GetTableRowCount(client.DB, tableName, whereClause)
+	case string(dbcapabilities.MySQL):
+		return mysql.GetTableRowCount(client.DB, tableName, whereClause)
+	// TODO: Add support for other database types as needed
+	// case string(dbcapabilities.MariaDB):
+	//	return mariadb.GetTableRowCount(client.DB, tableName, whereClause)
+	// case string(dbcapabilities.CockroachDB):
+	//	return cockroach.GetTableRowCount(client.DB, tableName, whereClause)
+	// case string(dbcapabilities.SQLServer):
+	//	return mssql.GetTableRowCount(client.DB, tableName, whereClause)
+	default:
+		return 0, false, fmt.Errorf("row count retrieval not supported for database type: %s", client.DatabaseType)
+	}
+}

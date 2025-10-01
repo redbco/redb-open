@@ -308,6 +308,7 @@ func (s *Server) setupRoutes() {
 	mappings.HandleFunc("/{mapping_name}", s.mappingHandler.DeleteMapping).Methods(http.MethodDelete)
 	mappings.HandleFunc("/{mapping_name}/attach-rule", s.mappingHandler.AttachMappingRule).Methods(http.MethodPost)
 	mappings.HandleFunc("/{mapping_name}/detach-rule", s.mappingHandler.DetachMappingRule).Methods(http.MethodPost)
+	mappings.HandleFunc("/{mapping_name}/copy-data", s.mappingHandler.CopyMappingData).Methods(http.MethodPost)
 
 	// Mapping rule endpoints (workspace-level)
 	mappingRules := workspaces.PathPrefix("/{workspace_name}/mapping-rules").Subrouter()

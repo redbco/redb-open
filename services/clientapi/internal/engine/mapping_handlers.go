@@ -1378,3 +1378,140 @@ func (mh *MappingHandlers) mappingNameExists(ctx context.Context, tenantID, work
 
 	return false
 }
+
+// CopyMappingData handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/mappings/{mapping_name}/copy-data
+func (mh *MappingHandlers) CopyMappingData(w http.ResponseWriter, r *http.Request) {
+	mh.engine.TrackOperation()
+	defer mh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+	mappingName := vars["mapping_name"]
+
+	if tenantURL == "" || workspaceName == "" || mappingName == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "tenant_url, workspace_name, and mapping_name are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		mh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Parse request body
+	var req struct {
+		BatchSize       int32 `json:"batch_size"`
+		ParallelWorkers int32 `json:"parallel_workers"`
+		DryRun          bool  `json:"dry_run"`
+		Progress        bool  `json:"progress"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if mh.engine.logger != nil {
+			mh.engine.logger.Errorf("Failed to parse copy mapping data request body: %v", err)
+		}
+		mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", "")
+		return
+	}
+
+	// Set default values
+	if req.BatchSize <= 0 {
+		req.BatchSize = 1000
+	}
+	if req.ParallelWorkers <= 0 {
+		req.ParallelWorkers = 4
+	}
+
+	// Log request
+	if mh.engine.logger != nil {
+		mh.engine.logger.Infof("Copy mapping data request for mapping: %s, workspace: %s, tenant: %s, batch_size: %d, parallel_workers: %d, dry_run: %t",
+			mappingName, workspaceName, profile.TenantId, req.BatchSize, req.ParallelWorkers, req.DryRun)
+	}
+
+	// Create context with timeout (longer timeout for data copying operations)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+
+	// Call core service gRPC
+	grpcReq := &corev1.CopyMappingDataRequest{
+		TenantId:        profile.TenantId,
+		WorkspaceName:   workspaceName,
+		MappingName:     mappingName,
+		BatchSize:       &req.BatchSize,
+		ParallelWorkers: &req.ParallelWorkers,
+		DryRun:          &req.DryRun,
+	}
+
+	// For now, we'll handle this as a simple request-response
+	// TODO: Implement streaming response for real-time progress updates
+	stream, err := mh.engine.mappingClient.CopyMappingData(ctx, grpcReq)
+	if err != nil {
+		mh.handleGRPCError(w, err, "Failed to start data copy")
+		return
+	}
+
+	// Collect all streaming responses
+	var lastResponse *corev1.CopyMappingDataResponse
+	var allErrors []string
+
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			mh.handleGRPCError(w, err, "Error during data copy")
+			return
+		}
+
+		lastResponse = resp
+		allErrors = append(allErrors, resp.Errors...)
+
+		// Log progress if available
+		if mh.engine.logger != nil && resp.Status == "progress" {
+			mh.engine.logger.Infof("Data copy progress for mapping %s: %d/%d rows processed, current table: %s",
+				mappingName, resp.RowsProcessed, resp.TotalRows, resp.CurrentTable)
+		}
+	}
+
+	if lastResponse == nil {
+		mh.writeErrorResponse(w, http.StatusInternalServerError, "No response received from data copy operation", "")
+		return
+	}
+
+	// Create response
+	response := struct {
+		Message       string   `json:"message"`
+		Success       bool     `json:"success"`
+		Status        string   `json:"status"`
+		RowsProcessed int64    `json:"rows_processed"`
+		TotalRows     int64    `json:"total_rows"`
+		CurrentTable  string   `json:"current_table"`
+		Errors        []string `json:"errors"`
+		OperationID   string   `json:"operation_id"`
+	}{
+		Message:       lastResponse.Message,
+		Success:       lastResponse.Status == "completed",
+		Status:        lastResponse.Status,
+		RowsProcessed: lastResponse.RowsProcessed,
+		TotalRows:     lastResponse.TotalRows,
+		CurrentTable:  lastResponse.CurrentTable,
+		Errors:        allErrors,
+		OperationID:   lastResponse.OperationId,
+	}
+
+	statusCode := http.StatusOK
+	if !response.Success {
+		statusCode = http.StatusInternalServerError
+	}
+
+	if mh.engine.logger != nil {
+		mh.engine.logger.Infof("Data copy operation completed for mapping: %s, success: %t, rows_processed: %d",
+			mappingName, response.Success, response.RowsProcessed)
+	}
+
+	mh.writeJSONResponse(w, statusCode, response)
+}

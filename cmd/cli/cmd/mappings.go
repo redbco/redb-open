@@ -60,6 +60,38 @@ Examples:
 	},
 }
 
+// copyDataCmd represents the copy-data command
+var copyDataCmd = &cobra.Command{
+	Use:   "copy-data [mapping-name]",
+	Short: "Copy data using a mapping",
+	Long: `Copy data from source to target databases/tables as defined in the mapping.
+This command will stream data from source to target, applying any transformations
+defined in the mapping rules.
+
+Examples:
+  # Copy data with default settings
+  redb mappings copy-data user-mapping
+  
+  # Copy data with custom batch size and parallel workers
+  redb mappings copy-data user-mapping --batch-size 2000 --parallel-workers 8
+  
+  # Perform a dry run to validate the mapping without copying data
+  redb mappings copy-data user-mapping --dry-run
+  
+  # Copy data with progress updates
+  redb mappings copy-data user-mapping --progress`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mappingName := args[0]
+		batchSize, _ := cmd.Flags().GetInt32("batch-size")
+		parallelWorkers, _ := cmd.Flags().GetInt32("parallel-workers")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		progress, _ := cmd.Flags().GetBool("progress")
+
+		return mappings.CopyMappingData(mappingName, batchSize, parallelWorkers, dryRun, progress)
+	},
+}
+
 func init() {
 	// Add flags to addMappingCmd
 	addMappingCmd.Flags().String("scope", "", "Mapping scope: 'database' or 'table' (required)")
@@ -74,8 +106,15 @@ func init() {
 	addMappingCmd.MarkFlagRequired("source")
 	addMappingCmd.MarkFlagRequired("target")
 
+	// Add flags to copyDataCmd
+	copyDataCmd.Flags().Int32("batch-size", 1000, "Number of rows to process in each batch")
+	copyDataCmd.Flags().Int32("parallel-workers", 4, "Number of parallel workers for data copying")
+	copyDataCmd.Flags().Bool("dry-run", false, "Validate mapping and show what would be copied without actually copying data")
+	copyDataCmd.Flags().Bool("progress", false, "Show detailed progress information during copying")
+
 	// Add subcommands to mappings command
 	mappingsCmd.AddCommand(listMappingsCmd)
 	mappingsCmd.AddCommand(showMappingCmd)
 	mappingsCmd.AddCommand(addMappingCmd)
+	mappingsCmd.AddCommand(copyDataCmd)
 }
