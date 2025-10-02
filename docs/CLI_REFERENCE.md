@@ -56,30 +56,27 @@ reDB CLI uses profiles to manage connections to multiple reDB instances:
 ### Initial Setup
 ```bash
 # 1. Create your first profile
-./bin/redb-cli profiles create production --hostname api.redb.example.com --tenant-url https://api.redb.example.com/my-org
+./bin/redb-cli profiles create default
 
 # 2. Login to the profile
-./bin/redb-cli auth login --profile production
+./bin/redb-cli auth login --profile default
 
-# 3. Select your workspace
-./bin/redb-cli select workspace main
-
-# 4. Check your authentication status
+# 3. Check your authentication status
 ./bin/redb-cli auth status
 ```
 
 ### Working with Multiple Environments
 ```bash
 # Create profiles for different environments
-./bin/redb-cli profiles create dev --hostname localhost:8080 --tenant-url http://localhost:8080/dev-tenant
-./bin/redb-cli profiles create staging --hostname staging.redb.example.com --tenant-url https://staging.redb.example.com/my-org
+./bin/redb-cli profiles create dev
+./bin/redb-cli profiles create production
 
 # Switch between environments
 ./bin/redb-cli profiles activate dev
 ./bin/redb-cli auth login --profile dev
 
-./bin/redb-cli profiles activate staging
-./bin/redb-cli auth login --profile staging
+./bin/redb-cli profiles activate production
+./bin/redb-cli auth login --profile production
 
 # List all your profiles
 ./bin/redb-cli profiles list
@@ -87,14 +84,47 @@ reDB CLI uses profiles to manage connections to multiple reDB instances:
 
 ### Database Operations
 ```bash
-# Connect a database (requires active profile and workspace)
-./bin/redb-cli databases connect --name mydb --type postgres --host db.example.com --port 5432
+# Connect databases using connection strings
+./bin/redb-cli databases connect --string "postgresql://user:password@localhost:5432/testdb1" --name "pg"
+./bin/redb-cli databases connect --string "mysql://user:password@localhost:3307/testdb2" --name "my"
+./bin/redb-cli databases connect --string "mongodb://redb:Test123@localhost:27017/redb_test" --name "mg"
 
-# List databases in current workspace
+# Show connected instances and databases
+./bin/redb-cli instances list
 ./bin/redb-cli databases list
 
-# Show database details
-./bin/redb-cli databases show mydb
+# Show the discovered tables and their metadata
+./bin/redb-cli databases show pg --tables
+
+# Show collections in a MongoDB database
+./bin/redb-cli databases show mg --collections
+```
+
+### Version Control & Schema Deployment
+```bash
+# Show the repositories and commits
+./bin/redb-cli repos list
+./bin/redb-cli branches show pg/main
+
+# Deploy the PostgreSQL database schema to a new database in MySQL
+./bin/redb-cli commits deploy-schema pg/main/12345abc --instance my_instance --db-name deployed1
+
+# Show the deployed database tables
+./bin/redb-cli databases show deployed1 --tables
+```
+
+### Data Mapping & Replication
+```bash
+# Create a database-to-database mapping
+./bin/redb-cli mappings add --scope database --source pg --target deployed1
+./bin/redb-cli mappings show pg_to_deployed1
+
+# Create a table-to-table mapping
+./bin/redb-cli mappings add --scope table --source pg.test --target deployed1.test
+./bin/redb-cli mappings show pg_test_to_deployed1_test
+
+# Clone the data from the PostgreSQL database table to the deployed MySQL database table
+./bin/redb-cli mappings copy-data pg_test_to_deployed1_test
 ```
 
 

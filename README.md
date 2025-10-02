@@ -27,27 +27,52 @@ git clone https://github.com/redbco/redb-open.git
 cd redb-open
 make dev-tools   # optional Go tools
 make local       # builds Go services + Rust mesh
-./bin/redb-node --initialize
-./bin/redb-node &
-./bin/redb-cli profiles create default --hostname localhost:8080
-./bin/redb-cli auth login --profile default
+
+# Copy the sample configuration before starting the application
+cp ./sample_config/config.yaml ./bin
+cd ./bin
+
+# Initialize and start the application
+./redb-node --initialize
+./redb-node &
+
 ```
 
 Full install docs: see `docs/INSTALL.md`.
 
-## First login
+## Gettings started with the application
 
 After starting, create a profile and authenticate with the CLI:
 
 ```bash
-# Create a connection profile
-./bin/redb-cli profiles create default --hostname localhost:8080
+# Create your user profile and login
+./redb-cli profiles create default
+./redb-cli auth login --profile default
 
-# Login using the profile
-./bin/redb-cli auth login --profile default
+# Connect your databases
+./redb-cli databases connect --string "postgresql://user:password@localhost:5432/testdb1" --name "pg"
+./redb-cli databases connect --string "mysql://user:password@localhost:3307/testdb2" --name "my"
 
-# Select workspace (if needed)
-./bin/redb-cli select workspace default
+# Show connected instances and databases
+./redb-cli instances list
+./redb-cli databases list
+
+# Show the discovered tables and their metadata
+./redb-cli databases show pg --tables
+
+# Show the repositories and commits
+./redb-cli repos list
+./redb-cli branches show pg/main
+
+# Deploy the PostgreSQL testdb1 to a new database in MySQL
+./redb-cli commits deploy-schema pg/main/12345abc --instance my_instance --db-name deployed1
+
+# Create a mapping between tables and show the mapping
+./redb-cli mappings add --scope table --source pg.test --target deployed1.test
+./redb-cli mappings show pg_test_to_deployed1_test
+
+# Clone the data from the PostgreSQL database table to the deployed MySQL database table
+./redb-cli mappings copy-data pg_test_to_deployed1_test
 ```
 
 ### Make targets
