@@ -15,6 +15,7 @@ This document provides comprehensive documentation for all shared packages in th
 9. [gRPC Utilities (`/pkg/grpc`)](#grpc-utilities)
 10. [System Logging (`/pkg/syslog`)](#system-logging)
 11. [Database Capabilities (`/pkg/dbcapabilities`)](#database-capabilities)
+12. [Database Adapter Interfaces (`/pkg/anchor/adapter`)](#database-adapter-interfaces)
 
 ---
 
@@ -1379,6 +1380,502 @@ Use the provided constants, e.g. `dbcapabilities.PostgreSQL`, `dbcapabilities.My
 - The registry `dbcapabilities.All` is a `map[DatabaseID]Capability` intended for read-only use at runtime.
 - Additions or corrections can be made by extending `pkg/dbcapabilities/capabilities.go`.
 
+---
+
+## Database Adapter Interfaces
+
+**Package:** `github.com/redbco/redb-open/pkg/anchor/adapter`
+
+Provides the core adapter pattern interfaces for database operations in the anchor service. This package defines the standard contracts that all database adapters must implement, enabling consistent interaction with different database technologies.
+
+### Architecture Overview
+
+The adapter pattern separates database-specific implementation from the core business logic:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Anchor Service                          │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │         ConnectionManager / Registry                │    │
+│  └───────────────────────┬─────────────────────────────┘    │
+│                          │                                  │
+│                          ▼                                  │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │         pkg/anchor/adapter (Interfaces)             │    │
+│  └───────────────────────┬─────────────────────────────┘    │
+│                          │                                  │
+│         ┌────────────────┼────────────────┐                 │
+│         ▼                ▼                ▼                 │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐               │
+│  │PostgreSQL│    │  MySQL   │    │ MongoDB  │    ...        │
+│  │ Adapter  │    │ Adapter  │    │ Adapter  │               │
+│  └──────────┘    └──────────┘    └──────────┘               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Core Interfaces
+
+#### 1. DatabaseAdapter Interface
+
+The main interface that every database adapter must implement:
+
+```go
+import "github.com/redbco/redb-open/pkg/anchor/adapter"
+
+type DatabaseAdapter interface {
+    // Type returns the database type identifier
+    Type() dbcapabilities.DatabaseType
+    
+    // Capabilities returns the capability metadata
+    Capabilities() dbcapabilities.Capability
+    
+    // Connect establishes a database connection
+    Connect(ctx context.Context, config ConnectionConfig) (Connection, error)
+    
+    // ConnectInstance establishes an instance connection
+    ConnectInstance(ctx context.Context, config InstanceConfig) (InstanceConnection, error)
+}
+```
+
+#### 2. Connection Interface
+
+Represents a connection to a specific database:
+
+```go
+type Connection interface {
+    // Identity
+    ID() string
+    Type() dbcapabilities.DatabaseType
+    
+    // Lifecycle
+    IsConnected() bool
+    Ping(ctx context.Context) error
+    Close() error
+    
+    // Operations
+    SchemaOperations() SchemaOperator
+    DataOperations() DataOperator
+    MetadataOperations() MetadataOperator
+    ReplicationOperations() ReplicationOperator
+}
+```
+
+#### 3. Operation Interfaces
+
+Different aspects of database operations are separated into focused interfaces:
+
+```go
+// Schema operations
+type SchemaOperator interface {
+    DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedModel, error)
+    CreateStructure(ctx context.Context, model *unifiedmodel.UnifiedModel) error
+    ListTables(ctx context.Context) ([]string, error)
+    GetTableSchema(ctx context.Context, tableName string) (*unifiedmodel.Table, error)
+}
+
+// Data operations
+type DataOperator interface {
+    Fetch(ctx context.Context, table string, limit int) ([]map[string]interface{}, error)
+    Insert(ctx context.Context, table string, data []map[string]interface{}) (int64, error)
+    Update(ctx context.Context, table string, data []map[string]interface{}, whereColumns []string) (int64, error)
+    Delete(ctx context.Context, table string, conditions map[string]interface{}) (int64, error)
+    ExecuteQuery(ctx context.Context, query string, args ...interface{}) ([]interface{}, error)
+}
+
+// Metadata operations
+type MetadataOperator interface {
+    CollectDatabaseMetadata(ctx context.Context) (map[string]interface{}, error)
+    GetVersion() (string, error)
+    GetUniqueIdentifier() string
+}
+```
+
+### Import and Basic Usage
+
+```go
+import (
+    "context"
+    
+    "github.com/redbco/redb-open/pkg/anchor/adapter"
+    "github.com/redbco/redb-open/pkg/dbcapabilities"
+)
+
+// Get an adapter from the global registry
+registry := adapter.GlobalRegistry()
+adp, err := registry.Get(dbcapabilities.PostgreSQL)
+if err != nil {
+    return fmt.Errorf("adapter not found: %w", err)
+}
+
+// Create connection configuration
+config := adapter.ConnectionConfig{
+    DatabaseID:   "my-database",
+    WorkspaceID:  "workspace-123",
+    TenantID:     "tenant-456",
+    Host:         "localhost",
+    Port:         5432,
+    Username:     "user",
+    Password:     "encrypted-password",
+    DatabaseName: "myapp",
+    SSL:          true,
+}
+
+// Establish connection
+ctx := context.Background()
+conn, err := adp.Connect(ctx, config)
+if err != nil {
+    return fmt.Errorf("connection failed: %w", err)
+}
+defer conn.Close()
+
+// Use connection operations
+schema, err := conn.SchemaOperations().DiscoverSchema(ctx)
+data, err := conn.DataOperations().Fetch(ctx, "users", 100)
+metadata, err := conn.MetadataOperations().CollectDatabaseMetadata(ctx)
+```
+
+### Adapter Registry
+
+The global adapter registry manages all registered database adapters:
+
+```go
+// Get the global registry
+registry := adapter.GlobalRegistry()
+
+// Get adapter for a specific database type
+adapter, err := registry.Get(dbcapabilities.PostgreSQL)
+if err != nil {
+    // Handle adapter not found
+}
+
+// Check if adapter exists
+exists := registry.Has(dbcapabilities.MySQL)
+
+// List all registered adapters
+dbTypes := registry.List()
+for _, dbType := range dbTypes {
+    fmt.Printf("Registered: %s\n", dbType)
+}
+```
+
+### Service Integration Example
+
+```go
+package myservice
+
+import (
+    "context"
+    
+    "github.com/redbco/redb-open/pkg/anchor/adapter"
+    "github.com/redbco/redb-open/pkg/dbcapabilities"
+    "github.com/redbco/redb-open/pkg/logger"
+)
+
+type DatabaseService struct {
+    registry *adapter.Registry
+    logger   *logger.Logger
+}
+
+func NewDatabaseService(logger *logger.Logger) *DatabaseService {
+    return &DatabaseService{
+        registry: adapter.GlobalRegistry(),
+        logger:   logger,
+    }
+}
+
+// Connect to a database using the adapter pattern
+func (s *DatabaseService) ConnectDatabase(ctx context.Context, dbType string, config adapter.ConnectionConfig) (adapter.Connection, error) {
+    // Get the appropriate adapter
+    dbCapType := dbcapabilities.DatabaseType(dbType)
+    adp, err := s.registry.Get(dbCapType)
+    if err != nil {
+        s.logger.Errorf("No adapter found for %s: %v", dbType, err)
+        return nil, err
+    }
+    
+    // Connect using the adapter
+    conn, err := adp.Connect(ctx, config)
+    if err != nil {
+        s.logger.Errorf("Failed to connect to %s: %v", dbType, err)
+        return nil, err
+    }
+    
+    s.logger.Infof("Successfully connected to %s database: %s", dbType, config.DatabaseID)
+    return conn, nil
+}
+
+// Discover schema from any database
+func (s *DatabaseService) DiscoverSchema(ctx context.Context, conn adapter.Connection) error {
+    s.logger.Infof("Discovering schema for database: %s", conn.ID())
+    
+    schema, err := conn.SchemaOperations().DiscoverSchema(ctx)
+    if err != nil {
+        s.logger.Errorf("Schema discovery failed: %v", err)
+        return err
+    }
+    
+    s.logger.Infof("Discovered %d tables in database %s", len(schema.Tables), conn.ID())
+    return nil
+}
+
+// Fetch data from any database
+func (s *DatabaseService) FetchData(ctx context.Context, conn adapter.Connection, table string, limit int) ([]map[string]interface{}, error) {
+    data, err := conn.DataOperations().Fetch(ctx, table, limit)
+    if err != nil {
+        s.logger.Errorf("Failed to fetch data from %s: %v", table, err)
+        return nil, err
+    }
+    
+    s.logger.Infof("Fetched %d rows from %s", len(data), table)
+    return data, nil
+}
+```
+
+### Error Handling
+
+The adapter package provides standard error types:
+
+```go
+import "github.com/redbco/redb-open/pkg/anchor/adapter"
+
+// Connection errors
+err := adapter.NewConnectionError(
+    dbcapabilities.PostgreSQL,
+    "localhost",
+    5432,
+    originalErr,
+)
+
+// Configuration errors
+err := adapter.NewConfigurationError(
+    dbcapabilities.MySQL,
+    "ssl_mode",
+    "invalid SSL configuration",
+)
+
+// Unsupported operation errors
+err := adapter.NewUnsupportedOperationError(
+    "Stream",
+    dbcapabilities.Redis,
+)
+
+// Not found errors
+err := adapter.NewNotFoundError("table", "users")
+
+// Check error types
+if adapter.IsConnectionError(err) {
+    // Handle connection error
+}
+
+if adapter.IsUnsupportedOperationError(err) {
+    // Handle unsupported operation
+}
+```
+
+### Configuration Helpers
+
+The package provides helper functions for configuration handling:
+
+```go
+// Convert string to pointer (for optional fields)
+config := adapter.ConnectionConfig{
+    DatabaseID:    "db-123",
+    EnvironmentID: adapter.GetStringPtr("production"),
+    SSLCert:       adapter.GetStringPtr("/path/to/cert"),
+}
+
+// Get value from pointer with fallback
+sslMode := adapter.GetString(config.SSLMode)  // Returns "" if nil
+
+// Check if field is set
+if config.SSLMode != nil {
+    // SSL mode is configured
+}
+```
+
+### Unsupported Operations
+
+For databases that don't support certain operations, use the unsupported helpers:
+
+```go
+// For databases without replication support
+func (c *Connection) ReplicationOperations() adapter.ReplicationOperator {
+    return adapter.NewUnsupportedReplicationOperator(c.Type())
+}
+
+// Returns UnsupportedOperationError for all methods
+replOps := conn.ReplicationOperations()
+_, err := replOps.ListSlots(ctx)
+// err: "replication operation ListSlots not supported by redis"
+```
+
+### Best Practices
+
+#### 1. Always Use Context
+
+```go
+// ✅ Good: Pass context for cancellation
+data, err := conn.DataOperations().Fetch(ctx, "users", 100)
+
+// ❌ Bad: Don't use background context
+data, err := conn.DataOperations().Fetch(context.Background(), "users", 100)
+```
+
+#### 2. Handle Connection Lifecycle
+
+```go
+// ✅ Good: Always close connections
+conn, err := adapter.Connect(ctx, config)
+if err != nil {
+    return err
+}
+defer conn.Close()
+
+// Use connection...
+```
+
+#### 3. Check Connection Status
+
+```go
+// ✅ Good: Verify connection before operations
+if !conn.IsConnected() {
+    return fmt.Errorf("connection is closed")
+}
+
+// Perform operations...
+```
+
+#### 4. Use Appropriate Error Types
+
+```go
+// ✅ Good: Use adapter error types
+if err != nil {
+    return adapter.NewConnectionError(
+        dbType,
+        host,
+        port,
+        err,
+    )
+}
+```
+
+### Integration with UnifiedModel
+
+The adapter pattern works seamlessly with the UnifiedModel:
+
+```go
+import "github.com/redbco/redb-open/pkg/unifiedmodel"
+
+// Discover schema returns UnifiedModel
+schema, err := conn.SchemaOperations().DiscoverSchema(ctx)
+// schema is *unifiedmodel.UnifiedModel
+
+// Access tables
+for _, table := range schema.Tables {
+    fmt.Printf("Table: %s\n", table.Name)
+    for _, column := range table.Columns {
+        fmt.Printf("  Column: %s (%s)\n", column.Name, column.DataType)
+    }
+}
+
+// Create structure from UnifiedModel
+err = conn.SchemaOperations().CreateStructure(ctx, schema)
+```
+
+### Advanced Usage
+
+#### Custom Connection Manager
+
+```go
+type ConnectionManager struct {
+    connections map[string]adapter.Connection
+    registry    *adapter.Registry
+    mu          sync.RWMutex
+}
+
+func (cm *ConnectionManager) Connect(ctx context.Context, cfg adapter.ConnectionConfig) error {
+    dbType := dbcapabilities.DatabaseType(cfg.ConnectionType)
+    
+    // Get adapter
+    adp, err := cm.registry.Get(dbType)
+    if err != nil {
+        return err
+    }
+    
+    // Connect
+    conn, err := adp.Connect(ctx, cfg)
+    if err != nil {
+        return err
+    }
+    
+    // Store connection
+    cm.mu.Lock()
+    cm.connections[cfg.DatabaseID] = conn
+    cm.mu.Unlock()
+    
+    return nil
+}
+
+func (cm *ConnectionManager) GetConnection(id string) (adapter.Connection, error) {
+    cm.mu.RLock()
+    defer cm.mu.RUnlock()
+    
+    conn, exists := cm.connections[id]
+    if !exists {
+        return nil, fmt.Errorf("connection not found: %s", id)
+    }
+    
+    return conn, nil
+}
+```
+
+### Testing with Adapters
+
+```go
+// Mock adapter for testing
+type MockAdapter struct{}
+
+func (a *MockAdapter) Type() dbcapabilities.DatabaseType {
+    return dbcapabilities.DatabaseType("mock")
+}
+
+func (a *MockAdapter) Connect(ctx context.Context, cfg adapter.ConnectionConfig) (adapter.Connection, error) {
+    return &MockConnection{}, nil
+}
+
+// Use in tests
+func TestDatabaseService(t *testing.T) {
+    registry := adapter.NewRegistry()
+    registry.Register(dbcapabilities.DatabaseType("mock"), &MockAdapter{})
+    
+    service := &DatabaseService{registry: registry}
+    // Test service...
+}
+```
+
+### Documentation References
+
+For detailed information on:
+- **Implementing Adapters**: See `docs/DATABASE_ADAPTER_IMPLEMENTATION_GUIDE.md`
+- **File Structure**: See `docs/DATABASE_ADAPTER_FILE_STRUCTURE.md`
+- **Adding New Databases**: See `docs/ADDING_NEW_DATABASE_SUPPORT.md`
+
+### Summary
+
+The adapter pattern provides:
+
+1. ✅ **Consistent Interface**: All databases accessed through the same interfaces
+2. ✅ **Type Safety**: Strong typing with compile-time checking
+3. ✅ **Modularity**: Database-specific logic is self-contained
+4. ✅ **Extensibility**: New databases can be added without changing existing code
+5. ✅ **Automatic Registration**: Adapters register themselves via `init()` functions
+6. ✅ **Error Handling**: Standardized error types for consistent error handling
+7. ✅ **Context Support**: Full context propagation for cancellation and timeouts
+8. ✅ **Testing**: Easy to mock and test with interface-based design
+
+This package is the foundation of database abstraction in the anchor service, enabling seamless support for 20+ different database technologies through a unified interface.
+
+---
 
 ## Common Integration Patterns
 

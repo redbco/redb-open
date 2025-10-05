@@ -149,11 +149,9 @@ func ConnectInstance(config dbclient.InstanceConfig) (*dbclient.InstanceClient, 
 		return nil, fmt.Errorf("error pinging database: %v", err)
 	}
 
-	// Get the database
-	db := client.Database(config.DatabaseName)
-
+	// For instance connections, store the client (not a specific database)
 	return &dbclient.InstanceClient{
-		DB:           db,
+		DB:           client,
 		InstanceType: "mongodb",
 		InstanceID:   config.InstanceID,
 		Config:       config,

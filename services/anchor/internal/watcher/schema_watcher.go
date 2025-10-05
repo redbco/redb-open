@@ -11,6 +11,7 @@ import (
 
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	pb "github.com/redbco/redb-open/api/proto/unifiedmodel/v1"
+	"github.com/redbco/redb-open/pkg/anchor/adapter"
 	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
@@ -44,8 +45,8 @@ func NewSchemaWatcher(db *database.PostgreSQL, umConn *grpc.ClientConn, coreConn
 // It returns the branch ID and commit ID if successful.
 func (w *SchemaWatcher) ensureRepoBranchCommit(ctx context.Context, workspaceID, databaseID, schemaType string, schemaStructure []byte, commitMessage string) (string, string, error) {
 	// Get database name from the database client
-	dbManager := w.state.GetDatabaseManager()
-	client, err := dbManager.GetDatabaseClient(databaseID)
+	registry := w.state.GetConnectionRegistry()
+	client, err := registry.GetDatabaseClient(databaseID)
 	if err != nil {
 		w.logError("Failed to get database client %s: %v", databaseID, err)
 		return "", "", fmt.Errorf("failed to get database client: %w", err)
@@ -363,10 +364,10 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 		return ctx.Err()
 	}
 
-	dbManager := w.state.GetDatabaseManager()
+	registry := w.state.GetConnectionRegistry()
 
 	// Get all connected database clients
-	for _, clientID := range dbManager.GetAllDatabaseClientIDs() {
+	for _, clientID := range registry.GetAllDatabaseClientIDs() {
 		// Check if context is cancelled before processing each database
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -374,23 +375,17 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 
 		w.logInfo("Checking schema for database: %s", clientID)
 
-		client, err := dbManager.GetDatabaseClient(clientID)
+		client, err := registry.GetDatabaseClient(clientID)
 		if err != nil {
 			w.logError("Failed to get database client %s: %v", clientID, err)
 			continue
 		}
 
-		// Get current schema structure as UnifiedModel
-		structure, err := dbManager.GetDatabaseStructure(clientID)
+		// Get current schema structure as UnifiedModel via adapter
+		conn := client.AdapterConnection.(adapter.Connection)
+		currentUM, err := conn.SchemaOperations().DiscoverSchema(ctx)
 		if err != nil {
 			w.logError("Failed to get schema for database %s: %v", clientID, err)
-			continue
-		}
-
-		// Ensure we have a UnifiedModel
-		currentUM, ok := structure.(*unifiedmodel.UnifiedModel)
-		if !ok {
-			w.logError("Database structure is not a UnifiedModel for database %s", clientID)
 			continue
 		}
 

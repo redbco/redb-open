@@ -8,12 +8,18 @@ import (
 
 // DatabaseClient represents a connected database client
 type DatabaseClient struct {
-	DB           interface{}
-	DatabaseType string
-	DatabaseID   string // In v2, database_id IS the config_id
-	Config       DatabaseConfig
-	LastSchema   interface{}
-	IsConnected  int32
+	DB                interface{}
+	DatabaseType      string
+	DatabaseID        string // In v2, database_id IS the config_id
+	WorkspaceID       string
+	TenantID          string
+	EnvironmentID     string
+	InstanceID        string
+	Name              string
+	Config            DatabaseConfig
+	LastSchema        interface{}
+	IsConnected       int32
+	AdapterConnection interface{} // Stores adapter.Connection when using adapter-based connections
 }
 
 type DatabaseClients struct {
@@ -23,12 +29,13 @@ type DatabaseClients struct {
 
 // InstanceClient represents a connected database instance client
 type InstanceClient struct {
-	DB           interface{}
-	InstanceType string
-	InstanceID   string // In v2, instance_id IS the config_id
-	Config       InstanceConfig
-	LastSchema   interface{}
-	IsConnected  int32
+	DB                interface{}
+	InstanceType      string
+	InstanceID        string // In v2, instance_id IS the config_id
+	Config            InstanceConfig
+	LastSchema        interface{}
+	IsConnected       int32
+	AdapterConnection interface{} // Stores adapter.InstanceConnection when using adapter-based connections
 }
 
 type InstanceClients struct {

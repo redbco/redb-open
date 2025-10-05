@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
@@ -14,18 +15,135 @@ import (
 
 // DiscoverSchema fetches the current schema of a MongoDB database and returns a UnifiedModel
 func DiscoverSchema(db *mongo.Database) (*unifiedmodel.UnifiedModel, error) {
-	// Create the unified model
+	// Create the unified model - initialize all maps to ensure consistent JSON serialization
 	um := &unifiedmodel.UnifiedModel{
-		DatabaseType: dbcapabilities.MongoDB,
-		Collections:  make(map[string]unifiedmodel.Collection),
-		Indexes:      make(map[string]unifiedmodel.Index),
-		Functions:    make(map[string]unifiedmodel.Function),
-		Databases:    make(map[string]unifiedmodel.Database),
+		DatabaseType:         dbcapabilities.MongoDB,
+		Catalogs:             make(map[string]unifiedmodel.Catalog),
+		Databases:            make(map[string]unifiedmodel.Database),
+		Schemas:              make(map[string]unifiedmodel.Schema),
+		Tables:               make(map[string]unifiedmodel.Table),
+		Collections:          make(map[string]unifiedmodel.Collection),
+		Nodes:                make(map[string]unifiedmodel.Node),
+		MemoryTables:         make(map[string]unifiedmodel.MemoryTable),
+		TemporaryTables:      make(map[string]unifiedmodel.TemporaryTable),
+		TransientTables:      make(map[string]unifiedmodel.TransientTable),
+		Caches:               make(map[string]unifiedmodel.Cache),
+		Views:                make(map[string]unifiedmodel.View),
+		LiveViews:            make(map[string]unifiedmodel.LiveView),
+		WindowViews:          make(map[string]unifiedmodel.WindowView),
+		MaterializedViews:    make(map[string]unifiedmodel.MaterializedView),
+		ExternalTables:       make(map[string]unifiedmodel.ExternalTable),
+		ForeignTables:        make(map[string]unifiedmodel.ForeignTable),
+		Graphs:               make(map[string]unifiedmodel.Graph),
+		VectorIndexes:        make(map[string]unifiedmodel.VectorIndex),
+		SearchIndexes:        make(map[string]unifiedmodel.SearchIndex),
+		Vectors:              make(map[string]unifiedmodel.Vector),
+		Embeddings:           make(map[string]unifiedmodel.Embedding),
+		Documents:            make(map[string]unifiedmodel.Document),
+		EmbeddedDocuments:    make(map[string]unifiedmodel.EmbeddedDocument),
+		Relationships:        make(map[string]unifiedmodel.Relationship),
+		Paths:                make(map[string]unifiedmodel.Path),
+		Partitions:           make(map[string]unifiedmodel.Partition),
+		SubPartitions:        make(map[string]unifiedmodel.SubPartition),
+		Shards:               make(map[string]unifiedmodel.Shard),
+		Keyspaces:            make(map[string]unifiedmodel.Keyspace),
+		Namespaces:           make(map[string]unifiedmodel.Namespace),
+		Columns:              make(map[string]unifiedmodel.Column),
+		Types:                make(map[string]unifiedmodel.Type),
+		PropertyKeys:         make(map[string]unifiedmodel.PropertyKey),
+		Indexes:              make(map[string]unifiedmodel.Index),
+		Constraints:          make(map[string]unifiedmodel.Constraint),
+		Sequences:            make(map[string]unifiedmodel.Sequence),
+		Identities:           make(map[string]unifiedmodel.Identity),
+		UUIDGenerators:       make(map[string]unifiedmodel.UUIDGenerator),
+		Functions:            make(map[string]unifiedmodel.Function),
+		Procedures:           make(map[string]unifiedmodel.Procedure),
+		Methods:              make(map[string]unifiedmodel.Method),
+		Triggers:             make(map[string]unifiedmodel.Trigger),
+		EventTriggers:        make(map[string]unifiedmodel.EventTrigger),
+		Aggregates:           make(map[string]unifiedmodel.Aggregate),
+		Operators:            make(map[string]unifiedmodel.Operator),
+		Modules:              make(map[string]unifiedmodel.Module),
+		Packages:             make(map[string]unifiedmodel.Package),
+		PackageBodies:        make(map[string]unifiedmodel.PackageBody),
+		Macros:               make(map[string]unifiedmodel.Macro),
+		Rules:                make(map[string]unifiedmodel.Rule),
+		WindowFuncs:          make(map[string]unifiedmodel.WindowFunc),
+		Users:                make(map[string]unifiedmodel.DBUser),
+		Roles:                make(map[string]unifiedmodel.DBRole),
+		Grants:               make(map[string]unifiedmodel.Grant),
+		Policies:             make(map[string]unifiedmodel.Policy),
+		Tablespaces:          make(map[string]unifiedmodel.Tablespace),
+		Segments:             make(map[string]unifiedmodel.Segment),
+		Extents:              make(map[string]unifiedmodel.Extent),
+		Pages:                make(map[string]unifiedmodel.Page),
+		Filegroups:           make(map[string]unifiedmodel.Filegroup),
+		Datafiles:            make(map[string]unifiedmodel.Datafile),
+		Servers:              make(map[string]unifiedmodel.Server),
+		Connections:          make(map[string]unifiedmodel.Connection),
+		Endpoints:            make(map[string]unifiedmodel.Endpoint),
+		ForeignDataWrappers:  make(map[string]unifiedmodel.ForeignDataWrapper),
+		UserMappings:         make(map[string]unifiedmodel.UserMapping),
+		Federations:          make(map[string]unifiedmodel.Federation),
+		Replicas:             make(map[string]unifiedmodel.Replica),
+		Clusters:             make(map[string]unifiedmodel.Cluster),
+		Tasks:                make(map[string]unifiedmodel.Task),
+		Jobs:                 make(map[string]unifiedmodel.Job),
+		Schedules:            make(map[string]unifiedmodel.Schedule),
+		Pipelines:            make(map[string]unifiedmodel.Pipeline),
+		Streams:              make(map[string]unifiedmodel.Stream),
+		Events:               make(map[string]unifiedmodel.Event),
+		Notifications:        make(map[string]unifiedmodel.Notification),
+		Alerts:               make(map[string]unifiedmodel.Alert),
+		Statistics:           make(map[string]unifiedmodel.Statistic),
+		Histograms:           make(map[string]unifiedmodel.Histogram),
+		Monitors:             make(map[string]unifiedmodel.Monitor),
+		MonitorMetrics:       make(map[string]unifiedmodel.MonitorMetric),
+		Thresholds:           make(map[string]unifiedmodel.Threshold),
+		TextSearchComponents: make(map[string]unifiedmodel.TextSearchComponent),
+		Comments:             make(map[string]unifiedmodel.Comment),
+		Annotations:          make(map[string]unifiedmodel.Annotation),
+		Tags:                 make(map[string]unifiedmodel.Tag),
+		Aliases:              make(map[string]unifiedmodel.Alias),
+		Synonyms:             make(map[string]unifiedmodel.Synonym),
+		Labels:               make(map[string]unifiedmodel.Label),
+		Snapshots:            make(map[string]unifiedmodel.Snapshot),
+		Backups:              make(map[string]unifiedmodel.Backup),
+		Archives:             make(map[string]unifiedmodel.Archive),
+		RecoveryPoints:       make(map[string]unifiedmodel.RecoveryPoint),
+		Versions:             make(map[string]unifiedmodel.VersionNode),
+		Migrations:           make(map[string]unifiedmodel.Migration),
+		Branches:             make(map[string]unifiedmodel.Branch),
+		TimeTravel:           make(map[string]unifiedmodel.TimeTravel),
+		Extensions:           make(map[string]unifiedmodel.Extension),
+		Plugins:              make(map[string]unifiedmodel.Plugin),
+		ModuleExtensions:     make(map[string]unifiedmodel.ModuleExtension),
+		TTLSettings:          make(map[string]unifiedmodel.TTLSetting),
+		Dimensions:           make(map[string]unifiedmodel.DimensionSpec),
+		DistanceMetrics:      make(map[string]unifiedmodel.DistanceMetricSpec),
+		Projections:          make(map[string]unifiedmodel.Projection),
+		AnalyticsAggs:        make(map[string]unifiedmodel.AggregationOp),
+		Transformations:      make(map[string]unifiedmodel.TransformationStep),
+		Enrichments:          make(map[string]unifiedmodel.Enrichment),
+		BufferPools:          make(map[string]unifiedmodel.BufferPool),
+		Publications:         make(map[string]unifiedmodel.Publication),
+		Subscriptions:        make(map[string]unifiedmodel.Subscription),
+		ReplicationSlots:     make(map[string]unifiedmodel.ReplicationSlot),
+		FailoverGroups:       make(map[string]unifiedmodel.FailoverGroup),
 	}
 
 	var err error
 
+	// First check if we have deployed schema metadata
+	// This handles the case where collections are empty after deployment
+	deployedSchema, err := loadDeployedSchemaMetadata(db)
+	if err == nil && deployedSchema != nil {
+		// Use the deployed schema metadata as the base
+		*um = *deployedSchema
+	}
+
 	// Get collections directly as UnifiedModel types
+	// This will merge with deployed schema metadata or discover from data
 	err = discoverCollectionsUnified(db, um)
 	if err != nil {
 		return nil, fmt.Errorf("error discovering collections: %v", err)
@@ -63,6 +181,11 @@ func discoverCollectionsUnified(db *mongo.Database, um *unifiedmodel.UnifiedMode
 	}
 
 	for _, collName := range collectionNames {
+		// Skip internal redb metadata collection and MongoDB system collections
+		if collName == "__redb_schema_metadata" || strings.HasPrefix(collName, "system.") {
+			continue
+		}
+
 		// Get collection
 		coll := db.Collection(collName)
 
@@ -109,19 +232,39 @@ func discoverCollectionsUnified(db *mongo.Database, um *unifiedmodel.UnifiedMode
 			cursor.Close(ctx)
 			return fmt.Errorf("error decoding sample documents for collection %s: %v", collName, err)
 		}
+		cursor.Close(ctx)
 
 		// Infer fields from sample documents
 		for _, sampleDoc := range sampleDocs {
 			for fieldName, fieldValue := range sampleDoc {
-				if fieldName == "_id" {
-					continue // Skip the MongoDB ObjectId field
-				}
-
 				fieldType := inferFieldType(fieldValue)
-				unifiedCollection.Fields[fieldName] = unifiedmodel.Field{
+				field := unifiedmodel.Field{
 					Name: fieldName,
 					Type: fieldType,
 				}
+
+				// Mark _id field as required (it's always present in MongoDB)
+				if fieldName == "_id" {
+					field.Required = true
+					if field.Options == nil {
+						field.Options = make(map[string]any)
+					}
+					field.Options["primary_key"] = true
+				}
+
+				unifiedCollection.Fields[fieldName] = field
+			}
+		}
+
+		// If no documents were found, still include the _id field as it's always present
+		if len(sampleDocs) == 0 {
+			unifiedCollection.Fields["_id"] = unifiedmodel.Field{
+				Name:     "_id",
+				Type:     "objectid",
+				Required: true,
+				Options: map[string]any{
+					"primary_key": true,
+				},
 			}
 		}
 
@@ -272,6 +415,13 @@ func CreateStructure(db *mongo.Database, um *unifiedmodel.UnifiedModel) error {
 
 	ctx := context.Background()
 
+	// Store the deployed schema metadata in a special collection
+	// This allows us to discover the schema even when collections are empty
+	err := storeDeployedSchemaMetadata(ctx, db, um)
+	if err != nil {
+		return fmt.Errorf("failed to store deployed schema metadata: %v", err)
+	}
+
 	// Create collections
 	for _, collection := range um.Collections {
 		collName := collection.Name
@@ -372,6 +522,372 @@ func CreateStructure(db *mongo.Database, um *unifiedmodel.UnifiedModel) error {
 	}
 
 	return nil
+}
+
+// storeDeployedSchemaMetadata stores the deployed schema metadata in a special collection
+// This allows schema discovery to work even when user collections are empty
+func storeDeployedSchemaMetadata(ctx context.Context, db *mongo.Database, um *unifiedmodel.UnifiedModel) error {
+	metaColl := db.Collection("__redb_schema_metadata")
+
+	// Create metadata document
+	metaDoc := bson.M{
+		"_id":         "deployed_schema",
+		"schema_type": string(um.DatabaseType),
+		"deployed_at": bson.DateTime(time.Now().UnixMilli()),
+		"collections": make(bson.M),
+		"indexes":     make(bson.M),
+		"functions":   make(bson.M),
+		"databases":   make(bson.M),
+	}
+
+	// Store collection metadata
+	collections := make(bson.M)
+	for name, collection := range um.Collections {
+		collMeta := bson.M{
+			"name":    collection.Name,
+			"fields":  make(bson.M),
+			"indexes": make(bson.M),
+			"options": collection.Options,
+		}
+
+		// Store field metadata
+		fields := make(bson.M)
+		for fieldName, field := range collection.Fields {
+			fields[fieldName] = bson.M{
+				"name":     field.Name,
+				"type":     field.Type,
+				"required": field.Required,
+				"options":  field.Options,
+			}
+		}
+		collMeta["fields"] = fields
+
+		// Store index metadata
+		indexes := make(bson.M)
+		for indexName, index := range collection.Indexes {
+			indexes[indexName] = bson.M{
+				"name":   index.Name,
+				"fields": index.Fields,
+				"unique": index.Unique,
+			}
+		}
+		collMeta["indexes"] = indexes
+
+		collections[name] = collMeta
+	}
+	metaDoc["collections"] = collections
+
+	// Store global indexes metadata
+	indexes := make(bson.M)
+	for name, index := range um.Indexes {
+		indexes[name] = bson.M{
+			"name":   index.Name,
+			"fields": index.Fields,
+			"unique": index.Unique,
+		}
+	}
+	metaDoc["indexes"] = indexes
+
+	// Store functions metadata
+	functions := make(bson.M)
+	for name, function := range um.Functions {
+		functions[name] = bson.M{
+			"name":       function.Name,
+			"returns":    function.Returns,
+			"definition": function.Definition,
+		}
+	}
+	metaDoc["functions"] = functions
+
+	// Store databases metadata
+	databases := make(bson.M)
+	for name, database := range um.Databases {
+		databases[name] = bson.M{
+			"name":    database.Name,
+			"comment": database.Comment,
+		}
+	}
+	metaDoc["databases"] = databases
+
+	// Upsert the metadata document
+	opts := options.Replace().SetUpsert(true)
+	_, err := metaColl.ReplaceOne(ctx, bson.M{"_id": "deployed_schema"}, metaDoc, opts)
+	if err != nil {
+		return fmt.Errorf("failed to store schema metadata: %v", err)
+	}
+
+	return nil
+}
+
+// loadDeployedSchemaMetadata loads the deployed schema metadata from the special collection
+// Returns nil if no metadata exists (not an error condition)
+func loadDeployedSchemaMetadata(db *mongo.Database) (*unifiedmodel.UnifiedModel, error) {
+	ctx := context.Background()
+	metaColl := db.Collection("__redb_schema_metadata")
+
+	// Try to find the deployed schema metadata
+	var metaDoc bson.M
+	err := metaColl.FindOne(ctx, bson.M{"_id": "deployed_schema"}).Decode(&metaDoc)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			// No metadata exists, which is fine - return nil
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to load schema metadata: %v", err)
+	}
+
+	// Parse the metadata back into a UnifiedModel - initialize all maps to ensure consistent JSON serialization
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:         dbcapabilities.MongoDB,
+		Catalogs:             make(map[string]unifiedmodel.Catalog),
+		Databases:            make(map[string]unifiedmodel.Database),
+		Schemas:              make(map[string]unifiedmodel.Schema),
+		Tables:               make(map[string]unifiedmodel.Table),
+		Collections:          make(map[string]unifiedmodel.Collection),
+		Nodes:                make(map[string]unifiedmodel.Node),
+		MemoryTables:         make(map[string]unifiedmodel.MemoryTable),
+		TemporaryTables:      make(map[string]unifiedmodel.TemporaryTable),
+		TransientTables:      make(map[string]unifiedmodel.TransientTable),
+		Caches:               make(map[string]unifiedmodel.Cache),
+		Views:                make(map[string]unifiedmodel.View),
+		LiveViews:            make(map[string]unifiedmodel.LiveView),
+		WindowViews:          make(map[string]unifiedmodel.WindowView),
+		MaterializedViews:    make(map[string]unifiedmodel.MaterializedView),
+		ExternalTables:       make(map[string]unifiedmodel.ExternalTable),
+		ForeignTables:        make(map[string]unifiedmodel.ForeignTable),
+		Graphs:               make(map[string]unifiedmodel.Graph),
+		VectorIndexes:        make(map[string]unifiedmodel.VectorIndex),
+		SearchIndexes:        make(map[string]unifiedmodel.SearchIndex),
+		Vectors:              make(map[string]unifiedmodel.Vector),
+		Embeddings:           make(map[string]unifiedmodel.Embedding),
+		Documents:            make(map[string]unifiedmodel.Document),
+		EmbeddedDocuments:    make(map[string]unifiedmodel.EmbeddedDocument),
+		Relationships:        make(map[string]unifiedmodel.Relationship),
+		Paths:                make(map[string]unifiedmodel.Path),
+		Partitions:           make(map[string]unifiedmodel.Partition),
+		SubPartitions:        make(map[string]unifiedmodel.SubPartition),
+		Shards:               make(map[string]unifiedmodel.Shard),
+		Keyspaces:            make(map[string]unifiedmodel.Keyspace),
+		Namespaces:           make(map[string]unifiedmodel.Namespace),
+		Columns:              make(map[string]unifiedmodel.Column),
+		Types:                make(map[string]unifiedmodel.Type),
+		PropertyKeys:         make(map[string]unifiedmodel.PropertyKey),
+		Indexes:              make(map[string]unifiedmodel.Index),
+		Constraints:          make(map[string]unifiedmodel.Constraint),
+		Sequences:            make(map[string]unifiedmodel.Sequence),
+		Identities:           make(map[string]unifiedmodel.Identity),
+		UUIDGenerators:       make(map[string]unifiedmodel.UUIDGenerator),
+		Functions:            make(map[string]unifiedmodel.Function),
+		Procedures:           make(map[string]unifiedmodel.Procedure),
+		Methods:              make(map[string]unifiedmodel.Method),
+		Triggers:             make(map[string]unifiedmodel.Trigger),
+		EventTriggers:        make(map[string]unifiedmodel.EventTrigger),
+		Aggregates:           make(map[string]unifiedmodel.Aggregate),
+		Operators:            make(map[string]unifiedmodel.Operator),
+		Modules:              make(map[string]unifiedmodel.Module),
+		Packages:             make(map[string]unifiedmodel.Package),
+		PackageBodies:        make(map[string]unifiedmodel.PackageBody),
+		Macros:               make(map[string]unifiedmodel.Macro),
+		Rules:                make(map[string]unifiedmodel.Rule),
+		WindowFuncs:          make(map[string]unifiedmodel.WindowFunc),
+		Users:                make(map[string]unifiedmodel.DBUser),
+		Roles:                make(map[string]unifiedmodel.DBRole),
+		Grants:               make(map[string]unifiedmodel.Grant),
+		Policies:             make(map[string]unifiedmodel.Policy),
+		Tablespaces:          make(map[string]unifiedmodel.Tablespace),
+		Segments:             make(map[string]unifiedmodel.Segment),
+		Extents:              make(map[string]unifiedmodel.Extent),
+		Pages:                make(map[string]unifiedmodel.Page),
+		Filegroups:           make(map[string]unifiedmodel.Filegroup),
+		Datafiles:            make(map[string]unifiedmodel.Datafile),
+		Servers:              make(map[string]unifiedmodel.Server),
+		Connections:          make(map[string]unifiedmodel.Connection),
+		Endpoints:            make(map[string]unifiedmodel.Endpoint),
+		ForeignDataWrappers:  make(map[string]unifiedmodel.ForeignDataWrapper),
+		UserMappings:         make(map[string]unifiedmodel.UserMapping),
+		Federations:          make(map[string]unifiedmodel.Federation),
+		Replicas:             make(map[string]unifiedmodel.Replica),
+		Clusters:             make(map[string]unifiedmodel.Cluster),
+		Tasks:                make(map[string]unifiedmodel.Task),
+		Jobs:                 make(map[string]unifiedmodel.Job),
+		Schedules:            make(map[string]unifiedmodel.Schedule),
+		Pipelines:            make(map[string]unifiedmodel.Pipeline),
+		Streams:              make(map[string]unifiedmodel.Stream),
+		Events:               make(map[string]unifiedmodel.Event),
+		Notifications:        make(map[string]unifiedmodel.Notification),
+		Alerts:               make(map[string]unifiedmodel.Alert),
+		Statistics:           make(map[string]unifiedmodel.Statistic),
+		Histograms:           make(map[string]unifiedmodel.Histogram),
+		Monitors:             make(map[string]unifiedmodel.Monitor),
+		MonitorMetrics:       make(map[string]unifiedmodel.MonitorMetric),
+		Thresholds:           make(map[string]unifiedmodel.Threshold),
+		TextSearchComponents: make(map[string]unifiedmodel.TextSearchComponent),
+		Comments:             make(map[string]unifiedmodel.Comment),
+		Annotations:          make(map[string]unifiedmodel.Annotation),
+		Tags:                 make(map[string]unifiedmodel.Tag),
+		Aliases:              make(map[string]unifiedmodel.Alias),
+		Synonyms:             make(map[string]unifiedmodel.Synonym),
+		Labels:               make(map[string]unifiedmodel.Label),
+		Snapshots:            make(map[string]unifiedmodel.Snapshot),
+		Backups:              make(map[string]unifiedmodel.Backup),
+		Archives:             make(map[string]unifiedmodel.Archive),
+		RecoveryPoints:       make(map[string]unifiedmodel.RecoveryPoint),
+		Versions:             make(map[string]unifiedmodel.VersionNode),
+		Migrations:           make(map[string]unifiedmodel.Migration),
+		Branches:             make(map[string]unifiedmodel.Branch),
+		TimeTravel:           make(map[string]unifiedmodel.TimeTravel),
+		Extensions:           make(map[string]unifiedmodel.Extension),
+		Plugins:              make(map[string]unifiedmodel.Plugin),
+		ModuleExtensions:     make(map[string]unifiedmodel.ModuleExtension),
+		TTLSettings:          make(map[string]unifiedmodel.TTLSetting),
+		Dimensions:           make(map[string]unifiedmodel.DimensionSpec),
+		DistanceMetrics:      make(map[string]unifiedmodel.DistanceMetricSpec),
+		Projections:          make(map[string]unifiedmodel.Projection),
+		AnalyticsAggs:        make(map[string]unifiedmodel.AggregationOp),
+		Transformations:      make(map[string]unifiedmodel.TransformationStep),
+		Enrichments:          make(map[string]unifiedmodel.Enrichment),
+		BufferPools:          make(map[string]unifiedmodel.BufferPool),
+		Publications:         make(map[string]unifiedmodel.Publication),
+		Subscriptions:        make(map[string]unifiedmodel.Subscription),
+		ReplicationSlots:     make(map[string]unifiedmodel.ReplicationSlot),
+		FailoverGroups:       make(map[string]unifiedmodel.FailoverGroup),
+	}
+
+	// Parse collections metadata
+	if collectionsData, ok := metaDoc["collections"].(bson.M); ok {
+		for name, collData := range collectionsData {
+			if collMeta, ok := collData.(bson.M); ok {
+				collection := unifiedmodel.Collection{
+					Name:    name,
+					Fields:  make(map[string]unifiedmodel.Field),
+					Indexes: make(map[string]unifiedmodel.Index),
+					Options: make(map[string]any),
+				}
+
+				// Parse fields
+				if fieldsData, ok := collMeta["fields"].(bson.M); ok {
+					for fieldName, fieldData := range fieldsData {
+						if fieldMeta, ok := fieldData.(bson.M); ok {
+							field := unifiedmodel.Field{
+								Name: fieldName,
+							}
+
+							if fieldType, ok := fieldMeta["type"].(string); ok {
+								field.Type = fieldType
+							}
+							if required, ok := fieldMeta["required"].(bool); ok {
+								field.Required = required
+							}
+							if options, ok := fieldMeta["options"].(bson.M); ok {
+								field.Options = make(map[string]any)
+								for k, v := range options {
+									field.Options[k] = v
+								}
+							}
+
+							collection.Fields[fieldName] = field
+						}
+					}
+				}
+
+				// Parse indexes
+				if indexesData, ok := collMeta["indexes"].(bson.M); ok {
+					for indexName, indexData := range indexesData {
+						if indexMeta, ok := indexData.(bson.M); ok {
+							index := unifiedmodel.Index{
+								Name: indexName,
+							}
+
+							if fields, ok := indexMeta["fields"].(bson.A); ok {
+								for _, field := range fields {
+									if fieldStr, ok := field.(string); ok {
+										index.Fields = append(index.Fields, fieldStr)
+									}
+								}
+							}
+							if unique, ok := indexMeta["unique"].(bool); ok {
+								index.Unique = unique
+							}
+
+							collection.Indexes[indexName] = index
+						}
+					}
+				}
+
+				// Parse options
+				if options, ok := collMeta["options"].(bson.M); ok {
+					for k, v := range options {
+						collection.Options[k] = v
+					}
+				}
+
+				um.Collections[name] = collection
+			}
+		}
+	}
+
+	// Parse global indexes metadata
+	if indexesData, ok := metaDoc["indexes"].(bson.M); ok {
+		for name, indexData := range indexesData {
+			if indexMeta, ok := indexData.(bson.M); ok {
+				index := unifiedmodel.Index{
+					Name: name,
+				}
+
+				if fields, ok := indexMeta["fields"].(bson.A); ok {
+					for _, field := range fields {
+						if fieldStr, ok := field.(string); ok {
+							index.Fields = append(index.Fields, fieldStr)
+						}
+					}
+				}
+				if unique, ok := indexMeta["unique"].(bool); ok {
+					index.Unique = unique
+				}
+
+				um.Indexes[name] = index
+			}
+		}
+	}
+
+	// Parse functions metadata
+	if functionsData, ok := metaDoc["functions"].(bson.M); ok {
+		for name, functionData := range functionsData {
+			if functionMeta, ok := functionData.(bson.M); ok {
+				function := unifiedmodel.Function{
+					Name: name,
+				}
+
+				if returns, ok := functionMeta["returns"].(string); ok {
+					function.Returns = returns
+				}
+				if definition, ok := functionMeta["definition"].(string); ok {
+					function.Definition = definition
+				}
+
+				um.Functions[name] = function
+			}
+		}
+	}
+
+	// Parse databases metadata
+	if databasesData, ok := metaDoc["databases"].(bson.M); ok {
+		for name, dbData := range databasesData {
+			if dbMeta, ok := dbData.(bson.M); ok {
+				database := unifiedmodel.Database{
+					Name: name,
+				}
+
+				if comment, ok := dbMeta["comment"].(string); ok {
+					database.Comment = comment
+				}
+
+				um.Databases[name] = database
+			}
+		}
+	}
+
+	return um, nil
 }
 
 // InferSchema analyzes sample documents to infer a schema for a collection

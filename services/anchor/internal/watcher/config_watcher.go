@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/redbco/redb-open/pkg/anchor/adapter"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/anchor/internal/config"
 	"github.com/redbco/redb-open/services/anchor/internal/database"
@@ -62,10 +63,10 @@ func (w *ConfigWatcher) checkConnectionHealth(ctx context.Context) error {
 	}
 
 	nodeID := w.state.GetNodeID()
-	dbManager := w.state.GetDatabaseManager()
+	registry := w.state.GetConnectionRegistry()
 
 	// Process database configurations
-	if err := w.processDatabaseConfigs(ctx, nodeID, dbManager); err != nil {
+	if err := w.processDatabaseConfigs(ctx, nodeID, registry); err != nil {
 		w.logger.Error("Failed to process database configs: %v", err)
 		return err
 	}
@@ -76,7 +77,7 @@ func (w *ConfigWatcher) checkConnectionHealth(ctx context.Context) error {
 	}
 
 	// Process instance configurations
-	if err := w.processInstanceConfigs(ctx, nodeID, dbManager); err != nil {
+	if err := w.processInstanceConfigs(ctx, nodeID, registry); err != nil {
 		w.logger.Error("Failed to process instance configs: %v", err)
 		return err
 	}
@@ -87,10 +88,10 @@ func (w *ConfigWatcher) checkConnectionHealth(ctx context.Context) error {
 	}
 
 	// Check health of all connected databases and update metadata
-	return w.checkAllConnectionsHealth(ctx, dbManager)
+	return w.checkAllConnectionsHealth(ctx, registry)
 }
 
-func (w *ConfigWatcher) processDatabaseConfigs(ctx context.Context, nodeID string, dbManager *database.DatabaseManager) error {
+func (w *ConfigWatcher) processDatabaseConfigs(ctx context.Context, nodeID string, registry *database.ConnectionRegistry) error {
 	// Check if context is cancelled before starting
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -117,7 +118,7 @@ func (w *ConfigWatcher) processDatabaseConfigs(ctx context.Context, nodeID strin
 		clientID := dbConfig.DatabaseID
 
 		// Skip if already connected
-		if _, err := dbManager.GetDatabaseClient(clientID); err == nil {
+		if _, err := registry.GetDatabaseClient(clientID); err == nil {
 			w.logger.Debug("Database %s already connected, skipping", clientID)
 			continue
 		}
@@ -127,7 +128,7 @@ func (w *ConfigWatcher) processDatabaseConfigs(ctx context.Context, nodeID strin
 
 		// Attempt to establish new connection
 		w.logger.Info("Establishing new connection for database: %s", clientID)
-		client, err := dbManager.ConnectDatabase(dbConnConfig)
+		client, err := registry.ConnectDatabase(dbConnConfig)
 		if err != nil {
 			// Client database connection failures are warnings, not errors
 			// (detailed logging is already handled by DatabaseManager's unified logging)
@@ -142,19 +143,21 @@ func (w *ConfigWatcher) processDatabaseConfigs(ctx context.Context, nodeID strin
 		w.repository.UpdateDatabaseConnectionStatus(ctx, clientID, true, "Connected successfully")
 		w.logger.Info("Connected to database %s", clientID)
 
-		collector := database.NewDatabaseMetadataCollector(client)
-		metadata, err := collector.CollectMetadata(ctx, clientID)
-		if err != nil {
-			w.logger.Error("Failed to collect database metadata for %s: %v", clientID, err)
-		} else {
-			// Store metadata in repository
-			//w.logger.Info("Updating database metadata: %v", metadata)
-			w.repository.UpdateDatabaseMetadata(ctx, &config.DatabaseMetadata{
-				DatabaseID:  clientID,
-				Version:     metadata.Version,
-				SizeBytes:   metadata.SizeBytes,
-				TablesCount: metadata.TablesCount,
-			})
+		// Collect metadata via adapter
+		if client.AdapterConnection != nil {
+			conn, ok := client.AdapterConnection.(adapter.Connection)
+			if ok {
+				metadataMap, err := conn.MetadataOperations().CollectDatabaseMetadata(ctx)
+				if err != nil {
+					w.logger.Error("Failed to collect database metadata for %s: %v", clientID, err)
+				} else {
+					// Convert map to metadata structure and store
+					dbMeta := convertDatabaseMetadata(clientID, metadataMap)
+					if err := w.repository.UpdateDatabaseMetadata(ctx, dbMeta); err != nil {
+						w.logger.Error("Failed to store database metadata for %s: %v", clientID, err)
+					}
+				}
+			}
 		}
 	}
 
@@ -167,7 +170,7 @@ func (w *ConfigWatcher) processDatabaseConfigs(ctx context.Context, nodeID strin
 	return nil
 }
 
-func (w *ConfigWatcher) processInstanceConfigs(ctx context.Context, nodeID string, dbManager *database.DatabaseManager) error {
+func (w *ConfigWatcher) processInstanceConfigs(ctx context.Context, nodeID string, registry *database.ConnectionRegistry) error {
 	// Check if context is cancelled before starting
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -194,7 +197,7 @@ func (w *ConfigWatcher) processInstanceConfigs(ctx context.Context, nodeID strin
 		clientID := instConfig.InstanceID
 
 		// Skip if already connected
-		if _, err := dbManager.GetInstanceClient(clientID); err == nil {
+		if _, err := registry.GetInstanceClient(clientID); err == nil {
 			w.logger.Debug("Instance %s already connected, skipping", clientID)
 			continue
 		}
@@ -204,7 +207,7 @@ func (w *ConfigWatcher) processInstanceConfigs(ctx context.Context, nodeID strin
 
 		// Attempt to establish new connection
 		w.logger.Info("Establishing new connection for instance: %s", clientID)
-		client, err := dbManager.ConnectInstance(dbConnConfig)
+		client, err := registry.ConnectInstance(dbConnConfig)
 		if err != nil {
 			// Client instance connection failures are warnings, not errors
 			// (detailed logging is already handled by DatabaseManager's unified logging)
@@ -219,21 +222,21 @@ func (w *ConfigWatcher) processInstanceConfigs(ctx context.Context, nodeID strin
 		w.repository.UpdateInstanceConnectionStatus(ctx, clientID, true, "Connected successfully")
 		w.logger.Info("Connected to instance %s", clientID)
 
-		collector := database.NewInstanceMetadataCollector(client)
-		metadata, err := collector.CollectMetadata(ctx, clientID)
-		if err != nil {
-			w.logger.Error("Failed to collect instance metadata for %s: %v", clientID, err)
-		} else {
-			// Store metadata in repository
-			//w.logger.Info("Updating instance metadata: %v", metadata)
-			w.repository.UpdateInstanceMetadata(ctx, &config.InstanceMetadata{
-				InstanceID:       clientID,
-				Version:          metadata.Version,
-				UptimeSeconds:    metadata.UptimeSeconds,
-				TotalDatabases:   metadata.TotalDatabases,
-				TotalConnections: metadata.TotalConnections,
-				MaxConnections:   metadata.MaxConnections,
-			})
+		// Collect metadata via adapter
+		if client.AdapterConnection != nil {
+			conn, ok := client.AdapterConnection.(adapter.InstanceConnection)
+			if ok {
+				metadataMap, err := conn.MetadataOperations().CollectInstanceMetadata(ctx)
+				if err != nil {
+					w.logger.Error("Failed to collect instance metadata for %s: %v", clientID, err)
+				} else {
+					// Convert map to metadata structure and store
+					instMeta := convertInstanceMetadata(clientID, metadataMap)
+					if err := w.repository.UpdateInstanceMetadata(ctx, instMeta); err != nil {
+						w.logger.Error("Failed to store instance metadata for %s: %v", clientID, err)
+					}
+				}
+			}
 		}
 	}
 
@@ -246,14 +249,14 @@ func (w *ConfigWatcher) processInstanceConfigs(ctx context.Context, nodeID strin
 	return nil
 }
 
-func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, dbManager *database.DatabaseManager) error {
+func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, registry *database.ConnectionRegistry) error {
 	// Check if context is cancelled before starting
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 
 	// Check health of all connected databases
-	for _, clientID := range dbManager.GetAllDatabaseClientIDs() {
+	for _, clientID := range registry.GetAllDatabaseClientIDs() {
 		// Check if context is cancelled before processing each database
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -261,7 +264,7 @@ func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, dbManager
 
 		w.logger.Info("Checking health for database client: %s", clientID)
 
-		client, err := dbManager.GetDatabaseClient(clientID)
+		client, err := registry.GetDatabaseClient(clientID)
 		if err != nil {
 			w.logger.Error("Failed to get database client %s: %v", clientID, err)
 			continue
@@ -272,7 +275,7 @@ func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, dbManager
 			w.logger.Error("Database client %s is not connected", clientID)
 			// Clean up disconnected client from DatabaseManager
 			w.logger.Info("Removing disconnected database client %s from DatabaseManager", clientID)
-			dbManager.DisconnectDatabase(clientID)
+			registry.DisconnectDatabase(clientID)
 			continue
 		}
 
@@ -282,7 +285,7 @@ func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, dbManager
 			w.logger.Info("Database %s no longer exists in repository, cleaning up from DatabaseManager", clientID)
 			// Database was removed from repository but still exists in DatabaseManager
 			// This can happen when database is disconnected but not properly cleaned up
-			err = dbManager.DisconnectDatabase(clientID)
+			err = registry.DisconnectDatabase(clientID)
 			if err != nil {
 				w.logger.Error("Failed to cleanup orphaned database %s from DatabaseManager: %v", clientID, err)
 			} else {
@@ -297,20 +300,21 @@ func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, dbManager
 			continue
 		}
 
-		// Collect and update metadata
-		collector := database.NewDatabaseMetadataCollector(client)
-		metadata, err := collector.CollectMetadata(ctx, client.DatabaseID)
-		if err != nil {
-			w.logger.Error("Failed to collect database metadata: %v", err)
-		} else {
-			// Store metadata in repository
-			//w.logger.Info("Updating database metadata: %v", metadata)
-			w.repository.UpdateDatabaseMetadata(ctx, &config.DatabaseMetadata{
-				DatabaseID:  client.DatabaseID,
-				Version:     metadata.Version,
-				SizeBytes:   metadata.SizeBytes,
-				TablesCount: metadata.TablesCount,
-			})
+		// Collect and update metadata via adapter
+		if client.AdapterConnection != nil {
+			conn, ok := client.AdapterConnection.(adapter.Connection)
+			if ok {
+				metadataMap, err := conn.MetadataOperations().CollectDatabaseMetadata(ctx)
+				if err != nil {
+					w.logger.Debug("Failed to collect database metadata for %s: %v", clientID, err)
+				} else {
+					// Convert map to metadata structure and store
+					dbMeta := convertDatabaseMetadata(clientID, metadataMap)
+					if err := w.repository.UpdateDatabaseMetadata(ctx, dbMeta); err != nil {
+						w.logger.Debug("Failed to store database metadata for %s: %v", clientID, err)
+					}
+				}
+			}
 		}
 	}
 
@@ -320,7 +324,7 @@ func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, dbManager
 	}
 
 	// Check health of all connected instances
-	for _, clientID := range dbManager.GetAllInstanceClientIDs() {
+	for _, clientID := range registry.GetAllInstanceClientIDs() {
 		// Check if context is cancelled before processing each instance
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -328,7 +332,7 @@ func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, dbManager
 
 		w.logger.Info("Checking health for instance client: %s", clientID)
 
-		client, err := dbManager.GetInstanceClient(clientID)
+		client, err := registry.GetInstanceClient(clientID)
 		if err != nil {
 			w.logger.Error("Failed to get instance client %s: %v", clientID, err)
 			continue
@@ -339,7 +343,7 @@ func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, dbManager
 			w.logger.Error("Instance client %s is not connected", clientID)
 			// Clean up disconnected client from DatabaseManager
 			w.logger.Info("Removing disconnected instance client %s from DatabaseManager", clientID)
-			dbManager.DisconnectInstance(clientID)
+			registry.DisconnectInstance(clientID)
 			continue
 		}
 
@@ -349,7 +353,7 @@ func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, dbManager
 			w.logger.Info("Instance %s no longer exists in repository, cleaning up from DatabaseManager", clientID)
 			// Instance was removed from repository but still exists in DatabaseManager
 			// This can happen when instance is disconnected but not properly cleaned up
-			err = dbManager.DisconnectInstance(clientID)
+			err = registry.DisconnectInstance(clientID)
 			if err != nil {
 				w.logger.Error("Failed to cleanup orphaned instance %s from DatabaseManager: %v", clientID, err)
 			} else {
@@ -364,26 +368,74 @@ func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, dbManager
 			continue
 		}
 
-		// Collect and update metadata
-		collector := database.NewInstanceMetadataCollector(client)
-		metadata, err := collector.CollectMetadata(ctx, client.InstanceID)
-		if err != nil {
-			w.logger.Error("Failed to collect instance metadata: %v", err)
-		} else {
-			// Store metadata in repository
-			//w.logger.Info("Updating instance metadata: %v", metadata)
-			w.repository.UpdateInstanceMetadata(ctx, &config.InstanceMetadata{
-				InstanceID:       client.InstanceID,
-				Version:          metadata.Version,
-				UptimeSeconds:    metadata.UptimeSeconds,
-				TotalDatabases:   metadata.TotalDatabases,
-				TotalConnections: metadata.TotalConnections,
-				MaxConnections:   metadata.MaxConnections,
-			})
+		// Collect and update metadata via adapter
+		if client.AdapterConnection != nil {
+			conn, ok := client.AdapterConnection.(adapter.InstanceConnection)
+			if ok {
+				metadataMap, err := conn.MetadataOperations().CollectInstanceMetadata(ctx)
+				if err != nil {
+					w.logger.Debug("Failed to collect instance metadata for %s: %v", clientID, err)
+				} else {
+					// Convert map to metadata structure and store
+					instMeta := convertInstanceMetadata(clientID, metadataMap)
+					if err := w.repository.UpdateInstanceMetadata(ctx, instMeta); err != nil {
+						w.logger.Debug("Failed to store instance metadata for %s: %v", clientID, err)
+					}
+				}
+			}
 		}
 	}
 
 	return nil
+}
+
+// convertDatabaseMetadata converts adapter metadata map to config.DatabaseMetadata
+func convertDatabaseMetadata(databaseID string, metadataMap map[string]interface{}) *config.DatabaseMetadata {
+	meta := &config.DatabaseMetadata{
+		DatabaseID: databaseID,
+	}
+
+	// Extract fields with type assertions
+	if v, ok := metadataMap["version"].(string); ok {
+		meta.Version = v
+	}
+	if v, ok := metadataMap["size_bytes"].(int64); ok {
+		meta.SizeBytes = v
+	}
+	// Try table_count first, then tables_count as fallback
+	if v, ok := metadataMap["table_count"].(int); ok {
+		meta.TablesCount = v
+	} else if v, ok := metadataMap["tables_count"].(int); ok {
+		meta.TablesCount = v
+	}
+
+	return meta
+}
+
+// convertInstanceMetadata converts adapter metadata map to config.InstanceMetadata
+func convertInstanceMetadata(instanceID string, metadataMap map[string]interface{}) *config.InstanceMetadata {
+	meta := &config.InstanceMetadata{
+		InstanceID: instanceID,
+	}
+
+	// Extract fields with type assertions
+	if v, ok := metadataMap["version"].(string); ok {
+		meta.Version = v
+	}
+	if v, ok := metadataMap["uptime_seconds"].(int64); ok {
+		meta.UptimeSeconds = v
+	}
+	if v, ok := metadataMap["total_databases"].(int); ok {
+		meta.TotalDatabases = v
+	}
+	if v, ok := metadataMap["total_connections"].(int); ok {
+		meta.TotalConnections = v
+	}
+	if v, ok := metadataMap["max_connections"].(int); ok {
+		meta.MaxConnections = v
+	}
+
+	return meta
 }
 
 func (w *ConfigWatcher) InitialConnect(ctx context.Context) error {

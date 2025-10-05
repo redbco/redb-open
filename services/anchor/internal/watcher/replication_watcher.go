@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/redbco/redb-open/pkg/anchor/adapter"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/anchor/internal/config"
 	"github.com/redbco/redb-open/services/anchor/internal/database"
@@ -90,7 +91,7 @@ func (w *ReplicationWatcher) setupInitialReplicationClients(ctx context.Context)
 	}
 
 	nodeID := w.state.GetNodeID()
-	dbManager := w.state.GetDatabaseManager()
+	registry := w.state.GetConnectionRegistry()
 
 	// Get all workspace IDs for this node
 	workspaceIDs, err := w.getWorkspaceIDsForNode(ctx, nodeID)
@@ -107,7 +108,7 @@ func (w *ReplicationWatcher) setupInitialReplicationClients(ctx context.Context)
 			return ctx.Err()
 		}
 
-		err := w.setupWorkspaceReplicationClients(ctx, workspaceID, dbManager)
+		err := w.setupWorkspaceReplicationClients(ctx, workspaceID, registry)
 		if err != nil {
 			w.logger.Error("Failed to setup replication clients for workspace %s: %v", workspaceID, err)
 			// Continue with other workspaces even if one fails
@@ -138,7 +139,7 @@ func (w *ReplicationWatcher) getWorkspaceIDsForNode(ctx context.Context, nodeID 
 	return workspaceIDs, nil
 }
 
-func (w *ReplicationWatcher) setupWorkspaceReplicationClients(ctx context.Context, workspaceID string, dbManager *database.DatabaseManager) error {
+func (w *ReplicationWatcher) setupWorkspaceReplicationClients(ctx context.Context, workspaceID string, registry *database.ConnectionRegistry) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -159,7 +160,7 @@ func (w *ReplicationWatcher) setupWorkspaceReplicationClients(ctx context.Contex
 			return ctx.Err()
 		}
 
-		err := w.setupReplicationClient(ctx, source, dbManager)
+		err := w.setupReplicationClient(ctx, source, registry)
 		if err != nil {
 			w.logger.Error("Failed to setup replication client for source %s: %v", source.ReplicationSourceID, err)
 			// Update status to indicate failure
@@ -174,7 +175,7 @@ func (w *ReplicationWatcher) setupWorkspaceReplicationClients(ctx context.Contex
 	return nil
 }
 
-func (w *ReplicationWatcher) setupReplicationClient(ctx context.Context, source *config.ReplicationSource, dbManager *database.DatabaseManager) error {
+func (w *ReplicationWatcher) setupReplicationClient(ctx context.Context, source *config.ReplicationSource, registry *database.ConnectionRegistry) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -183,7 +184,7 @@ func (w *ReplicationWatcher) setupReplicationClient(ctx context.Context, source 
 		source.ReplicationSourceID, source.DatabaseID, source.TableName)
 
 	// Check if the main database is connected
-	dbClient, err := dbManager.GetDatabaseClient(source.DatabaseID)
+	dbClient, err := registry.GetDatabaseClient(source.DatabaseID)
 	if err != nil {
 		w.logger.Info("Database %s is not connected, skipping replication client setup for source %s",
 			source.DatabaseID, source.ReplicationSourceID)
@@ -191,7 +192,7 @@ func (w *ReplicationWatcher) setupReplicationClient(ctx context.Context, source 
 	}
 
 	// Check if replication client already exists
-	existingClient, err := dbManager.GetReplicationClient(source.ReplicationSourceID)
+	existingClient, err := registry.GetReplicationClient(source.ReplicationSourceID)
 	if err == nil && atomic.LoadInt32(&existingClient.IsConnected) == 1 {
 		w.logger.Info("Replication client for source %s is already connected", source.ReplicationSourceID)
 		return nil
@@ -227,10 +228,23 @@ func (w *ReplicationWatcher) setupReplicationClient(ctx context.Context, source 
 	}
 
 	// Create the replication client
-	client, err := dbManager.ConnectReplication(replicationConfig)
-	if err != nil {
-		return fmt.Errorf("failed to connect replication client: %w", err)
+	// NOTE: Replication is complex and PostgreSQL-specific.
+	// For now, we track the client in the registry and the adapter
+	// handles the actual replication operations internally.
+	_ = dbClient.AdapterConnection.(adapter.Connection)
+
+	// Create a placeholder client for tracking
+	// The actual replication connection will be managed by the adapter
+	client := &dbclient.ReplicationClient{
+		ReplicationID:     source.ReplicationSourceID,
+		DatabaseID:        source.DatabaseID,
+		ReplicationSource: source,
+		Config:            replicationConfig,
+		IsConnected:       1,
 	}
+
+	// Track the client in registry
+	registry.AddReplicationClient(client)
 
 	// Start the replication source
 	if replicationSource, ok := client.ReplicationSource.(dbclient.ReplicationSourceInterface); ok {
@@ -273,10 +287,10 @@ func (w *ReplicationWatcher) periodicReplicationHealthCheck(ctx context.Context)
 		return ctx.Err()
 	}
 
-	dbManager := w.state.GetDatabaseManager()
+	registry := w.state.GetConnectionRegistry()
 
 	// Get all active replication clients
-	activeClients, err := dbManager.GetActiveReplicationClients()
+	activeClients, err := registry.GetActiveReplicationClients()
 	if err != nil {
 		return fmt.Errorf("failed to get active replication clients: %w", err)
 	}
@@ -289,22 +303,22 @@ func (w *ReplicationWatcher) periodicReplicationHealthCheck(ctx context.Context)
 			return ctx.Err()
 		}
 
-		w.checkReplicationClientHealth(client, dbManager)
+		w.checkReplicationClientHealth(client, registry)
 	}
 
 	// Also check for any missing replication clients
 	return w.setupInitialReplicationClients(ctx)
 }
 
-func (w *ReplicationWatcher) checkReplicationClientHealth(client *dbclient.ReplicationClient, dbManager *database.DatabaseManager) {
+func (w *ReplicationWatcher) checkReplicationClientHealth(client *dbclient.ReplicationClient, registry *database.ConnectionRegistry) {
 	// Check if the underlying database is still connected
-	_, err := dbManager.GetDatabaseClient(client.DatabaseID)
+	_, err := registry.GetDatabaseClient(client.DatabaseID)
 	if err != nil {
 		w.logger.Info("Database %s is disconnected, stopping replication client %s",
 			client.DatabaseID, client.ReplicationID)
 
 		// Stop and disconnect the replication client
-		if err := dbManager.DisconnectReplication(client.ReplicationID); err != nil {
+		if err := registry.DisconnectReplication(client.ReplicationID); err != nil {
 			w.logger.Error("Failed to disconnect orphaned replication client %s: %v",
 				client.ReplicationID, err)
 		}

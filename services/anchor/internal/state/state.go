@@ -11,11 +11,13 @@ import (
 
 // GlobalState manages the global state of the anchor service
 type GlobalState struct {
-	DatabaseManager  *dbmanager.DatabaseManager
-	ConfigRepository *config.Repository
-	db               *database.PostgreSQL
-	nodeID           string
-	mu               sync.RWMutex
+	// Connection management using adapter pattern
+	ConnectionManager  *dbmanager.ConnectionManager
+	ConnectionRegistry *dbmanager.ConnectionRegistry
+	ConfigRepository   *config.Repository
+	db                 *database.PostgreSQL
+	nodeID             string
+	mu                 sync.RWMutex
 }
 
 var (
@@ -26,8 +28,10 @@ var (
 // GetInstance returns the singleton instance of GlobalState
 func GetInstance() *GlobalState {
 	once.Do(func() {
+		connMgr := dbmanager.NewConnectionManager()
 		instance = &GlobalState{
-			DatabaseManager: dbmanager.NewDatabaseManager(),
+			ConnectionManager:  connMgr,
+			ConnectionRegistry: dbmanager.NewConnectionRegistry(connMgr),
 		}
 	})
 	return instance
@@ -42,11 +46,18 @@ func (gs *GlobalState) Initialize(configRepository *config.Repository, nodeID st
 	gs.nodeID = nodeID
 }
 
-// GetDatabaseManager returns the database manager instance
-func (gs *GlobalState) GetDatabaseManager() *dbmanager.DatabaseManager {
+// GetConnectionManager returns the connection manager instance
+func (gs *GlobalState) GetConnectionManager() *dbmanager.ConnectionManager {
 	gs.mu.RLock()
 	defer gs.mu.RUnlock()
-	return gs.DatabaseManager
+	return gs.ConnectionManager
+}
+
+// GetConnectionRegistry returns the connection registry for watchers
+func (gs *GlobalState) GetConnectionRegistry() *dbmanager.ConnectionRegistry {
+	gs.mu.RLock()
+	defer gs.mu.RUnlock()
+	return gs.ConnectionRegistry
 }
 
 // GetConfigRepository returns the config repository instance
@@ -70,12 +81,19 @@ func (gs *GlobalState) GetNodeID() string {
 	return gs.nodeID
 }
 
-// SetLogger sets the logger for the DatabaseManager
+// SetLogger sets the logger for all managers
 func (gs *GlobalState) SetLogger(logger *logger.Logger) {
 	gs.mu.Lock()
 	defer gs.mu.Unlock()
-	if gs.DatabaseManager != nil {
-		gs.DatabaseManager.SetLogger(logger)
+
+	// Set logger on ConnectionManager
+	if gs.ConnectionManager != nil {
+		gs.ConnectionManager.SetLogger(logger)
+	}
+
+	// Set logger on ConnectionRegistry
+	if gs.ConnectionRegistry != nil {
+		gs.ConnectionRegistry.SetLogger(logger)
 	}
 }
 

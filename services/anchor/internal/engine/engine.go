@@ -251,9 +251,10 @@ func (e *Engine) Stop(ctx context.Context) error {
 	if !e.standalone {
 		globalState := state.GetInstance()
 		configRepo := globalState.GetConfigRepository()
-		dbManager := globalState.GetDatabaseManager()
+		registry := globalState.GetConnectionRegistry()
+		connManager := globalState.GetConnectionManager()
 
-		if configRepo != nil && dbManager != nil {
+		if configRepo != nil && registry != nil {
 			if e.logger != nil {
 				e.logger.Info("Updating database and instance statuses during shutdown...")
 			}
@@ -264,7 +265,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 			defer cancel()
 
 			// Update all instance statuses to STATUS_DISCONNECTED (synchronous)
-			for _, instanceID := range dbManager.GetAllInstanceClientIDs() {
+			for _, instanceID := range registry.GetAllInstanceClientIDs() {
 				if err := configRepo.UpdateInstanceConnectionStatus(shutdownCtx, instanceID, false, "Service shutdown"); err != nil {
 					if e.logger != nil {
 						e.logger.Error("Failed to update instance %s status during shutdown: %v", instanceID, err)
@@ -275,7 +276,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 			}
 
 			// Update all database statuses to STATUS_DISCONNECTED (synchronous)
-			for _, databaseID := range dbManager.GetAllDatabaseClientIDs() {
+			for _, databaseID := range registry.GetAllDatabaseClientIDs() {
 				if err := configRepo.UpdateDatabaseConnectionStatus(shutdownCtx, databaseID, false, "Service shutdown"); err != nil {
 					if e.logger != nil {
 						e.logger.Error("Failed to update database %s status during shutdown: %v", databaseID, err)
@@ -286,8 +287,8 @@ func (e *Engine) Stop(ctx context.Context) error {
 			}
 
 			// Disconnect all instances (synchronous)
-			for _, id := range dbManager.GetAllInstanceClientIDs() {
-				if err := dbManager.DisconnectInstance(id); err != nil {
+			for _, id := range registry.GetAllInstanceClientIDs() {
+				if err := registry.DisconnectInstance(id); err != nil {
 					if e.logger != nil {
 						e.logger.Error("Failed to disconnect instance %s during shutdown: %v", id, err)
 					}
@@ -297,13 +298,28 @@ func (e *Engine) Stop(ctx context.Context) error {
 			}
 
 			// Disconnect all databases (synchronous)
-			for _, id := range dbManager.GetAllDatabaseClientIDs() {
-				if err := dbManager.DisconnectDatabase(id); err != nil {
+			for _, id := range registry.GetAllDatabaseClientIDs() {
+				if err := registry.DisconnectDatabase(id); err != nil {
 					if e.logger != nil {
 						e.logger.Error("Failed to disconnect database %s during shutdown: %v", id, err)
 					}
 				} else if e.logger != nil {
 					e.logger.Infof("Successfully disconnected database %s", id)
+				}
+			}
+
+			// Also disconnect all ConnectionManager connections
+			if connManager != nil {
+				if e.logger != nil {
+					e.logger.Info("Disconnecting all adapter-based connections...")
+				}
+
+				if err := connManager.DisconnectAll(shutdownCtx); err != nil {
+					if e.logger != nil {
+						e.logger.Error("Failed to disconnect all adapter connections: %v", err)
+					}
+				} else if e.logger != nil {
+					e.logger.Info("All adapter connections disconnected successfully")
 				}
 			}
 
