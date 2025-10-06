@@ -152,6 +152,9 @@ service CommitService {
   // Schema deployment from commits
   rpc DeployCommitSchema(DeployCommitSchemaRequest) returns (DeployCommitSchemaResponse);
   rpc DeployCommitSchemaRemote(DeployCommitSchemaRemoteRequest) returns (DeployCommitSchemaRemoteResponse);
+  
+  // Fork commit to new repository
+  rpc ForkCommit(ForkCommitRequest) returns (ForkCommitResponse);
 }
 
 // Mapping service for mapping management
@@ -4195,4 +4198,29 @@ message CloneDatabaseRemoteResponse {
     string target_commit_id = 7;
     repeated string warnings = 8;
     int64 rows_copied = 9; // Number of rows copied if with_data was true
+}
+
+// ============================================================================
+// Fork Commit - Create a copy of a commit into a new repository
+// ============================================================================
+
+message ForkCommitRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string repo_name = 3;
+    string branch_name = 4;
+    string commit_code = 5;
+    string target_repo_name = 6;
+    string target_db_type = 7; // Optional: convert schema to this database type
+}
+
+message ForkCommitResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string target_repo_id = 4;
+    string target_repo_name = 5;
+    string target_branch_id = 6;
+    string target_commit_id = 7;
+    repeated string warnings = 8;
 }

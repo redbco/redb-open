@@ -529,6 +529,115 @@ func (ch *CommitHandlers) DeployCommitSchema(w http.ResponseWriter, r *http.Requ
 	ch.writeJSONResponse(w, http.StatusOK, response)
 }
 
+// ForkCommitRequest represents the request payload for forking a commit to a new repository
+type ForkCommitRequest struct {
+	RepoName       string `json:"repo_name"`
+	BranchName     string `json:"branch_name"`
+	CommitCode     string `json:"commit_code"`
+	TargetRepoName string `json:"target_repo_name"`
+	TargetDBType   string `json:"target_db_type,omitempty"`
+}
+
+// ForkCommitResponse represents the response from forking a commit
+type ForkCommitResponse struct {
+	Message        string   `json:"message"`
+	Success        bool     `json:"success"`
+	Status         string   `json:"status"`
+	TargetRepoId   string   `json:"target_repo_id"`
+	TargetRepoName string   `json:"target_repo_name"`
+	TargetBranchId string   `json:"target_branch_id"`
+	TargetCommitId string   `json:"target_commit_id"`
+	Warnings       []string `json:"warnings"`
+}
+
+// ForkCommit handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/commits/fork
+func (ch *CommitHandlers) ForkCommit(w http.ResponseWriter, r *http.Request) {
+	ch.engine.TrackOperation()
+	defer ch.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+
+	if tenantURL == "" || workspaceName == "" {
+		ch.writeErrorResponse(w, http.StatusBadRequest, "tenant_url and workspace_name are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		ch.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Parse request body
+	var req ForkCommitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ch.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+
+	// Validate request
+	if req.RepoName == "" || req.BranchName == "" || req.CommitCode == "" {
+		ch.writeErrorResponse(w, http.StatusBadRequest, "repo_name, branch_name, and commit_code are required", "")
+		return
+	}
+
+	if req.TargetRepoName == "" {
+		ch.writeErrorResponse(w, http.StatusBadRequest, "target_repo_name is required", "")
+		return
+	}
+
+	// Log request
+	if ch.engine.logger != nil {
+		ch.engine.logger.Infof("Fork commit request: repo=%s, branch=%s, commit=%s, target_repo=%s, workspace=%s, tenant=%s, user=%s",
+			req.RepoName, req.BranchName, req.CommitCode, req.TargetRepoName, workspaceName, profile.TenantId, profile.UserId)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	// Build gRPC request
+	grpcReq := &corev1.ForkCommitRequest{
+		TenantId:       profile.TenantId,
+		WorkspaceName:  workspaceName,
+		RepoName:       req.RepoName,
+		BranchName:     req.BranchName,
+		CommitCode:     req.CommitCode,
+		TargetRepoName: req.TargetRepoName,
+		TargetDbType:   req.TargetDBType,
+	}
+
+	// Call core service
+	grpcResp, err := ch.engine.commitClient.ForkCommit(ctx, grpcReq)
+	if err != nil {
+		ch.handleGRPCError(w, err, "Failed to fork commit")
+		return
+	}
+
+	// Build response
+	response := ForkCommitResponse{
+		Message:        grpcResp.Message,
+		Success:        grpcResp.Success,
+		Status:         string(convertStatus(grpcResp.Status)),
+		TargetRepoId:   grpcResp.TargetRepoId,
+		TargetRepoName: grpcResp.TargetRepoName,
+		TargetBranchId: grpcResp.TargetBranchId,
+		TargetCommitId: grpcResp.TargetCommitId,
+		Warnings:       grpcResp.Warnings,
+	}
+
+	if ch.engine.logger != nil {
+		ch.engine.logger.Infof("Successfully forked commit: repo=%s, branch=%s, commit=%s, target_repo=%s",
+			req.RepoName, req.BranchName, req.CommitCode, grpcResp.TargetRepoName)
+	}
+
+	ch.writeJSONResponse(w, http.StatusOK, response)
+}
+
 // Helper methods
 
 func (ch *CommitHandlers) handleGRPCError(w http.ResponseWriter, err error, defaultMessage string) {

@@ -77,6 +77,28 @@ Examples:
 	},
 }
 
+// forkCmd represents the fork command
+var forkCmd = &cobra.Command{
+	Use:   "fork [repo/branch/commit]",
+	Short: "Fork a commit into a new repository",
+	Long: `Create a copy of a commit into a newly created repository with default 'main' branch.
+Optionally convert the database schema to another database type using UnifiedModel.
+	
+Examples:
+  # Fork a commit to a new repository
+  redb commits fork myrepo/main/abc123 --name forked-repo
+  
+  # Fork a commit and convert schema to PostgreSQL
+  redb commits fork myrepo/main/abc123 --name forked-repo --db-type postgres
+  
+  # Fork a commit and convert schema to MySQL
+  redb commits fork myrepo/main/abc123 --name forked-repo --db-type mysql`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return commits.ForkCommit(args[0], cmd.Flags())
+	},
+}
+
 func init() {
 	// Add flags to deploySchemaCmd
 	// Target options (mutually exclusive)
@@ -92,10 +114,15 @@ func init() {
 	deploySchemaCmd.Flags().Uint64("source-node", 0, "Source node ID (for cross-node operations)")
 	deploySchemaCmd.Flags().Uint64("target-node", 0, "Target node ID (for cross-node operations)")
 
+	// Add flags to forkCmd
+	forkCmd.Flags().String("name", "", "Target repository name (required)")
+	forkCmd.Flags().String("db-type", "", "Target database type for schema conversion (optional, e.g., postgres, mysql, mongodb)")
+
 	// Add subcommands to commits command
 	commitsCmd.AddCommand(showCommitCmd)
 	commitsCmd.AddCommand(branchCommitCmd)
 	commitsCmd.AddCommand(mergeCommitCmd)
 	commitsCmd.AddCommand(deployCommitCmd)
 	commitsCmd.AddCommand(deploySchemaCmd)
+	commitsCmd.AddCommand(forkCmd)
 }

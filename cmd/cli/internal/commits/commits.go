@@ -366,3 +366,98 @@ func DeploySchema(repoBranchCommitStr string, flags interface{}) error {
 
 	return nil
 }
+
+// ForkCommit creates a copy of a commit into a new repository
+func ForkCommit(repoBranchCommitStr string, flags interface{}) error {
+	repoName, branchName, commitCode, err := parseRepoBranchCommit(repoBranchCommitStr)
+	if err != nil {
+		return err
+	}
+
+	if repoName == "" || branchName == "" || commitCode == "" {
+		return fmt.Errorf("repository name, branch name, and commit code are required")
+	}
+
+	// Parse flags
+	flagSet, ok := flags.(*pflag.FlagSet)
+	if !ok {
+		return fmt.Errorf("invalid flags type")
+	}
+
+	// Get flag values
+	targetRepoName, _ := flagSet.GetString("name")
+	targetDBType, _ := flagSet.GetString("db-type")
+
+	// Validate required flags
+	if targetRepoName == "" {
+		return fmt.Errorf("--name is required (target repository name)")
+	}
+
+	fmt.Printf("Forking commit '%s' from branch '%s' of repository '%s' into new repository '%s'\n",
+		commitCode, branchName, repoName, targetRepoName)
+	if targetDBType != "" {
+		fmt.Printf("Converting schema to database type: %s\n", targetDBType)
+	}
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	// Build the request payload
+	requestPayload := map[string]interface{}{
+		"repo_name":        repoName,
+		"branch_name":      branchName,
+		"commit_code":      commitCode,
+		"target_repo_name": targetRepoName,
+	}
+
+	// Add optional db-type conversion
+	if targetDBType != "" {
+		requestPayload["target_db_type"] = targetDBType
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, "/commits/fork")
+	if err != nil {
+		return err
+	}
+
+	var forkResponse struct {
+		Message        string   `json:"message"`
+		Success        bool     `json:"success"`
+		Status         string   `json:"status"`
+		TargetRepoId   string   `json:"target_repo_id"`
+		TargetRepoName string   `json:"target_repo_name"`
+		TargetBranchId string   `json:"target_branch_id"`
+		TargetCommitId string   `json:"target_commit_id"`
+		Warnings       []string `json:"warnings"`
+	}
+
+	if err := client.Post(url, requestPayload, &forkResponse); err != nil {
+		return fmt.Errorf("failed to fork commit: %v", err)
+	}
+
+	if !forkResponse.Success {
+		return fmt.Errorf("commit fork failed: %s", forkResponse.Message)
+	}
+
+	fmt.Printf("Successfully forked commit '%s' into new repository '%s'\n",
+		commitCode, forkResponse.TargetRepoName)
+	fmt.Printf("Target Repo ID: %s\n", forkResponse.TargetRepoId)
+	fmt.Printf("Target Branch: main (ID: %s)\n", forkResponse.TargetBranchId)
+	fmt.Printf("Target Commit ID: %s\n", forkResponse.TargetCommitId)
+
+	if len(forkResponse.Warnings) > 0 {
+		fmt.Println("\nWarnings:")
+		for _, warning := range forkResponse.Warnings {
+			fmt.Printf("  - %s\n", warning)
+		}
+	}
+
+	return nil
+}

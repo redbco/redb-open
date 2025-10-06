@@ -296,6 +296,7 @@ func (s *Server) setupRoutes() {
 
 	// Schema deployment endpoints (workspace-level for easier CLI access)
 	workspaces.HandleFunc("/{workspace_name}/commits/deploy-schema", s.commitHandler.DeployCommitSchema).Methods(http.MethodPost)
+	workspaces.HandleFunc("/{workspace_name}/commits/fork", s.commitHandler.ForkCommit).Methods(http.MethodPost)
 
 	// Mapping endpoints (workspace-level)
 	mappings := workspaces.PathPrefix("/{workspace_name}/mappings").Subrouter()
