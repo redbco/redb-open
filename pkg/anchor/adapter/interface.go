@@ -143,6 +143,18 @@ type ReplicationOperator interface {
 	DropSlot(ctx context.Context, slotName string) error
 	ListPublications(ctx context.Context) ([]map[string]interface{}, error)
 	DropPublication(ctx context.Context, publicationName string) error
+
+	// CDC Event handling - these methods enable database-agnostic CDC
+	// ParseEvent converts a raw database-specific event to a standardized CDCEvent
+	ParseEvent(ctx context.Context, rawEvent map[string]interface{}) (*CDCEvent, error)
+
+	// ApplyCDCEvent applies a standardized CDC event to this database
+	// This method handles INSERT, UPDATE, DELETE operations in a database-specific way
+	ApplyCDCEvent(ctx context.Context, event *CDCEvent) error
+
+	// TransformData applies transformation rules to event data
+	// Returns the transformed data ready for application to target database
+	TransformData(ctx context.Context, data map[string]interface{}, rules []TransformationRule) (map[string]interface{}, error)
 }
 
 // MetadataOperator handles metadata collection and introspection.

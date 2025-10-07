@@ -44,6 +44,12 @@ var (
 
 	// ErrPermissionDenied is returned when a permission is denied
 	ErrPermissionDenied = errors.New("permission denied")
+
+	// ErrInvalidData is returned when data is invalid or malformed
+	ErrInvalidData = errors.New("invalid data")
+
+	// ErrConfigurationError is returned when there's a configuration error
+	ErrConfigurationError = errors.New("configuration error")
 )
 
 // DatabaseError wraps database-specific errors with additional context.

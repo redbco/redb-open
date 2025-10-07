@@ -78,6 +78,18 @@ func (u *UnsupportedReplicationOperator) DropPublication(ctx context.Context, pu
 	return NewUnsupportedOperationError(u.dbType, "drop publication", "")
 }
 
+func (u *UnsupportedReplicationOperator) ParseEvent(ctx context.Context, rawEvent map[string]interface{}) (*CDCEvent, error) {
+	return nil, NewUnsupportedOperationError(u.dbType, "parse CDC event", "this database does not support CDC/replication")
+}
+
+func (u *UnsupportedReplicationOperator) ApplyCDCEvent(ctx context.Context, event *CDCEvent) error {
+	return NewUnsupportedOperationError(u.dbType, "apply CDC event", "this database does not support CDC/replication")
+}
+
+func (u *UnsupportedReplicationOperator) TransformData(ctx context.Context, data map[string]interface{}, rules []TransformationRule) (map[string]interface{}, error) {
+	return nil, NewUnsupportedOperationError(u.dbType, "transform data", "this database does not support CDC/replication")
+}
+
 // NewUnsupportedReplicationOperator creates a new unsupported replication operator.
 func NewUnsupportedReplicationOperator(dbType dbcapabilities.DatabaseType) ReplicationOperator {
 	return &UnsupportedReplicationOperator{dbType: dbType}

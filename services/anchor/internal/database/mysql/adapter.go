@@ -200,7 +200,7 @@ func (c *Connection) DataOperations() adapter.DataOperator {
 
 // ReplicationOperations returns the replication operator for MySQL.
 func (c *Connection) ReplicationOperations() adapter.ReplicationOperator {
-	return adapter.NewUnsupportedReplicationOperator(dbcapabilities.MySQL)
+	return &ReplicationOps{conn: c}
 }
 
 // MetadataOperations returns the metadata operator for MySQL.

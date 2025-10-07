@@ -175,6 +175,22 @@ func (r *ConnectionRegistry) GetDatabaseClient(id string) (*dbclient.DatabaseCli
 	return client, nil
 }
 
+// GetAdapterConnection retrieves a database adapter connection by ID.
+// This returns the adapter.Connection interface for database-agnostic operations.
+func (r *ConnectionRegistry) GetAdapterConnection(id string) (adapter.Connection, error) {
+	client, err := r.GetDatabaseClient(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Return the adapter connection
+	if adapterConn, ok := client.AdapterConnection.(adapter.Connection); ok {
+		return adapterConn, nil
+	}
+
+	return nil, fmt.Errorf("database %s is not using adapter-based connection", id)
+}
+
 // GetInstanceClient retrieves an instance client.
 func (r *ConnectionRegistry) GetInstanceClient(id string) (*dbclient.InstanceClient, error) {
 	r.mu.RLock()
