@@ -3,8 +3,9 @@
 
 reDB is a distributed, policy-driven data mesh that unifies access, mobility, and transformation across heterogeneous databases and clouds. Built for developers, data platform teams, and AI agents.
 
-### What’s new
+### What's new
 
+- 🔄 CDC-based Relationships: Real-time database synchronization with logical replication and cross-database change capture
 - ⚙️ Mesh microservice rewritten in Rust for efficiency and correctness (Tokio + Tonic)
 - 🧠 Major upgrades to `pkg/unifiedmodel` and the Unified Model service: richer conversion engine, analytics/metrics, and privacy-aware detection
 - 🧰 Makefile now builds Go services and the Rust mesh; Rust toolchain is required
@@ -14,7 +15,8 @@ reDB is a distributed, policy-driven data mesh that unifies access, mobility, an
 
 - 🔌 Connect any mix of SQL/NoSQL/vector/graph without brittle pipelines
 - 🧠 Unified schema model across paradigms with conversion and diffing
-- 🚀 Zero-downtime replication and migration workflows
+- 🚀 Real-time CDC replication with cross-database change capture
+- 🔄 Zero-downtime migration workflows with automatic initial data sync
 - 🔐 Policy-first access with masking and tenant isolation
 - 🤖 AI-native via MCP: expose data resources and tools to LLMs safely
 
@@ -40,7 +42,7 @@ cd ./bin
 
 Full install docs: see `docs/INSTALL.md`.
 
-## Gettings started with the application
+## Getting started with the application
 
 After starting, create a profile and authenticate with the CLI:
 
@@ -67,12 +69,26 @@ After starting, create a profile and authenticate with the CLI:
 # Deploy the PostgreSQL testdb1 to a new database in MySQL
 ./redb-cli commits deploy-schema pg/main/12345abc --instance my_instance --db-name deployed1
 
-# Create a mapping between tables and show the mapping
-./redb-cli mappings add --scope table --source pg.test --target deployed1.test
-./redb-cli mappings show pg_test_to_deployed1_test
+# Create a mapping between tables
+./redb-cli mappings add --scope table --source pg.users --target deployed1.users
+./redb-cli mappings show pg_users_to_deployed1_users
 
-# Clone the data from the PostgreSQL database table to the deployed MySQL database table
-./redb-cli mappings copy-data pg_test_to_deployed1_test
+# The data can be copied by either using a one-time data copy, or a continuous CDC replication
+# One-time data copy from PostgreSQL to MySQL
+./redb-cli mappings copy-data pg_users_to_deployed1_users
+
+# Or set up real-time CDC replication
+./redb-cli relationships add --mapping pg_users_to_deployed1_users --type replication
+./redb-cli relationships start pg_to_deployed1
+
+# Monitor the relationship status
+./redb-cli relationships list
+./redb-cli relationships show pg_to_deployed1
+
+# Manage the relationship lifecycle
+./redb-cli relationships stop pg_to_deployed1    # Pause synchronization
+./redb-cli relationships start pg_to_deployed1   # Resume synchronization
+./redb-cli relationships remove pg_to_deployed1  # Remove completely
 ```
 
 ### Make targets
@@ -163,7 +179,7 @@ AGPL-3.0 for open-source use (`LICENSE`). Commercial license available (`LICENSE
 
 ---
 
-**reDB Node** provides a comprehensive open source platform for managing heterogeneous database environments with advanced features including schema version control, cross-database replication, data transformation pipelines, distributed mesh networking, and AI-powered database operations.
+**reDB Node** provides a comprehensive open source platform for managing heterogeneous database environments with advanced features including real-time CDC replication, schema version control, cross-database synchronization, data transformation pipelines, distributed mesh networking, and AI-powered database operations.
 
 ## Community
 

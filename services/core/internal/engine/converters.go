@@ -377,6 +377,28 @@ func statusStringToProto(status string) commonv1.Status {
 		return commonv1.Status_STATUS_TRACE
 	case "STATUS_EMPTY":
 		return commonv1.Status_STATUS_EMPTY
+	case "STATUS_JOINING":
+		return commonv1.Status_STATUS_JOINING
+	case "STATUS_LEAVING":
+		return commonv1.Status_STATUS_LEAVING
+	case "STATUS_SEEDING":
+		return commonv1.Status_STATUS_SEEDING
+	case "STATUS_ORPHANED":
+		return commonv1.Status_STATUS_ORPHANED
+	case "STATUS_SENT":
+		return commonv1.Status_STATUS_SENT
+	case "STATUS_CANCELLED":
+		return commonv1.Status_STATUS_CANCELLED
+	case "STATUS_PROCESSING":
+		return commonv1.Status_STATUS_PROCESSING
+	case "STATUS_DONE":
+		return commonv1.Status_STATUS_DONE
+	case "STATUS_RECEIVED":
+		return commonv1.Status_STATUS_RECEIVED
+	case "STATUS_ACTIVE":
+		return commonv1.Status_STATUS_ACTIVE
+	case "STATUS_CLEAN":
+		return commonv1.Status_STATUS_CLEAN
 	default:
 		return commonv1.Status_STATUS_UNKNOWN
 	}

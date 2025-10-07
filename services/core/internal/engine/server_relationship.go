@@ -19,11 +19,19 @@ import (
 func (s *Server) ListRelationships(ctx context.Context, req *corev1.ListRelationshipsRequest) (*corev1.ListRelationshipsResponse, error) {
 	defer s.trackOperation()()
 
+	// Get workspace ID from workspace name
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get workspace ID: %v", err)
+	}
+
 	// Get relationship service
 	relationshipService := relationship.NewService(s.engine.db, s.engine.logger)
 
 	// List relationships for the tenant and workspace
-	relationships, err := relationshipService.List(ctx, req.TenantId, req.WorkspaceName)
+	relationships, err := relationshipService.List(ctx, req.TenantId, workspaceID)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to list relationships: %v", err)

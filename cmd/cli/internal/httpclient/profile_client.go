@@ -142,6 +142,11 @@ func (c *ProfileHTTPClient) Post(url string, body, result interface{}) error {
 	return c.handleResponse(resp, result)
 }
 
+// PostStream performs an authenticated POST request and returns the response for streaming
+func (c *ProfileHTTPClient) PostStream(url string, body interface{}) (*http.Response, error) {
+	return c.makeAuthenticatedRequest("POST", url, body)
+}
+
 // Put performs an authenticated PUT request using the active profile
 func (c *ProfileHTTPClient) Put(url string, body, result interface{}) error {
 	resp, err := c.makeAuthenticatedRequest("PUT", url, body)

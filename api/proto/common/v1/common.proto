@@ -42,6 +42,8 @@ enum Status {
     STATUS_PROCESSING = 31;
     STATUS_DONE = 32;
     STATUS_RECEIVED = 33;
+    STATUS_ACTIVE = 34;
+    STATUS_CLEAN = 35;
 }
 
 // ServiceInfo contains basic information about a service

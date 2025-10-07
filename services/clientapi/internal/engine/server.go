@@ -323,9 +323,16 @@ func (s *Server) setupRoutes() {
 	relationships := workspaces.PathPrefix("/{workspace_name}/relationships").Subrouter()
 	relationships.HandleFunc("", s.relationshipHandler.ListRelationships).Methods(http.MethodGet)
 	relationships.HandleFunc("", s.relationshipHandler.AddRelationship).Methods(http.MethodPost)
-	relationships.HandleFunc("/{relationship_id}", s.relationshipHandler.ShowRelationship).Methods(http.MethodGet)
-	relationships.HandleFunc("/{relationship_id}", s.relationshipHandler.ModifyRelationship).Methods(http.MethodPut)
-	relationships.HandleFunc("/{relationship_id}", s.relationshipHandler.DeleteRelationship).Methods(http.MethodDelete)
+	relationships.HandleFunc("/{relationship_name}", s.relationshipHandler.ShowRelationship).Methods(http.MethodGet)
+	relationships.HandleFunc("/{relationship_name}", s.relationshipHandler.ModifyRelationship).Methods(http.MethodPut)
+	relationships.HandleFunc("/{relationship_name}", s.relationshipHandler.DeleteRelationship).Methods(http.MethodDelete)
+
+	// Relationship operation endpoints
+	relationshipOps := NewRelationshipHandlers(s.engine)
+	relationships.HandleFunc("/{relationship_name}/start", relationshipOps.StartRelationship).Methods(http.MethodPost)
+	relationships.HandleFunc("/{relationship_name}/stop", relationshipOps.StopRelationship).Methods(http.MethodPost)
+	relationships.HandleFunc("/{relationship_name}/resume", relationshipOps.ResumeRelationship).Methods(http.MethodPost)
+	relationships.HandleFunc("/{relationship_name}/remove", relationshipOps.RemoveRelationship).Methods(http.MethodDelete)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

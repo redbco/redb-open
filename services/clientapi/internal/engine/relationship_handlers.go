@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -217,9 +219,9 @@ func (rh *RelationshipHandlers) AddRelationship(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Validate required fields
-	if req.RelationshipName == "" || req.RelationshipDescription == "" || req.RelationshipType == "" || req.RelationshipSourceDatabaseID == "" || req.RelationshipSourceTableName == "" || req.RelationshipTargetDatabaseID == "" || req.RelationshipTargetTableName == "" || req.MappingID == "" || req.PolicyID == "" {
-		rh.writeErrorResponse(w, http.StatusBadRequest, "Required fields missing", "relationship_name, relationship_description, relationship_type, relationship_source_database_id, relationship_source_table_name, relationship_target_database_id, relationship_target_table_name, mapping_id, and policy_id are required")
+	// Validate required fields (policy_id is optional)
+	if req.RelationshipName == "" || req.RelationshipDescription == "" || req.RelationshipType == "" || req.RelationshipSourceDatabaseID == "" || req.RelationshipSourceTableName == "" || req.RelationshipTargetDatabaseID == "" || req.RelationshipTargetTableName == "" || req.MappingID == "" {
+		rh.writeErrorResponse(w, http.StatusBadRequest, "Required fields missing", "relationship_name, relationship_description, relationship_type, relationship_source_database_id, relationship_source_table_name, relationship_target_database_id, relationship_target_table_name, and mapping_id are required")
 		return
 	}
 
@@ -447,6 +449,247 @@ func (rh *RelationshipHandlers) DeleteRelationship(w http.ResponseWriter, r *htt
 }
 
 // Helper methods
+
+// StartRelationship handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/relationships/{relationship_name}/start
+func (rh *RelationshipHandlers) StartRelationship(w http.ResponseWriter, r *http.Request) {
+	rh.engine.TrackOperation()
+	defer rh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+	relationshipName := vars["relationship_name"]
+
+	if tenantURL == "" || workspaceName == "" || relationshipName == "" {
+		rh.writeErrorResponse(w, http.StatusBadRequest, "tenant_url, workspace_name, and relationship_name are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		rh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Parse request body
+	var req struct {
+		BatchSize       *int32 `json:"batch_size,omitempty"`
+		ParallelWorkers *int32 `json:"parallel_workers,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// Body is optional, use defaults if not provided
+		req.BatchSize = nil
+		req.ParallelWorkers = nil
+	}
+
+	// Log request
+	if rh.engine.logger != nil {
+		rh.engine.logger.Infof("Start relationship request for relationship: %s, workspace: %s, tenant: %s", relationshipName, workspaceName, profile.TenantId)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 300*time.Second) // 5 minutes for initial sync
+	defer cancel()
+
+	// Call core service gRPC (streaming)
+	grpcReq := &corev1.StartRelationshipRequest{
+		TenantId:         profile.TenantId,
+		WorkspaceName:    workspaceName,
+		RelationshipName: relationshipName,
+		BatchSize:        req.BatchSize,
+		ParallelWorkers:  req.ParallelWorkers,
+	}
+
+	stream, err := rh.engine.relationshipClient.StartRelationship(ctx, grpcReq)
+	if err != nil {
+		rh.handleGRPCError(w, err, "Failed to start relationship")
+		return
+	}
+
+	// Set up Server-Sent Events (SSE) for streaming progress updates
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		rh.writeErrorResponse(w, http.StatusInternalServerError, "Streaming not supported", "")
+		return
+	}
+
+	// Stream responses to client
+	for {
+		resp, err := stream.Recv()
+		if err == io.EOF {
+			// Stream completed successfully
+			break
+		}
+		if err != nil {
+			// Send error event
+			errorData, _ := json.Marshal(map[string]interface{}{
+				"error":   true,
+				"message": err.Error(),
+			})
+			fmt.Fprintf(w, "data: %s\n\n", errorData)
+			flusher.Flush()
+			return
+		}
+
+		// Convert gRPC response to JSON and send as SSE event
+		eventData, _ := json.Marshal(map[string]interface{}{
+			"message":             resp.Message,
+			"success":             resp.Success,
+			"phase":               resp.Phase,
+			"rows_copied":         resp.RowsCopied,
+			"total_rows":          resp.TotalRows,
+			"current_table":       resp.CurrentTable,
+			"cdc_status":          resp.CdcStatus,
+			"progress_percentage": resp.ProgressPercentage,
+			"errors":              resp.Errors,
+		})
+
+		fmt.Fprintf(w, "data: %s\n\n", eventData)
+		flusher.Flush()
+
+		// If this is a final status, break
+		if resp.Phase == "active" || resp.Phase == "error" {
+			break
+		}
+	}
+}
+
+// StopRelationship handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/relationships/{relationship_name}/stop
+func (rh *RelationshipHandlers) StopRelationship(w http.ResponseWriter, r *http.Request) {
+	rh.engine.TrackOperation()
+	defer rh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+	relationshipName := vars["relationship_name"]
+
+	if tenantURL == "" || workspaceName == "" || relationshipName == "" {
+		rh.writeErrorResponse(w, http.StatusBadRequest, "tenant_url, workspace_name, and relationship_name are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		rh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Log request
+	if rh.engine.logger != nil {
+		rh.engine.logger.Infof("Stop relationship request for relationship: %s, workspace: %s, tenant: %s", relationshipName, workspaceName, profile.TenantId)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Call core service gRPC
+	grpcReq := &corev1.StopRelationshipRequest{
+		TenantId:         profile.TenantId,
+		WorkspaceName:    workspaceName,
+		RelationshipName: relationshipName,
+	}
+
+	grpcResp, err := rh.engine.relationshipClient.StopRelationship(ctx, grpcReq)
+	if err != nil {
+		rh.handleGRPCError(w, err, "Failed to stop relationship")
+		return
+	}
+
+	// Convert gRPC response to REST response
+	response := map[string]interface{}{
+		"message": grpcResp.Message,
+		"success": grpcResp.Success,
+		"status":  "success",
+	}
+
+	if rh.engine.logger != nil {
+		rh.engine.logger.Infof("Successfully stopped relationship: %s for workspace: %s", relationshipName, workspaceName)
+	}
+
+	rh.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// ResumeRelationship handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/relationships/{relationship_name}/resume
+func (rh *RelationshipHandlers) ResumeRelationship(w http.ResponseWriter, r *http.Request) {
+	rh.engine.TrackOperation()
+	defer rh.engine.UntrackOperation()
+
+	// TODO: Implement resume relationship handler
+	rh.writeErrorResponse(w, http.StatusNotImplemented, "Not implemented", "Resume relationship endpoint is not yet implemented")
+}
+
+// RemoveRelationship handles DELETE /{tenant_url}/api/v1/workspaces/{workspace_name}/relationships/{relationship_name}
+func (rh *RelationshipHandlers) RemoveRelationship(w http.ResponseWriter, r *http.Request) {
+	rh.engine.TrackOperation()
+	defer rh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+	relationshipName := vars["relationship_name"]
+
+	if tenantURL == "" || workspaceName == "" || relationshipName == "" {
+		rh.writeErrorResponse(w, http.StatusBadRequest, "tenant_url, workspace_name, and relationship_name are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		rh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Parse query parameters
+	force := r.URL.Query().Get("force") == "true"
+
+	// Log request
+	if rh.engine.logger != nil {
+		rh.engine.logger.Infof("Remove relationship request for relationship: %s, workspace: %s, tenant: %s, force: %v", relationshipName, workspaceName, profile.TenantId, force)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Call core service gRPC
+	grpcReq := &corev1.RemoveRelationshipRequest{
+		TenantId:         profile.TenantId,
+		WorkspaceName:    workspaceName,
+		RelationshipName: relationshipName,
+		Force:            &force,
+	}
+
+	grpcResp, err := rh.engine.relationshipClient.RemoveRelationship(ctx, grpcReq)
+	if err != nil {
+		rh.handleGRPCError(w, err, "Failed to remove relationship")
+		return
+	}
+
+	// Convert gRPC response to REST response
+	response := map[string]interface{}{
+		"message": grpcResp.Message,
+		"success": grpcResp.Success,
+		"status":  "success",
+	}
+
+	if rh.engine.logger != nil {
+		rh.engine.logger.Infof("Successfully removed relationship: %s for workspace: %s", relationshipName, workspaceName)
+	}
+
+	rh.writeJSONResponse(w, http.StatusOK, response)
+}
 
 func (rh *RelationshipHandlers) handleGRPCError(w http.ResponseWriter, err error, defaultMessage string) {
 	if st, ok := status.FromError(err); ok {

@@ -189,6 +189,10 @@ service RelationshipService {
   rpc AddRelationship(AddRelationshipRequest) returns (AddRelationshipResponse);
   rpc ModifyRelationship(ModifyRelationshipRequest) returns (ModifyRelationshipResponse);
   rpc DeleteRelationship(DeleteRelationshipRequest) returns (DeleteRelationshipResponse);
+  rpc StartRelationship(StartRelationshipRequest) returns (stream StartRelationshipResponse);
+  rpc StopRelationship(StopRelationshipRequest) returns (StopRelationshipResponse);
+  rpc ResumeRelationship(ResumeRelationshipRequest) returns (stream ResumeRelationshipResponse);
+  rpc RemoveRelationship(RemoveRelationshipRequest) returns (RemoveRelationshipResponse);
 }
 
 // Transformation service for transformation management
@@ -2420,6 +2424,77 @@ message DeleteRelationshipRequest {
 
 // Delete a relationship response
 message DeleteRelationshipResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Start a relationship request
+message StartRelationshipRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string relationship_name = 3;
+    optional int32 batch_size = 4;
+    optional int32 parallel_workers = 5;
+}
+
+// Start a relationship response (streamed)
+message StartRelationshipResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string phase = 4; // "initializing", "copying_data", "setting_up_cdc", "active", "error"
+    int64 rows_copied = 5;
+    int64 total_rows = 6;
+    string current_table = 7;
+    repeated string errors = 8;
+    string cdc_status = 9; // CDC connection status
+    int32 progress_percentage = 10;
+}
+
+// Stop a relationship request
+message StopRelationshipRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string relationship_name = 3;
+}
+
+// Stop a relationship response
+message StopRelationshipResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Resume a relationship request
+message ResumeRelationshipRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string relationship_name = 3;
+    optional bool skip_data_sync = 4; // Skip initial data sync if target is already synced
+}
+
+// Resume a relationship response (streamed)
+message ResumeRelationshipResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string phase = 4; // "resuming", "syncing_data", "reactivating_cdc", "active", "error"
+    int64 rows_synced = 5;
+    string cdc_status = 6;
+    repeated string errors = 7;
+}
+
+// Remove a relationship request
+message RemoveRelationshipRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string relationship_name = 3;
+    optional bool force = 4; // Force removal even if cleanup fails
+}
+
+// Remove a relationship response
+message RemoveRelationshipResponse {
     string message = 1;
     bool success = 2;
     redbco.redbopen.common.v1.Status status = 3;

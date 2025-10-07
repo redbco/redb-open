@@ -1634,3 +1634,35 @@ func (s *Server) insertSingleRow(client *dbclient.DatabaseClient, tableName stri
 //
 // These methods need to be implemented in the database manager and
 // corresponding database-specific adapters (starting with PostgreSQL and MySQL).
+
+// CDC Replication Management Methods
+
+// StartCDCReplication starts CDC replication for a relationship
+func (s *Server) StartCDCReplication(ctx context.Context, req *pb.StartCDCReplicationRequest) (*pb.StartCDCReplicationResponse, error) {
+	defer s.trackOperation()()
+	return s.engine.StartCDCReplication(ctx, req)
+}
+
+// StopCDCReplication stops CDC replication
+func (s *Server) StopCDCReplication(ctx context.Context, req *pb.StopCDCReplicationRequest) (*pb.StopCDCReplicationResponse, error) {
+	defer s.trackOperation()()
+	return s.engine.StopCDCReplication(ctx, req)
+}
+
+// ResumeCDCReplication resumes a stopped CDC replication
+func (s *Server) ResumeCDCReplication(ctx context.Context, req *pb.ResumeCDCReplicationRequest) (*pb.ResumeCDCReplicationResponse, error) {
+	defer s.trackOperation()()
+	return s.engine.ResumeCDCReplication(ctx, req)
+}
+
+// GetCDCReplicationStatus gets the status of a CDC replication
+func (s *Server) GetCDCReplicationStatus(ctx context.Context, req *pb.GetCDCReplicationStatusRequest) (*pb.GetCDCReplicationStatusResponse, error) {
+	defer s.trackOperation()()
+	return s.engine.GetCDCReplicationStatus(ctx, req)
+}
+
+// StreamCDCEvents streams CDC events
+func (s *Server) StreamCDCEvents(req *pb.StreamCDCEventsRequest, stream pb.AnchorService_StreamCDCEventsServer) error {
+	defer s.trackOperation()()
+	return s.engine.StreamCDCEvents(req, stream)
+}

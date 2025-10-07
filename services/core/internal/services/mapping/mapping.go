@@ -816,7 +816,7 @@ func (s *Service) DeleteMappingRule(ctx context.Context, tenantID, workspaceID, 
 	return nil
 }
 
-// GetMappingRulesForMapping retrieves all mapping rules attached to a specific mapping
+// GetMappingRulesForMapping retrieves all mapping rules attached to a specific mapping by name
 func (s *Service) GetMappingRulesForMapping(ctx context.Context, tenantID, workspaceID, mappingName string) ([]*Rule, error) {
 	s.logger.Infof("Retrieving mapping rules for mapping: %s", mappingName)
 
@@ -825,6 +825,13 @@ func (s *Service) GetMappingRulesForMapping(ctx context.Context, tenantID, works
 	if err != nil {
 		return nil, err
 	}
+
+	return s.GetMappingRulesForMappingByID(ctx, tenantID, workspaceID, mapping.ID)
+}
+
+// GetMappingRulesForMappingByID retrieves all mapping rules attached to a specific mapping by ID
+func (s *Service) GetMappingRulesForMappingByID(ctx context.Context, tenantID, workspaceID, mappingID string) ([]*Rule, error) {
+	s.logger.Infof("Retrieving mapping rules for mapping ID: %s", mappingID)
 
 	query := `
 		SELECT mr.mapping_rule_id, mr.tenant_id, mr.workspace_id, mr.mapping_rule_name, mr.mapping_rule_description, 
@@ -837,7 +844,7 @@ func (s *Service) GetMappingRulesForMapping(ctx context.Context, tenantID, works
 		ORDER BY mrm.mapping_rule_order, mr.mapping_rule_name
 	`
 
-	rows, err := s.db.Pool().Query(ctx, query, tenantID, workspaceID, mapping.ID)
+	rows, err := s.db.Pool().Query(ctx, query, tenantID, workspaceID, mappingID)
 	if err != nil {
 		s.logger.Errorf("Failed to get mapping rules for mapping: %v", err)
 		return nil, err

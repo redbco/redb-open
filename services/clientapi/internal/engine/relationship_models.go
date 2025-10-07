@@ -40,7 +40,7 @@ type AddRelationshipRequest struct {
 	RelationshipTargetDatabaseID string `json:"relationship_target_database_id" validate:"required"`
 	RelationshipTargetTableName  string `json:"relationship_target_table_name" validate:"required"`
 	MappingID                    string `json:"mapping_id" validate:"required"`
-	PolicyID                     string `json:"policy_id" validate:"required"`
+	PolicyID                     string `json:"policy_id,omitempty"`
 }
 
 type AddRelationshipResponse struct {

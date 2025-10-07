@@ -3,19 +3,25 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"sync"
 
+	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/redbco/redb-open/pkg/logger"
 )
 
 type PostgresReplicationSourceDetails struct {
-	SlotName        string                       `json:"slot_name"`
-	PublicationName string                       `json:"publication_name"`
-	DatabaseID      string                       `json:"database_id"`
-	ReplicationConn *pgconn.PgConn               `json:"-"`
-	StopChan        chan struct{}                `json:"-"`
-	isActive        bool                         `json:"-"`
-	EventHandler    func(map[string]interface{}) `json:"-"`
-	TableNames      map[string]struct{}          `json:"table_names"` // Set of tables being replicated
+	SlotName        string                                `json:"slot_name"`
+	PublicationName string                                `json:"publication_name"`
+	DatabaseID      string                                `json:"database_id"`
+	ReplicationConn *pgconn.PgConn                        `json:"-"`
+	StopChan        chan struct{}                         `json:"-"`
+	isActive        bool                                  `json:"-"`
+	EventHandler    func(map[string]interface{})          `json:"-"`
+	TableNames      map[string]struct{}                   `json:"table_names"` // Set of tables being replicated
+	logger          *logger.Logger                        `json:"-"`
+	relations       map[uint32]*pglogrepl.RelationMessage `json:"-"` // Cache of relation metadata by relation ID
+	relationsMutex  sync.RWMutex                          `json:"-"` // Protects relations map
 }
 
 // AddTable adds a table to the replication source
@@ -77,8 +83,8 @@ func (p *PostgresReplicationSourceDetails) Start() error {
 		return nil // Already active
 	}
 
-	// Start the replication streaming for all tables
-	go streamReplicationEvents(p.ReplicationConn, p, p.EventHandler, nil)
+	// Start the replication streaming for all tables with logger
+	go streamReplicationEvents(p.ReplicationConn, p, p.EventHandler, p.logger)
 	p.isActive = true
 	return nil
 }
@@ -99,6 +105,10 @@ func (p *PostgresReplicationSourceDetails) Stop() error {
 
 func (p *PostgresReplicationSourceDetails) IsActive() bool {
 	return p.isActive
+}
+
+func (p *PostgresReplicationSourceDetails) SetLogger(log *logger.Logger) {
+	p.logger = log
 }
 
 func (p *PostgresReplicationSourceDetails) GetMetadata() map[string]interface{} {

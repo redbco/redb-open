@@ -65,6 +65,20 @@ func convertStatus(grpcStatus commonv1.Status) Status {
 		return StatusSeeding
 	case commonv1.Status_STATUS_ORPHANED:
 		return StatusOrphaned
+	case commonv1.Status_STATUS_SENT:
+		return StatusSent
+	case commonv1.Status_STATUS_CANCELLED:
+		return StatusCancelled
+	case commonv1.Status_STATUS_PROCESSING:
+		return StatusProcessing
+	case commonv1.Status_STATUS_DONE:
+		return StatusDone
+	case commonv1.Status_STATUS_RECEIVED:
+		return StatusReceived
+	case commonv1.Status_STATUS_ACTIVE:
+		return StatusActive
+	case commonv1.Status_STATUS_CLEAN:
+		return StatusClean
 	default:
 		return StatusUnknown
 	}

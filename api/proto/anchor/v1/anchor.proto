@@ -54,6 +54,13 @@ service AnchorService {
     rpc AddTableToReplicationSource(AddTableToReplicationSourceRequest) returns (AddTableToReplicationSourceResponse) {}
     rpc RemoveTableFromReplicationSource(RemoveTableFromReplicationSourceRequest) returns (RemoveTableFromReplicationSourceResponse) {}
     rpc RemoveReplicationSource(RemoveReplicationSourceRequest) returns (RemoveReplicationSourceResponse) {}
+    
+    // CDC management endpoints for relationships
+    rpc StartCDCReplication(StartCDCReplicationRequest) returns (StartCDCReplicationResponse) {}
+    rpc StopCDCReplication(StopCDCReplicationRequest) returns (StopCDCReplicationResponse) {}
+    rpc ResumeCDCReplication(ResumeCDCReplicationRequest) returns (ResumeCDCReplicationResponse) {}
+    rpc GetCDCReplicationStatus(GetCDCReplicationStatusRequest) returns (GetCDCReplicationStatusResponse) {}
+    rpc StreamCDCEvents(StreamCDCEventsRequest) returns (stream StreamCDCEventsResponse) {}
 }
 
 // Instance messages
@@ -550,4 +557,106 @@ message GetTableRowCountResponse {
     string table_name = 5;
     int64 row_count = 6;
     bool is_estimate = 7;               // True if count is estimated (for performance)
+}
+
+// CDC management messages for relationships
+
+// Start CDC replication request
+message StartCDCReplicationRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string source_database_id = 3;
+    string target_database_id = 4;
+    string relationship_id = 5;
+    string replication_source_id = 6;
+    repeated string table_names = 7;
+    bytes mapping_rules = 8;            // JSON encoded mapping rules for transformation
+    optional string node_id = 9;        // Node ID for mesh routing (if applicable)
+}
+
+// Start CDC replication response
+message StartCDCReplicationResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string replication_source_id = 4;
+    string cdc_connection_id = 5;
+    map<string, string> cdc_details = 6; // Database-specific CDC details (slot name, etc.)
+}
+
+// Stop CDC replication request
+message StopCDCReplicationRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string replication_source_id = 3;
+    optional bool preserve_state = 4;   // Preserve CDC position for resume
+}
+
+// Stop CDC replication response
+message StopCDCReplicationResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string replication_source_id = 4;
+    map<string, string> preserved_state = 5; // CDC state for resume
+}
+
+// Resume CDC replication request
+message ResumeCDCReplicationRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string replication_source_id = 3;
+    map<string, string> resume_state = 4; // CDC state to resume from
+}
+
+// Resume CDC replication response
+message ResumeCDCReplicationResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string replication_source_id = 4;
+    string cdc_connection_id = 5;
+}
+
+// Get CDC replication status request
+message GetCDCReplicationStatusRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string replication_source_id = 3;
+}
+
+// Get CDC replication status response
+message GetCDCReplicationStatusResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string replication_source_id = 4;
+    string cdc_status = 5;              // "active", "stopped", "error", "unknown"
+    int64 events_processed = 6;
+    int64 events_pending = 7;
+    string last_event_timestamp = 8;
+    map<string, string> cdc_position = 9; // Current CDC position/offset
+    repeated string errors = 10;
+}
+
+// Stream CDC events request
+message StreamCDCEventsRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string replication_source_id = 3;
+    optional string start_position = 4;  // Start from specific position
+    optional int32 batch_size = 5;       // Events per batch
+}
+
+// Stream CDC events response
+message StreamCDCEventsResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string replication_source_id = 4;
+    bytes event_data = 5;               // JSON encoded CDC event
+    string event_type = 6;              // "insert", "update", "delete", "truncate"
+    string table_name = 7;
+    string position = 8;                // CDC position of this event
+    string timestamp = 9;
 }

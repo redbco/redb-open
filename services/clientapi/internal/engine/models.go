@@ -36,6 +36,13 @@ const (
 	StatusLeaving       Status = "leaving"
 	StatusSeeding       Status = "seeding"
 	StatusOrphaned      Status = "orphaned"
+	StatusSent          Status = "sent"
+	StatusCancelled     Status = "cancelled"
+	StatusProcessing    Status = "processing"
+	StatusDone          Status = "done"
+	StatusReceived      Status = "received"
+	StatusActive        Status = "active"
+	StatusClean         Status = "clean"
 )
 
 // ErrorResponse represents an error response

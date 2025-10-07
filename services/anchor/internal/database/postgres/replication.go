@@ -3,13 +3,17 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redbco/redb-open/pkg/encryption"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
 )
@@ -25,9 +29,34 @@ func ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.Replicatio
 		return nil, nil, fmt.Errorf("at least one table name is required for replication")
 	}
 
-	// Create connection string for replication
+	// Decrypt the password (passwords are stored encrypted in the database)
+	var decryptedPassword string
+	if config.Password == "" {
+		decryptedPassword = ""
+	} else {
+		dp, err := encryption.DecryptPassword(config.TenantID, config.Password)
+		if err != nil {
+			return nil, nil, fmt.Errorf("error decrypting password: %w", err)
+		}
+		decryptedPassword = dp
+	}
+
+	// Create connection string for replication with URL-encoded password
+	// Special characters in password need to be URL-encoded
+	encodedPassword := url.QueryEscape(decryptedPassword)
+
+	// Determine SSL mode - use disable if SSL is not enabled
+	sslMode := config.SSLMode
+	if sslMode == "" {
+		if config.SSL {
+			sslMode = "prefer"
+		} else {
+			sslMode = "disable"
+		}
+	}
+
 	connString := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
-		config.Username, config.Password, config.Host, config.Port, config.DatabaseName, config.SSLMode)
+		config.Username, encodedPassword, config.Host, config.Port, config.DatabaseName, sslMode)
 
 	// Parse connection config
 	pgConfig, err := pgconn.ParseConfig(connString)
@@ -58,6 +87,7 @@ func ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.Replicatio
 		isActive:        false,
 		EventHandler:    config.EventHandler,
 		TableNames:      tableSet,
+		logger:          nil, // Will be set by caller if available
 	}
 
 	// If slot name or publication name are not provided, generate them
@@ -73,9 +103,67 @@ func ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.Replicatio
 			sanitizeIdentifier(dbclient.GenerateUniqueID()))
 	}
 
-	// TODO: Publication/slot management for multi-table (see CreateReplicationSource for details)
-	// This function should ensure the publication includes all tables in tableSet, and slot is created if needed.
-	// For now, this is a placeholder. Actual logic will be in CreateReplicationSource.
+	// Create publication and replication slot in PostgreSQL
+	// We need a regular connection pool for these DDL operations
+	poolConfig, err := pgxpool.ParseConfig(connString)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error parsing pool config: %w", err)
+	}
+
+	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error creating connection pool: %w", err)
+	}
+	defer pool.Close()
+
+	// Check if publication already exists
+	var pubExists bool
+	err = pool.QueryRow(context.Background(),
+		"SELECT EXISTS(SELECT 1 FROM pg_publication WHERE pubname = $1)",
+		sourceDetails.PublicationName).Scan(&pubExists)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error checking publication: %w", err)
+	}
+
+	// Create publication for the specified tables if it doesn't exist
+	if !pubExists {
+		tableList := strings.Join(config.TableNames, ", ")
+		_, err = pool.Exec(context.Background(),
+			fmt.Sprintf("CREATE PUBLICATION %s FOR TABLE %s",
+				sourceDetails.PublicationName, tableList))
+		if err != nil {
+			return nil, nil, fmt.Errorf("error creating publication: %w", err)
+		}
+	}
+
+	// Set REPLICA IDENTITY FULL on all tables to ensure we get all column values
+	// in UPDATE and DELETE events (by default, PostgreSQL only sends key columns)
+	for _, tableName := range config.TableNames {
+		_, err = pool.Exec(context.Background(),
+			fmt.Sprintf("ALTER TABLE %s REPLICA IDENTITY FULL", tableName))
+		if err != nil {
+			return nil, nil, fmt.Errorf("error setting REPLICA IDENTITY FULL on %s: %w", tableName, err)
+		}
+	}
+
+	// Check if replication slot already exists
+	var slotExists bool
+	err = pool.QueryRow(context.Background(),
+		"SELECT EXISTS(SELECT 1 FROM pg_replication_slots WHERE slot_name = $1)",
+		sourceDetails.SlotName).Scan(&slotExists)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error checking replication slot: %w", err)
+	}
+
+	// Create replication slot if it doesn't exist
+	if !slotExists {
+		_, err = pool.Exec(context.Background(),
+			fmt.Sprintf("SELECT pg_create_logical_replication_slot('%s', 'pgoutput')",
+				sourceDetails.SlotName))
+		if err != nil {
+			return nil, nil, fmt.Errorf("error creating replication slot: %w", err)
+		}
+	}
 
 	client := &dbclient.ReplicationClient{
 		ReplicationID:     config.ReplicationID,
@@ -833,14 +921,18 @@ func startLogicalReplication(conn *pgconn.PgConn, slotName string, publicationNa
 		logger.Infof("Starting logical replication with query: %s", query)
 	}
 
-	// Send the replication command
-	_, err := conn.Exec(context.Background(), query).ReadAll()
+	// For replication commands, we need to send the query using the Frontend
+	// and NOT wait for a CommandComplete response, as START_REPLICATION enters
+	// streaming mode immediately.
+	frontend := conn.Frontend()
+	frontend.Send(&pgproto3.Query{String: query})
+	err := frontend.Flush()
 	if err != nil {
-		return fmt.Errorf("error starting replication: %v", err)
+		return fmt.Errorf("error sending replication command: %v", err)
 	}
 
 	if logger != nil {
-		logger.Infof("Logical replication started successfully for slot: %s", slotName)
+		logger.Infof("Logical replication command sent for slot: %s, connection is now entering streaming mode", slotName)
 	}
 
 	return nil
@@ -881,9 +973,12 @@ func streamReplicationEvents(conn *pgconn.PgConn, details *PostgresReplicationSo
 		return
 	}
 
-	// Set up keepalive ticker
-	keepaliveTicker := time.NewTicker(30 * time.Second) // Send keepalive every 30 seconds
+	// Set up keepalive ticker - send more frequently to prevent timeout
+	keepaliveTicker := time.NewTicker(10 * time.Second) // Send keepalive every 10 seconds
 	defer keepaliveTicker.Stop()
+
+	// Track the last received LSN for keepalive messages
+	var lastReceivedLSN uint64
 
 	// Read WAL messages from the replication stream
 	for {
@@ -895,7 +990,7 @@ func streamReplicationEvents(conn *pgconn.PgConn, details *PostgresReplicationSo
 			return
 		case <-keepaliveTicker.C:
 			// Send keepalive to prevent connection timeout
-			if err := sendKeepaliveResponse(conn, logger); err != nil {
+			if err := sendKeepaliveResponse(conn, lastReceivedLSN, logger); err != nil {
 				if logger != nil {
 					logger.Errorf("Failed to send keepalive for slot %s: %v", details.SlotName, err)
 				}
@@ -912,7 +1007,8 @@ func streamReplicationEvents(conn *pgconn.PgConn, details *PostgresReplicationSo
 					return
 				}
 				// For timeouts, just continue to the next iteration
-				if err.Error() == "context deadline exceeded" {
+				if strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "timeout") {
+					// This is expected when no messages are available, just continue
 					continue
 				}
 				if logger != nil {
@@ -924,18 +1020,80 @@ func streamReplicationEvents(conn *pgconn.PgConn, details *PostgresReplicationSo
 			}
 
 			// Process the message based on its type
-			switch msg := msg.(type) {
-			case interface{ Data() []byte }:
-				// This is WAL data (CopyData message)
-				if err := processWALMessage(msg.Data(), details, eventHandler, logger); err != nil {
-					if logger != nil {
-						logger.Errorf("Error processing WAL message for slot %s: %v", details.SlotName, err)
+			// CopyData messages contain the replication stream data
+			if copyData, ok := msg.(*pgproto3.CopyData); ok {
+				data := copyData.Data
+				if len(data) > 0 {
+					// First byte indicates message type
+					messageType := data[0]
+
+					switch messageType {
+					case 'w': // XLogData - actual WAL data
+						if logger != nil {
+							logger.Infof("Received XLogData message (type 'w') for slot %s, length: %d", details.SlotName, len(data))
+						}
+						// Extract LSN and process the WAL message
+						if len(data) >= 25 { // Header is 25 bytes
+							// Update last received LSN from the message
+							// Bytes 1-8: WAL start LSN
+							// Bytes 9-16: WAL end LSN
+							// Bytes 17-24: Send time
+							// Bytes 25+: WAL data
+
+							walData := data[25:]
+							if err := processWALMessage(walData, details, eventHandler, logger); err != nil {
+								if logger != nil {
+									logger.Errorf("Error processing WAL message for slot %s: %v", details.SlotName, err)
+								}
+							}
+
+							// Extract and update LSN for keepalive
+							walEndLSN := uint64(data[9])<<56 | uint64(data[10])<<48 | uint64(data[11])<<40 | uint64(data[12])<<32 |
+								uint64(data[13])<<24 | uint64(data[14])<<16 | uint64(data[15])<<8 | uint64(data[16])
+							lastReceivedLSN = walEndLSN
+
+							// Send immediate acknowledgment
+							if logger != nil {
+								logger.Infof("Sending status update with LSN: %d", lastReceivedLSN)
+							}
+							if err := sendStandbyStatusUpdate(conn, lastReceivedLSN, logger); err != nil {
+								if logger != nil {
+									logger.Warnf("Failed to send status update: %v", err)
+								}
+							}
+						}
+
+					case 'k': // Primary Keepalive message
+						if logger != nil {
+							logger.Infof("Received Primary Keepalive message for slot %s, data length: %d", details.SlotName, len(data))
+						}
+						// Check if reply is requested (byte 17)
+						if len(data) > 17 && data[17] == 1 {
+							// Reply requested
+							if logger != nil {
+								logger.Infof("Keepalive requests reply, sending status update with LSN: %d", lastReceivedLSN)
+							}
+							if err := sendStandbyStatusUpdate(conn, lastReceivedLSN, logger); err != nil {
+								if logger != nil {
+									logger.Errorf("Failed to send keepalive reply: %v", err)
+								}
+							}
+						} else {
+							if logger != nil {
+								logger.Debugf("Keepalive does not request reply")
+							}
+						}
+
+					default:
+						if logger != nil {
+							logger.Infof("Received unknown message type '%c' (0x%02x) for slot %s", messageType, messageType, details.SlotName)
+						}
 					}
 				}
-			default:
+			} else {
 				// Log other message types for debugging
 				if logger != nil {
-					logger.Debugf("Received message type for slot %s: %T", details.SlotName, msg)
+					logger.Debugf("Received non-CopyData message for slot %s: %T", details.SlotName, msg)
 				}
 			}
 		}
@@ -997,91 +1155,246 @@ func parseWALMessage(walData []byte, logger *logger.Logger, details *PostgresRep
 		return changes, fmt.Errorf("WAL message too short")
 	}
 
-	messageType := walData[0]
+	// Initialize relations map if needed
+	if details.relations == nil {
+		details.relationsMutex.Lock()
+		if details.relations == nil {
+			details.relations = make(map[uint32]*pglogrepl.RelationMessage)
+		}
+		details.relationsMutex.Unlock()
+	}
 
-	var operation string
-	switch messageType {
-	case 'I':
-		operation = "INSERT"
-	case 'U':
-		operation = "UPDATE"
-	case 'D':
-		operation = "DELETE"
-	case 'B':
-		operation = "BEGIN"
-	case 'C':
-		operation = "COMMIT"
-	case 'R':
-		operation = "RELATION"
+	// Parse the message using pglogrepl
+	logicalMsg, err := pglogrepl.Parse(walData)
+	if err != nil {
+		if logger != nil {
+			logger.Warnf("Failed to parse logical replication message: %v", err)
+		}
+		return changes, nil // Skip unparseable messages
+	}
+
+	switch msg := logicalMsg.(type) {
+	case *pglogrepl.RelationMessage:
+		// Store relation metadata for later use
+		details.relationsMutex.Lock()
+		details.relations[msg.RelationID] = msg
+		details.relationsMutex.Unlock()
+
+		if logger != nil {
+			logger.Debugf("Stored relation metadata for %s (ID: %d, %d columns)",
+				msg.RelationName, msg.RelationID, len(msg.Columns))
+		}
+		return changes, nil // No data change event
+
+	case *pglogrepl.BeginMessage:
+		// Transaction begin - no data change
+		return changes, nil
+
+	case *pglogrepl.CommitMessage:
+		// Transaction commit - no data change
+		return changes, nil
+
+	case *pglogrepl.InsertMessage:
+		// Get relation metadata
+		details.relationsMutex.RLock()
+		relation, ok := details.relations[msg.RelationID]
+		details.relationsMutex.RUnlock()
+
+		if !ok {
+			if logger != nil {
+				logger.Warnf("Received INSERT for unknown relation ID %d", msg.RelationID)
+			}
+			return changes, nil
+		}
+
+		// Parse tuple data
+		tupleData, err := parseTupleData(msg.Tuple, relation)
+		if err != nil {
+			if logger != nil {
+				logger.Errorf("Failed to parse INSERT tuple: %v", err)
+			}
+			return changes, nil
+		}
+
+		change := PostgresReplicationChange{
+			Operation: "INSERT",
+			TableName: relation.RelationName,
+			Data:      tupleData,
+		}
+		changes = append(changes, change)
+
+		if logger != nil {
+			logger.Debugf("Parsed INSERT on %s: %d columns", relation.RelationName, len(tupleData))
+		}
+
+	case *pglogrepl.UpdateMessage:
+		// Get relation metadata
+		details.relationsMutex.RLock()
+		relation, ok := details.relations[msg.RelationID]
+		details.relationsMutex.RUnlock()
+
+		if !ok {
+			if logger != nil {
+				logger.Warnf("Received UPDATE for unknown relation ID %d", msg.RelationID)
+			}
+			return changes, nil
+		}
+
+		// Parse new tuple data
+		newTupleData, err := parseTupleData(msg.NewTuple, relation)
+		if err != nil {
+			if logger != nil {
+				logger.Errorf("Failed to parse UPDATE new tuple: %v", err)
+			}
+			return changes, nil
+		}
+
+		// Parse old tuple data if available
+		var oldTupleData map[string]interface{}
+		if msg.OldTuple != nil {
+			oldTupleData, err = parseTupleData(msg.OldTuple, relation)
+			if err != nil {
+				if logger != nil {
+					logger.Warnf("Failed to parse UPDATE old tuple: %v", err)
+				}
+			}
+		}
+
+		change := PostgresReplicationChange{
+			Operation: "UPDATE",
+			TableName: relation.RelationName,
+			Data:      newTupleData,
+			OldData:   oldTupleData,
+		}
+		changes = append(changes, change)
+
+		if logger != nil {
+			logger.Debugf("Parsed UPDATE on %s: %d columns", relation.RelationName, len(newTupleData))
+		}
+
+	case *pglogrepl.DeleteMessage:
+		// Get relation metadata
+		details.relationsMutex.RLock()
+		relation, ok := details.relations[msg.RelationID]
+		details.relationsMutex.RUnlock()
+
+		if !ok {
+			if logger != nil {
+				logger.Warnf("Received DELETE for unknown relation ID %d", msg.RelationID)
+			}
+			return changes, nil
+		}
+
+		// Parse old tuple data
+		oldTupleData, err := parseTupleData(msg.OldTuple, relation)
+		if err != nil {
+			if logger != nil {
+				logger.Errorf("Failed to parse DELETE tuple: %v", err)
+			}
+			return changes, nil
+		}
+
+		change := PostgresReplicationChange{
+			Operation: "DELETE",
+			TableName: relation.RelationName,
+			OldData:   oldTupleData,
+		}
+		changes = append(changes, change)
+
+		if logger != nil {
+			logger.Debugf("Parsed DELETE on %s: %d columns", relation.RelationName, len(oldTupleData))
+		}
+
 	default:
-		operation = "UNKNOWN"
-	}
-
-	if logger != nil {
-		logger.Debugf("Detected WAL message type: %c (%s)", messageType, operation)
-	}
-
-	// For now, set TableName to the only table if just one is present
-	tableName := ""
-	if details != nil && len(details.TableNames) == 1 {
-		for t := range details.TableNames {
-			tableName = t
-			break
+		if logger != nil {
+			logger.Debugf("Unhandled message type: %T", logicalMsg)
 		}
-	}
-
-	change := PostgresReplicationChange{
-		Operation: operation,
-		TableName: tableName,
-		Data: map[string]interface{}{
-			"message_type": string(messageType),
-			"raw_data":     string(walData),
-			"data_length":  len(walData),
-		},
-	}
-
-	if operation == "UPDATE" && len(walData) > 1 {
-		change.OldData = map[string]interface{}{
-			"message_type": string(messageType),
-			"raw_data":     string(walData),
-		}
-		change.Data = map[string]interface{}{
-			"message_type": string(messageType),
-			"raw_data":     string(walData),
-			"is_update":    true,
-		}
-	}
-
-	changes = append(changes, change)
-
-	if logger != nil {
-		logger.Debugf("Parsed WAL message: operation=%s, data_length=%d", operation, len(walData))
 	}
 
 	return changes, nil
 }
 
-// sendKeepaliveResponse sends a keepalive response to the server
-func sendKeepaliveResponse(conn *pgconn.PgConn, logger *logger.Logger) error {
-	// Send a keepalive response to prevent connection timeout
-	// In PostgreSQL logical replication, we need to send a StandbyStatusUpdate message
-
-	if logger != nil {
-		logger.Debugf("Sending keepalive response")
+// parseTupleData extracts column values from a tuple
+func parseTupleData(tuple *pglogrepl.TupleData, relation *pglogrepl.RelationMessage) (map[string]interface{}, error) {
+	if tuple == nil {
+		return nil, fmt.Errorf("tuple is nil")
 	}
 
-	// For now, we'll use a simple approach
-	// In a full implementation, you would construct the proper StandbyStatusUpdate message
-	// according to PostgreSQL's replication protocol
+	data := make(map[string]interface{})
 
-	// Send a simple query to keep the connection alive
-	_, err := conn.Exec(context.Background(), "SELECT 1").ReadAll()
+	for idx, col := range tuple.Columns {
+		if idx >= len(relation.Columns) {
+			continue // Skip if we don't have column metadata
+		}
+
+		colName := relation.Columns[idx].Name
+
+		switch col.DataType {
+		case 'n': // null
+			data[colName] = nil
+		case 't': // text
+			data[colName] = string(col.Data)
+		case 'u': // unchanged toast
+			// Skip unchanged TOAST columns
+		default:
+			// For other types, store as string
+			data[colName] = string(col.Data)
+		}
+	}
+
+	return data, nil
+}
+
+// sendKeepaliveResponse is called periodically
+func sendKeepaliveResponse(conn *pgconn.PgConn, lastReceivedLSN uint64, logger *logger.Logger) error {
+	// Proactively send status updates to prevent timeout
+	return sendStandbyStatusUpdate(conn, lastReceivedLSN, logger)
+}
+
+// sendStandbyStatusUpdate sends a Standby Status Update message to PostgreSQL
+func sendStandbyStatusUpdate(conn *pgconn.PgConn, lastReceivedLSN uint64, logger *logger.Logger) error {
+	// Build Standby Status Update message
+	// Format: 'r' + write LSN (8) + flush LSN (8) + apply LSN (8) + timestamp (8) + reply (1)
+	statusUpdate := make([]byte, 1+8+8+8+8+1)
+	statusUpdate[0] = 'r' // Standby Status Update
+
+	// Set all three LSNs to the last received LSN (we've "applied" everything we received)
+	for i := 0; i < 3; i++ {
+		offset := 1 + (i * 8)
+		// Big-endian encoding
+		statusUpdate[offset] = byte(lastReceivedLSN >> 56)
+		statusUpdate[offset+1] = byte(lastReceivedLSN >> 48)
+		statusUpdate[offset+2] = byte(lastReceivedLSN >> 40)
+		statusUpdate[offset+3] = byte(lastReceivedLSN >> 32)
+		statusUpdate[offset+4] = byte(lastReceivedLSN >> 24)
+		statusUpdate[offset+5] = byte(lastReceivedLSN >> 16)
+		statusUpdate[offset+6] = byte(lastReceivedLSN >> 8)
+		statusUpdate[offset+7] = byte(lastReceivedLSN)
+	}
+
+	// Timestamp (bytes 25-32) - PostgreSQL epoch microseconds (2000-01-01)
+	// For simplicity, use 0 (server doesn't strictly require accurate timestamp)
+
+	// Reply byte (byte 33) - 0 means this is not a reply to a keepalive request
+	statusUpdate[33] = 0
+
+	// Create a CopyData message using pgproto3
+	copyDataMsg := &pgproto3.CopyData{
+		Data: statusUpdate,
+	}
+
+	// Get the frontend to send the message
+	frontend := conn.Frontend()
+	frontend.Send(copyDataMsg)
+
+	// Flush to ensure it's sent immediately
+	err := frontend.Flush()
 	if err != nil {
-		return fmt.Errorf("failed to send keepalive: %v", err)
+		return fmt.Errorf("failed to flush status update: %v", err)
 	}
 
 	if logger != nil {
-		logger.Debugf("Keepalive response sent successfully")
+		logger.Debugf("Sent Standby Status Update with LSN: %d (0x%X)", lastReceivedLSN, lastReceivedLSN)
 	}
 
 	return nil

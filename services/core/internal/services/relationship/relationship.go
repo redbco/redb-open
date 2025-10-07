@@ -268,7 +268,7 @@ func (s *Service) Update(ctx context.Context, tenantID, workspaceID, id string, 
 			"relationship_source_type", "relationship_target_type",
 			"relationship_source_database_id", "relationship_source_table_name",
 			"relationship_target_database_id", "relationship_target_table_name",
-			"mapping_id", "status_message":
+			"mapping_id", "status_message", "status":
 			setParts = append(setParts, fmt.Sprintf("%s = $%d", field, argIndex))
 			args = append(args, value)
 			argIndex++
@@ -447,7 +447,7 @@ func (s *Service) UpdateByName(ctx context.Context, tenantID, workspaceID, name 
 			"relationship_source_type", "relationship_target_type",
 			"relationship_source_database_id", "relationship_source_table_name",
 			"relationship_target_database_id", "relationship_target_table_name",
-			"mapping_id", "status_message":
+			"mapping_id", "status_message", "status":
 			setParts = append(setParts, fmt.Sprintf("%s = $%d", field, argIndex))
 			args = append(args, value)
 			argIndex++
