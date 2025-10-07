@@ -191,6 +191,19 @@ type ReplicationSource interface {
 	Start() error
 	Stop() error
 	Close() error
+
+	// Position tracking for graceful shutdown and resume
+	// GetPosition returns the current replication position (LSN, binlog position, etc.)
+	// The format is database-specific: PostgreSQL uses LSN, MySQL uses binlog file:position
+	GetPosition() (string, error)
+
+	// SetPosition sets the starting replication position for resume operations
+	// This should be called before Start() to resume from a specific position
+	SetPosition(position string) error
+
+	// SaveCheckpoint persists the current position for crash recovery
+	// This is typically called periodically or after processing batches of events
+	SaveCheckpoint(ctx context.Context, position string) error
 }
 
 // StreamParams configures streaming operations for large datasets.

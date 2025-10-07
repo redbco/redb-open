@@ -129,11 +129,40 @@ func (e *Engine) StartCDCReplication(ctx context.Context, req *anchorv1.StartCDC
 	// Step 7: Set default database-specific parameters if not provided
 	e.setDefaultReplicationParameters(&replicationConfig, req.RelationshipId)
 
+	// Step 7.5: Load saved replication position for resume (if available)
+	if savedPosition, savedEvents, err := e.loadCDCStreamState(ctx, req.ReplicationSourceId); err == nil {
+		if savedPosition != "" {
+			e.logger.Infof("Resuming CDC replication from saved position: %s (events processed: %d)", savedPosition, savedEvents)
+			replicationConfig.StartPosition = savedPosition
+		}
+	} else {
+		// If loading fails, log warning but continue (will start from beginning)
+		e.logger.Warnf("Could not load saved CDC position for %s, starting from beginning: %v", req.ReplicationSourceId, err)
+	}
+
 	// Step 8: Connect replication using source adapter
 	replicationSource, err := sourceRepOps.Connect(ctx, replicationConfig)
 	if err != nil {
 		e.logger.Errorf("Failed to connect replication: %v", err)
 		return nil, status.Errorf(codes.Internal, "failed to connect replication: %v", err)
+	}
+
+	// Step 8.5: Set up checkpoint function for periodic position saving
+	// This is implemented differently per database type
+	// For PostgreSQL, we need to access the underlying PostgresReplicationSourceDetails
+	// For MySQL, we need to access the underlying MySQLReplicationSourceDetails
+	// The checkpoint function will be called automatically by the replication source
+	checkpointFunc := e.createCheckpointFunc(req.ReplicationSourceId)
+
+	// Try to set checkpoint function on the replication source
+	// This is done via a type assertion since different databases have different implementations
+	if pgSource, ok := replicationSource.(interface {
+		SetCheckpointFunc(func(context.Context, string) error)
+	}); ok {
+		pgSource.SetCheckpointFunc(checkpointFunc)
+		e.logger.Infof("Checkpoint function configured for replication source %s", req.ReplicationSourceId)
+	} else {
+		e.logger.Warnf("Could not set checkpoint function for replication source %s (not supported by this database type)", req.ReplicationSourceId)
 	}
 
 	// Step 9: Start the replication stream
@@ -448,4 +477,113 @@ func (e *Engine) setDefaultReplicationParameters(config *adapter.ReplicationConf
 
 	// MySQL-specific defaults would go here if needed
 	// For example: server_id, binlog position tracking, etc.
+}
+
+// saveCDCStreamState saves the current state of a CDC replication stream to the database
+func (e *Engine) saveCDCStreamState(ctx context.Context, stream *CDCReplicationStream) error {
+	if stream == nil {
+		return fmt.Errorf("stream is nil")
+	}
+
+	// Get the current replication position
+	position, err := stream.ReplicationSource.GetPosition()
+	if err != nil {
+		// If we can't get position, log warning but don't fail
+		if e.logger != nil {
+			e.logger.Warnf("Could not get position for replication source %s: %v", stream.ReplicationSourceID, err)
+		}
+		position = "" // Continue with empty position
+	}
+
+	// Get event statistics
+	stream.mu.RLock()
+	eventsProcessed := stream.EventsProcessed
+	stream.mu.RUnlock()
+
+	// Update the replication source in the database
+	globalState := e.GetState()
+	configRepo := globalState.GetConfigRepository()
+
+	if configRepo == nil {
+		return fmt.Errorf("configuration repository not available")
+	}
+
+	// Save the position and event count
+	if err := configRepo.UpdateReplicationSourcePosition(ctx, stream.ReplicationSourceID, position, eventsProcessed); err != nil {
+		return fmt.Errorf("failed to update replication source position: %w", err)
+	}
+
+	if e.logger != nil {
+		e.logger.Infof("Saved CDC stream state for %s: position=%s, events=%d",
+			stream.ReplicationSourceID, position, eventsProcessed)
+	}
+
+	return nil
+}
+
+// loadCDCStreamState loads the saved state of a CDC replication stream from the database
+func (e *Engine) loadCDCStreamState(ctx context.Context, replicationSourceID string) (position string, eventsProcessed int64, err error) {
+	globalState := e.GetState()
+	configRepo := globalState.GetConfigRepository()
+
+	if configRepo == nil {
+		return "", 0, fmt.Errorf("configuration repository not available")
+	}
+
+	// Get the replication source from database
+	source, err := configRepo.GetReplicationSource(ctx, replicationSourceID)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to get replication source: %w", err)
+	}
+
+	position = source.CDCPosition
+	eventsProcessed = source.EventsProcessed
+
+	if e.logger != nil {
+		e.logger.Infof("Loaded CDC stream state for %s: position=%s, events=%d",
+			replicationSourceID, position, eventsProcessed)
+	}
+
+	return position, eventsProcessed, nil
+}
+
+// createCheckpointFunc creates a checkpoint function for a replication source
+// This function will be called periodically by the replication source to save its position
+func (e *Engine) createCheckpointFunc(replicationSourceID string) func(context.Context, string) error {
+	return func(ctx context.Context, position string) error {
+		globalState := e.GetState()
+		configRepo := globalState.GetConfigRepository()
+
+		if configRepo == nil {
+			return fmt.Errorf("configuration repository not available")
+		}
+
+		// Get current event count from the CDC manager
+		manager := getCDCManager()
+		manager.mu.RLock()
+		stream, exists := manager.activeReplications[replicationSourceID]
+		manager.mu.RUnlock()
+
+		var eventsProcessed int64
+		if exists {
+			stream.mu.RLock()
+			eventsProcessed = stream.EventsProcessed
+			stream.mu.RUnlock()
+		}
+
+		// Update the replication source position
+		if err := configRepo.UpdateReplicationSourcePosition(ctx, replicationSourceID, position, eventsProcessed); err != nil {
+			if e.logger != nil {
+				e.logger.Errorf("Failed to save checkpoint for %s: %v", replicationSourceID, err)
+			}
+			return err
+		}
+
+		if e.logger != nil {
+			e.logger.Debugf("Saved checkpoint for %s: position=%s, events=%d",
+				replicationSourceID, position, eventsProcessed)
+		}
+
+		return nil
+	}
 }

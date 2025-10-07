@@ -22,6 +22,12 @@ type PostgresReplicationSourceDetails struct {
 	logger          *logger.Logger                        `json:"-"`
 	relations       map[uint32]*pglogrepl.RelationMessage `json:"-"` // Cache of relation metadata by relation ID
 	relationsMutex  sync.RWMutex                          `json:"-"` // Protects relations map
+
+	// LSN tracking for graceful shutdown and resume
+	currentLSN     pglogrepl.LSN                       `json:"-"` // Current replication position
+	startLSN       pglogrepl.LSN                       `json:"-"` // Starting replication position (for resume)
+	lsnMutex       sync.RWMutex                        `json:"-"` // Protects LSN access
+	checkpointFunc func(context.Context, string) error `json:"-"` // Callback to persist checkpoint
 }
 
 // AddTable adds a table to the replication source
@@ -133,6 +139,68 @@ func (p *PostgresReplicationSourceDetails) Close() error {
 	}
 
 	return nil
+}
+
+// GetPosition returns the current LSN as a string.
+func (p *PostgresReplicationSourceDetails) GetPosition() (string, error) {
+	p.lsnMutex.RLock()
+	defer p.lsnMutex.RUnlock()
+
+	if p.currentLSN == 0 {
+		return "", fmt.Errorf("no LSN position available")
+	}
+
+	return p.currentLSN.String(), nil
+}
+
+// SetPosition sets the starting LSN for replication resume.
+// The position string should be in PostgreSQL LSN format (e.g., "0/12345678").
+func (p *PostgresReplicationSourceDetails) SetPosition(position string) error {
+	if position == "" {
+		return nil // No position to set, will start from beginning
+	}
+
+	lsn, err := pglogrepl.ParseLSN(position)
+	if err != nil {
+		return fmt.Errorf("invalid LSN position %q: %w", position, err)
+	}
+
+	p.lsnMutex.Lock()
+	p.startLSN = lsn
+	p.currentLSN = lsn
+	p.lsnMutex.Unlock()
+
+	if p.logger != nil {
+		p.logger.Info("Set replication start position to LSN %s for slot %s", position, p.SlotName)
+	}
+
+	return nil
+}
+
+// SaveCheckpoint persists the current replication position.
+func (p *PostgresReplicationSourceDetails) SaveCheckpoint(ctx context.Context, position string) error {
+	if p.checkpointFunc == nil {
+		// No checkpoint function configured - log warning but don't error
+		if p.logger != nil {
+			p.logger.Warn("No checkpoint function configured for slot %s, position will not be persisted", p.SlotName)
+		}
+		return nil
+	}
+
+	return p.checkpointFunc(ctx, position)
+}
+
+// UpdateLSN updates the current LSN position.
+// This should be called by the replication stream handler after processing each message.
+func (p *PostgresReplicationSourceDetails) UpdateLSN(lsn pglogrepl.LSN) {
+	p.lsnMutex.Lock()
+	p.currentLSN = lsn
+	p.lsnMutex.Unlock()
+}
+
+// SetCheckpointFunc sets the callback function for persisting checkpoints.
+func (p *PostgresReplicationSourceDetails) SetCheckpointFunc(fn func(context.Context, string) error) {
+	p.checkpointFunc = fn
 }
 
 type PostgresReplicationChange struct {

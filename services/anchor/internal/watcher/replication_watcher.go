@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/redbco/redb-open/pkg/anchor/adapter"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/anchor/internal/config"
 	"github.com/redbco/redb-open/services/anchor/internal/database"
 	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"
+	"github.com/redbco/redb-open/services/anchor/internal/database/postgres"
 	"github.com/redbco/redb-open/services/anchor/internal/state"
 )
 
@@ -160,6 +160,18 @@ func (w *ReplicationWatcher) setupWorkspaceReplicationClients(ctx context.Contex
 			return ctx.Err()
 		}
 
+		// Skip sources that are stopped - they require manual restart
+		if source.Status == "STATUS_STOPPED" {
+			w.logger.Info("Skipping replication source %s (status: STOPPED - requires manual start)", source.ReplicationSourceID)
+			continue
+		}
+
+		// Only auto-start sources that were previously active
+		if source.Status != "STATUS_ACTIVE" && source.Status != "STATUS_PENDING" {
+			w.logger.Info("Skipping replication source %s (status: %s - not eligible for auto-start)", source.ReplicationSourceID, source.Status)
+			continue
+		}
+
 		err := w.setupReplicationClient(ctx, source, registry)
 		if err != nil {
 			w.logger.Error("Failed to setup replication client for source %s: %v", source.ReplicationSourceID, err)
@@ -224,31 +236,48 @@ func (w *ReplicationWatcher) setupReplicationClient(ctx context.Context, source 
 		TableNames:      strings.Split(source.TableName, ","),
 		SlotName:        source.SlotName,
 		PublicationName: source.PublicationName,
+		StartPosition:   source.CDCPosition, // Resume from saved position
 		EventHandler:    w.createEventHandler(source),
 	}
 
-	// Create the replication client
-	// NOTE: Replication is complex and PostgreSQL-specific.
-	// For now, we track the client in the registry and the adapter
-	// handles the actual replication operations internally.
-	_ = dbClient.AdapterConnection.(adapter.Connection)
+	// Log if we're resuming from a saved position
+	if source.CDCPosition != "" {
+		w.logger.Info("Resuming replication for %s from saved position: %s (events processed: %d)",
+			source.ReplicationSourceID, source.CDCPosition, source.EventsProcessed)
+	}
 
-	// Create a placeholder client for tracking
-	// The actual replication connection will be managed by the adapter
-	client := &dbclient.ReplicationClient{
-		ReplicationID:     source.ReplicationSourceID,
-		DatabaseID:        source.DatabaseID,
-		ReplicationSource: source,
-		Config:            replicationConfig,
-		IsConnected:       1,
+	// Actually create the replication connection using the PostgreSQL-specific code
+	// This will create the replication slot, publication, and establish the connection
+	var client *dbclient.ReplicationClient
+	var replicationSourceObj dbclient.ReplicationSourceInterface
+
+	if dbClient.DatabaseType == "postgres" {
+		// Import postgres package dynamically to avoid import cycles
+		// Call ConnectReplication to create the actual replication source
+		pgClient, pgSource, err := postgres.ConnectReplication(replicationConfig)
+		if err != nil {
+			return fmt.Errorf("failed to connect PostgreSQL replication: %w", err)
+		}
+		client = pgClient
+		replicationSourceObj = pgSource
+	} else {
+		// For non-PostgreSQL databases, create a placeholder client
+		w.logger.Warn("Database type %s does not have replication support in ReplicationWatcher yet", dbClient.DatabaseType)
+		client = &dbclient.ReplicationClient{
+			ReplicationID:     source.ReplicationSourceID,
+			DatabaseID:        source.DatabaseID,
+			ReplicationSource: source,
+			Config:            replicationConfig,
+			IsConnected:       1,
+		}
 	}
 
 	// Track the client in registry
 	registry.AddReplicationClient(client)
 
 	// Start the replication source
-	if replicationSource, ok := client.ReplicationSource.(dbclient.ReplicationSourceInterface); ok {
-		if err := replicationSource.Start(); err != nil {
+	if replicationSourceObj != nil {
+		if err := replicationSourceObj.Start(); err != nil {
 			w.logger.Error("Failed to start replication source for %s: %v", source.ReplicationSourceID, err)
 			// Don't return error, just log it
 		} else {

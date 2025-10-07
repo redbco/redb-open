@@ -679,18 +679,21 @@ func (r *Repository) GetLatestStoredDatabaseSchema(ctx context.Context, database
 
 // ReplicationSource represents a replication source in the database
 type ReplicationSource struct {
-	ReplicationSourceID string    `json:"replication_source_id"`
-	TenantID            string    `json:"tenant_id"`
-	WorkspaceID         string    `json:"workspace_id"`
-	DatabaseID          string    `json:"database_id"`
-	TableName           string    `json:"table_name"`
-	RelationshipID      string    `json:"relationship_id"`
-	PublicationName     string    `json:"publication_name"`
-	SlotName            string    `json:"slot_name"`
-	StatusMessage       string    `json:"status_message"`
-	Status              string    `json:"status"`
-	Created             time.Time `json:"created"`
-	Updated             time.Time `json:"updated"`
+	ReplicationSourceID string     `json:"replication_source_id"`
+	TenantID            string     `json:"tenant_id"`
+	WorkspaceID         string     `json:"workspace_id"`
+	DatabaseID          string     `json:"database_id"`
+	TableName           string     `json:"table_name"`
+	RelationshipID      string     `json:"relationship_id"`
+	PublicationName     string     `json:"publication_name"`
+	SlotName            string     `json:"slot_name"`
+	CDCPosition         string     `json:"cdc_position"`         // Current replication position (LSN, binlog, etc.)
+	EventsProcessed     int64      `json:"events_processed"`     // Number of events processed
+	LastEventTimestamp  *time.Time `json:"last_event_timestamp"` // Timestamp of last processed event
+	StatusMessage       string     `json:"status_message"`
+	Status              string     `json:"status"`
+	Created             time.Time  `json:"created"`
+	Updated             time.Time  `json:"updated"`
 }
 
 // CreateReplicationSource creates a new replication source in the database
@@ -748,6 +751,9 @@ func (r *Repository) GetReplicationSource(ctx context.Context, replicationSource
 			relationship_id,
 			publication_name,
 			slot_name,
+			cdc_position,
+			events_processed,
+			last_event_timestamp,
 			status_message,
 			status,
 			created,
@@ -768,6 +774,9 @@ func (r *Repository) GetReplicationSource(ctx context.Context, replicationSource
 		&source.RelationshipID,
 		&source.PublicationName,
 		&source.SlotName,
+		&source.CDCPosition,
+		&source.EventsProcessed,
+		&source.LastEventTimestamp,
 		&source.StatusMessage,
 		&source.Status,
 		&source.Created,
@@ -795,6 +804,9 @@ func (r *Repository) GetAllReplicationSources(ctx context.Context, workspaceID s
 			relationship_id,
 			publication_name,
 			slot_name,
+			cdc_position,
+			events_processed,
+			last_event_timestamp,
 			status_message,
 			status,
 			created,
@@ -822,6 +834,9 @@ func (r *Repository) GetAllReplicationSources(ctx context.Context, workspaceID s
 			&source.RelationshipID,
 			&source.PublicationName,
 			&source.SlotName,
+			&source.CDCPosition,
+			&source.EventsProcessed,
+			&source.LastEventTimestamp,
 			&source.StatusMessage,
 			&source.Status,
 			&source.Created,
@@ -868,6 +883,34 @@ func (r *Repository) UpdateReplicationSourceStatus(ctx context.Context, replicat
 	return nil
 }
 
+// UpdateReplicationSourcePosition updates the CDC position and metrics of a replication source
+func (r *Repository) UpdateReplicationSourcePosition(ctx context.Context, replicationSourceID string, position string, eventsProcessed int64) error {
+	syslog.Info("anchor", "Updating replication source position for %s: position=%s, events=%d", replicationSourceID, position, eventsProcessed)
+
+	query := `
+		UPDATE replication_sources 
+		SET 
+			cdc_position = $1,
+			events_processed = $2,
+			last_event_timestamp = CURRENT_TIMESTAMP,
+			updated = CURRENT_TIMESTAMP
+		WHERE replication_source_id = $3
+	`
+
+	result, err := r.db.Pool().Exec(ctx, query, position, eventsProcessed, replicationSourceID)
+	if err != nil {
+		return fmt.Errorf("error updating replication source position: %w", err)
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("replication source with ID %s not found", replicationSourceID)
+	}
+
+	syslog.Info("anchor", "Successfully updated replication source position for %s", replicationSourceID)
+	return nil
+}
+
 // RemoveReplicationSource removes a replication source from the database
 func (r *Repository) RemoveReplicationSource(ctx context.Context, replicationSourceID string) error {
 	syslog.Info("anchor", "Removing replication source %s", replicationSourceID)
@@ -885,5 +928,32 @@ func (r *Repository) RemoveReplicationSource(ctx context.Context, replicationSou
 	}
 
 	syslog.Info("anchor", "Successfully removed replication source %s", replicationSourceID)
+	return nil
+}
+
+// UpdateRelationshipStatus updates the status of a relationship
+func (r *Repository) UpdateRelationshipStatus(ctx context.Context, relationshipID string, status string, statusMessage string) error {
+	syslog.Info("anchor", "Updating relationship status for %s: status=%s, message=%s", relationshipID, status, statusMessage)
+
+	query := `
+		UPDATE relationships 
+		SET 
+			status = $1,
+			status_message = $2,
+			updated = CURRENT_TIMESTAMP
+		WHERE relationship_id = $3
+	`
+
+	result, err := r.db.Pool().Exec(ctx, query, status, statusMessage, relationshipID)
+	if err != nil {
+		return fmt.Errorf("error updating relationship status: %w", err)
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("relationship with ID %s not found", relationshipID)
+	}
+
+	syslog.Info("anchor", "Successfully updated relationship status for %s", relationshipID)
 	return nil
 }

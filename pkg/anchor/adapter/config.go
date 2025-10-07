@@ -129,6 +129,9 @@ type ReplicationConfig struct {
 	PublicationName string   `json:"publicationName,omitempty"` // PostgreSQL publication
 	StreamNames     []string `json:"streamNames,omitempty"`     // Snowflake streams
 
+	// Resume/checkpoint support
+	StartPosition string `json:"startPosition,omitempty"` // Starting position for resume (LSN, binlog position, etc.)
+
 	// Event handling
 	EventHandler func(map[string]interface{}) `json:"-"` // Event callback function
 

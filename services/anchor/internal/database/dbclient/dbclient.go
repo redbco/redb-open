@@ -134,6 +134,7 @@ type ReplicationConfig struct {
 	TableNames         []string                     `json:"tableNames,omitempty"`         // Tables to replicate (now supports multiple)
 	SlotName           string                       `json:"slotName,omitempty"`           // Postgres replication slot
 	PublicationName    string                       `json:"publicationName,omitempty"`    // Postgres publication
+	StartPosition      string                       `json:"startPosition,omitempty"`      // Starting position for resume (LSN, binlog position, etc.)
 	StreamNames        []string                     `json:"streamNames,omitempty"`        // Snowflake streams
 	CollectionNames    []string                     `json:"collectionNames,omitempty"`    // MongoDB collections
 	IndexNames         []string                     `json:"indexNames,omitempty"`         // Elasticsearch indices

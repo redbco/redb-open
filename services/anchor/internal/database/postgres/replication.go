@@ -90,6 +90,13 @@ func ConnectReplication(config dbclient.ReplicationConfig) (*dbclient.Replicatio
 		logger:          nil, // Will be set by caller if available
 	}
 
+	// Set starting position for resume if provided
+	if config.StartPosition != "" {
+		if err := sourceDetails.SetPosition(config.StartPosition); err != nil {
+			return nil, nil, fmt.Errorf("error setting start position: %w", err)
+		}
+	}
+
 	// If slot name or publication name are not provided, generate them
 	if sourceDetails.SlotName == "" {
 		sourceDetails.SlotName = fmt.Sprintf("slot_%s_%s",
@@ -914,7 +921,9 @@ func startLogicalReplication(conn *pgconn.PgConn, slotName string, publicationNa
 		return fmt.Errorf("cannot start logical replication: connection is nil")
 	}
 
-	// Start replication with the slot and publication
+	// Start replication with the slot and publication from the beginning
+	// Note: If resuming from a saved position, the replication slot will automatically
+	// continue from where it left off (slots maintain their own position)
 	query := fmt.Sprintf("START_REPLICATION SLOT %s LOGICAL 0/0 (proto_version '1', publication_names '%s')", slotName, publicationName)
 
 	if logger != nil {
@@ -1051,6 +1060,9 @@ func streamReplicationEvents(conn *pgconn.PgConn, details *PostgresReplicationSo
 							walEndLSN := uint64(data[9])<<56 | uint64(data[10])<<48 | uint64(data[11])<<40 | uint64(data[12])<<32 |
 								uint64(data[13])<<24 | uint64(data[14])<<16 | uint64(data[15])<<8 | uint64(data[16])
 							lastReceivedLSN = walEndLSN
+
+							// Update replication position for graceful shutdown/resume
+							details.UpdateLSN(pglogrepl.LSN(walEndLSN))
 
 							// Send immediate acknowledgment
 							if logger != nil {

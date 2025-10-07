@@ -247,6 +247,101 @@ func (e *Engine) Stop(ctx context.Context) error {
 		}
 	}
 
+	// Gracefully stop and save CDC replication streams
+	if e.logger != nil {
+		e.logger.Info("Stopping active CDC replication streams...")
+	}
+
+	// Create a context with timeout for CDC shutdown
+	cdcCtx, cdcCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cdcCancel()
+
+	manager := getCDCManager()
+	manager.mu.RLock()
+	activeStreams := make(map[string]*CDCReplicationStream)
+	for id, stream := range manager.activeReplications {
+		activeStreams[id] = stream
+	}
+	manager.mu.RUnlock()
+
+	if len(activeStreams) > 0 {
+		if e.logger != nil {
+			e.logger.Infof("Found %d active CDC streams to shutdown", len(activeStreams))
+		}
+
+		// Get config repository for updating statuses
+		globalState := state.GetInstance()
+		configRepo := globalState.GetConfigRepository()
+
+		for id, stream := range activeStreams {
+			// Save current stream state to database
+			if err := e.saveCDCStreamState(cdcCtx, stream); err != nil {
+				if e.logger != nil {
+					e.logger.Errorf("Failed to save CDC stream state for %s: %v", id, err)
+				}
+			}
+
+			// Mark the replication source as STOPPED in database
+			// This ensures it won't auto-start on application restart
+			if configRepo != nil {
+				if err := configRepo.UpdateReplicationSourceStatus(cdcCtx, stream.ReplicationSourceID, "STATUS_STOPPED", "Stopped during application shutdown"); err != nil {
+					if e.logger != nil {
+						e.logger.Errorf("Failed to update replication source status for %s: %v", id, err)
+					}
+				} else if e.logger != nil {
+					e.logger.Infof("Marked replication source %s as STOPPED in database", id)
+				}
+
+				// Also mark the relationship as STOPPED
+				if stream.RelationshipID != "" {
+					if err := configRepo.UpdateRelationshipStatus(cdcCtx, stream.RelationshipID, "STATUS_STOPPED", "Stopped during application shutdown"); err != nil {
+						if e.logger != nil {
+							e.logger.Errorf("Failed to update relationship status for %s: %v", stream.RelationshipID, err)
+						}
+					} else if e.logger != nil {
+						e.logger.Infof("Marked relationship %s as STOPPED in database", stream.RelationshipID)
+					}
+				}
+			}
+
+			// Stop the replication source
+			if stream.ReplicationSource != nil {
+				if err := stream.ReplicationSource.Stop(); err != nil {
+					if e.logger != nil {
+						e.logger.Warnf("Error stopping replication source %s: %v", id, err)
+					}
+				} else if e.logger != nil {
+					e.logger.Infof("Stopped replication source %s", id)
+				}
+			}
+
+			// Close the replication connection
+			if stream.ReplicationSource != nil {
+				if err := stream.ReplicationSource.Close(); err != nil {
+					if e.logger != nil {
+						e.logger.Warnf("Error closing replication source %s: %v", id, err)
+					}
+				}
+			}
+
+			// Signal stop
+			if stream.StopChan != nil {
+				close(stream.StopChan)
+			}
+		}
+
+		// Clear the active replications map
+		manager.mu.Lock()
+		manager.activeReplications = make(map[string]*CDCReplicationStream)
+		manager.mu.Unlock()
+
+		if e.logger != nil {
+			e.logger.Info("CDC replication streams shutdown completed")
+		}
+	} else if e.logger != nil {
+		e.logger.Info("No active CDC streams to shutdown")
+	}
+
 	// Update connection statuses before disconnecting (only in non-standalone mode)
 	if !e.standalone {
 		globalState := state.GetInstance()

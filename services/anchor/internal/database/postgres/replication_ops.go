@@ -82,6 +82,13 @@ func (r *ReplicationOps) Connect(ctx context.Context, config adapter.Replication
 		).WithContext("error", "invalid replication source type")
 	}
 
+	// Set starting position for resume if provided
+	if config.StartPosition != "" {
+		if err := pgSource.SetPosition(config.StartPosition); err != nil {
+			return nil, adapter.WrapError(dbcapabilities.PostgreSQL, "set_start_position", err)
+		}
+	}
+
 	return &ReplicationSource{
 		client: client,
 		source: pgSource,
@@ -192,4 +199,24 @@ func (r *ReplicationSource) Stop() error {
 // Close closes the replication source.
 func (r *ReplicationSource) Close() error {
 	return r.source.Close()
+}
+
+// GetPosition returns the current replication position (LSN).
+func (r *ReplicationSource) GetPosition() (string, error) {
+	return r.source.GetPosition()
+}
+
+// SetPosition sets the starting replication position for resume.
+func (r *ReplicationSource) SetPosition(position string) error {
+	return r.source.SetPosition(position)
+}
+
+// SaveCheckpoint persists the current replication position.
+func (r *ReplicationSource) SaveCheckpoint(ctx context.Context, position string) error {
+	return r.source.SaveCheckpoint(ctx, position)
+}
+
+// SetCheckpointFunc sets the callback function for persisting checkpoints.
+func (r *ReplicationSource) SetCheckpointFunc(fn func(context.Context, string) error) {
+	r.source.SetCheckpointFunc(fn)
 }
