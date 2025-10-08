@@ -89,6 +89,12 @@ After starting, create a profile and authenticate with the CLI:
 ./redb-cli relationships stop pg_to_deployed1    # Pause synchronization
 ./redb-cli relationships start pg_to_deployed1   # Resume synchronization
 ./redb-cli relationships remove pg_to_deployed1  # Remove completely
+
+## Seed a mesh (Node 1)
+./redb-cli mesh seed
+
+# Join a mesh (Node 2)
+./redb-cli mesh join localhost:10001
 ```
 
 ### Make targets

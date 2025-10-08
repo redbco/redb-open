@@ -27,11 +27,11 @@ func NewService(db *database.PostgreSQL, logger *logger.Logger) *Service {
 
 // Mesh represents a mesh in the system
 type Mesh struct {
-	ID          string
+	ID          int64
 	Name        string
 	Description string
 	PublicKey   string
-	AllowJoin   bool
+	AllowJoin   string // join_key_enum: 'OPEN', 'KEY_REQUIRED', or 'CLOSED'
 	NodeCount   int32
 	Status      string
 	Created     time.Time
@@ -40,7 +40,7 @@ type Mesh struct {
 
 // Node represents a node in the mesh
 type Node struct {
-	ID          string
+	ID          int64
 	Name        string
 	Description string
 	Platform    string
@@ -70,6 +70,14 @@ func (s *Service) Create(ctx context.Context, name, description string, allowJoi
 		return nil, errors.New("mesh with this name already exists")
 	}
 
+	// Convert boolean to enum value
+	var allowJoinEnum string
+	if allowJoin {
+		allowJoinEnum = "OPEN"
+	} else {
+		allowJoinEnum = "CLOSED"
+	}
+
 	// Insert the mesh into the database
 	query := `
 		INSERT INTO mesh (mesh_name, mesh_description, allow_join)
@@ -78,7 +86,7 @@ func (s *Service) Create(ctx context.Context, name, description string, allowJoi
 	`
 
 	var mesh Mesh
-	err = s.db.Pool().QueryRow(ctx, query, name, description, allowJoin).Scan(
+	err = s.db.Pool().QueryRow(ctx, query, name, description, allowJoinEnum).Scan(
 		&mesh.ID,
 		&mesh.Name,
 		&mesh.Description,
@@ -99,8 +107,8 @@ func (s *Service) Create(ctx context.Context, name, description string, allowJoi
 }
 
 // Get retrieves a mesh by ID
-func (s *Service) Get(ctx context.Context, id string) (*Mesh, error) {
-	s.logger.Infof("Retrieving mesh from database with ID: %s", id)
+func (s *Service) Get(ctx context.Context, id int64) (*Mesh, error) {
+	s.logger.Infof("Retrieving mesh from database with ID: %d", id)
 	query := `
 		SELECT mesh_id, mesh_name, mesh_description, allow_join, status, created, updated
 		FROM mesh
@@ -132,8 +140,8 @@ func (s *Service) Get(ctx context.Context, id string) (*Mesh, error) {
 }
 
 // Update updates specific fields of a mesh
-func (s *Service) Update(ctx context.Context, id string, updates map[string]interface{}) (*Mesh, error) {
-	s.logger.Infof("Updating mesh in database with ID: %s, updates: %v", id, updates)
+func (s *Service) Update(ctx context.Context, id int64, updates map[string]interface{}) (*Mesh, error) {
+	s.logger.Infof("Updating mesh in database with ID: %d, updates: %v", id, updates)
 
 	// If no updates, just return the current mesh
 	if len(updates) == 0 {
@@ -181,8 +189,8 @@ func (s *Service) Update(ctx context.Context, id string, updates map[string]inte
 }
 
 // Delete deletes a mesh
-func (s *Service) Delete(ctx context.Context, id string) error {
-	s.logger.Infof("Deleting mesh from database with ID: %s", id)
+func (s *Service) Delete(ctx context.Context, id int64) error {
+	s.logger.Infof("Deleting mesh from database with ID: %d", id)
 	query := `DELETE FROM mesh WHERE mesh_id = $1`
 
 	commandTag, err := s.db.Pool().Exec(ctx, query, id)
@@ -199,8 +207,8 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 }
 
 // GetNodes retrieves all nodes in a mesh
-func (s *Service) GetNodes(ctx context.Context, meshID string) ([]*Node, error) {
-	s.logger.Infof("Listing nodes from database for mesh: %s", meshID)
+func (s *Service) GetNodes(ctx context.Context, meshID int64) ([]*Node, error) {
+	s.logger.Infof("Listing nodes from database for mesh: %d", meshID)
 	query := `
 		SELECT n.node_id, n.node_name, n.node_description, n.node_platform, n.node_version, 
 		       n.region_id, COALESCE(r.region_name, ''), HOST(n.ip_address), n.port, n.status, n.created, n.updated
@@ -256,8 +264,8 @@ func (s *Service) GetNodes(ctx context.Context, meshID string) ([]*Node, error) 
 }
 
 // GetNode retrieves a specific node by ID
-func (s *Service) GetNode(ctx context.Context, meshID, nodeID string) (*Node, error) {
-	s.logger.Infof("Retrieving node from database with ID: %s in mesh: %s", nodeID, meshID)
+func (s *Service) GetNode(ctx context.Context, meshID, nodeID int64) (*Node, error) {
+	s.logger.Infof("Retrieving node from database with ID: %d in mesh: %d", nodeID, meshID)
 	query := `
 		SELECT n.node_id, n.node_name, n.node_description, n.node_platform, n.node_version, 
 		       n.region_id, COALESCE(r.region_name, ''), HOST(n.ip_address), n.port, n.status, n.created, n.updated
@@ -305,7 +313,7 @@ func (s *Service) GetLocalNode(ctx context.Context) (*Node, error) {
 	s.logger.Infof("Retrieving local node information from database")
 
 	query := `
-		SELECT n.node_id, n.node_name, n.node_description, n.node_platform, n.node_version, 
+		SELECT n.node_id, n.node_name, n.node_description, n.node_public_key, n.node_platform, n.node_version, 
 		       n.region_id, HOST(n.ip_address), n.port, n.status, n.created, n.updated
 		FROM nodes n
 		JOIN localidentity li ON n.node_id = li.identity_id
@@ -314,10 +322,12 @@ func (s *Service) GetLocalNode(ctx context.Context) (*Node, error) {
 
 	var node Node
 	var regionIDScan *string
+	var publicKeyBytes []byte
 	err := s.db.Pool().QueryRow(ctx, query).Scan(
 		&node.ID,
 		&node.Name,
 		&node.Description,
+		&publicKeyBytes,
 		&node.Platform,
 		&node.Version,
 		&regionIDScan,
@@ -342,6 +352,11 @@ func (s *Service) GetLocalNode(ctx context.Context) (*Node, error) {
 		node.RegionID = ""
 	}
 
+	// Convert public key bytes to string
+	if len(publicKeyBytes) > 0 {
+		node.PublicKey = string(publicKeyBytes)
+	}
+
 	// Get region name if region_id is provided
 	if regionIDScan != nil && *regionIDScan != "" {
 		var regionName string
@@ -351,13 +366,13 @@ func (s *Service) GetLocalNode(ctx context.Context) (*Node, error) {
 		}
 	}
 
-	s.logger.Infof("Retrieved local node: %s (ID: %s)", node.Name, node.ID)
+	s.logger.Infof("Retrieved local node: %s (ID: %d)", node.Name, node.ID)
 	return &node, nil
 }
 
 // CreateNode creates a new node in the mesh
-func (s *Service) CreateNode(ctx context.Context, meshID, nodeName, nodeDescription, platform, version, ipAddress string, port int32, regionID *string) (*Node, error) {
-	s.logger.Infof("Creating node in database with name: %s for mesh: %s", nodeName, meshID)
+func (s *Service) CreateNode(ctx context.Context, meshID int64, nodeName, nodeDescription, platform, version, ipAddress string, port int32, regionID *string) (*Node, error) {
+	s.logger.Infof("Creating node in database with name: %s for mesh: %d", nodeName, meshID)
 
 	// Check if node with the same name already exists
 	var exists bool
@@ -416,7 +431,7 @@ func (s *Service) CreateNode(ctx context.Context, meshID, nodeName, nodeDescript
 }
 
 // UpdateMeshStatus updates the status of the mesh
-func (s *Service) UpdateMeshStatus(ctx context.Context, meshID, status string) error {
+func (s *Service) UpdateMeshStatus(ctx context.Context, meshID int64, status string) error {
 	s.logger.Infof("Updating mesh status to: %s", status)
 
 	_, err := s.db.Pool().Exec(ctx, `
@@ -434,8 +449,8 @@ func (s *Service) UpdateMeshStatus(ctx context.Context, meshID, status string) e
 }
 
 // UpdateNodeStatus updates the status of a specific node
-func (s *Service) UpdateNodeStatus(ctx context.Context, nodeID, status string) error {
-	s.logger.Infof("Updating node %s status to: %s", nodeID, status)
+func (s *Service) UpdateNodeStatus(ctx context.Context, nodeID int64, status string) error {
+	s.logger.Infof("Updating node %d status to: %s", nodeID, status)
 
 	_, err := s.db.Pool().Exec(ctx, `
 		UPDATE nodes 
@@ -447,7 +462,7 @@ func (s *Service) UpdateNodeStatus(ctx context.Context, nodeID, status string) e
 		return fmt.Errorf("failed to update node status: %w", err)
 	}
 
-	s.logger.Infof("Successfully updated node %s status to: %s", nodeID, status)
+	s.logger.Infof("Successfully updated node %d status to: %s", nodeID, status)
 	return nil
 }
 
@@ -469,13 +484,13 @@ func (s *Service) UpdateAllNodesStatus(ctx context.Context, status string) error
 }
 
 // SetNodeAsJoining sets the local node status to JOINING when mesh is being seeded
-func (s *Service) SetNodeAsJoining(ctx context.Context, nodeID string) error {
+func (s *Service) SetNodeAsJoining(ctx context.Context, nodeID int64) error {
 	return s.UpdateNodeStatus(ctx, nodeID, "STATUS_JOINING")
 }
 
 // GetMeshesByNodeID retrieves all meshes that a node belongs to
-func (s *Service) GetMeshesByNodeID(ctx context.Context, nodeID string) ([]*Mesh, error) {
-	s.logger.Infof("Getting meshes for node ID: %s", nodeID)
+func (s *Service) GetMeshesByNodeID(ctx context.Context, nodeID int64) ([]*Mesh, error) {
+	s.logger.Infof("Getting meshes for node ID: %d", nodeID)
 
 	// Check if the node exists and get its status
 	var nodeStatus string
@@ -486,7 +501,7 @@ func (s *Service) GetMeshesByNodeID(ctx context.Context, nodeID string) ([]*Mesh
 		return nil, fmt.Errorf("node not found: %w", err)
 	}
 
-	s.logger.Infof("Node %s has status: %s", nodeID, nodeStatus)
+	s.logger.Infof("Node %d has status: %s", nodeID, nodeStatus)
 
 	// For now, we'll use a simple approach - if node exists and has been part of mesh operations,
 	// return all available meshes. In a full implementation, this would query a node_mesh_membership table
@@ -499,7 +514,7 @@ func (s *Service) GetMeshesByNodeID(ctx context.Context, nodeID string) ([]*Mesh
 
 	if nodeStatus == "STATUS_CLEAN" {
 		// Clean nodes are not part of any mesh
-		s.logger.Infof("Node %s is clean, not part of any mesh", nodeID)
+		s.logger.Infof("Node %d is clean, not part of any mesh", nodeID)
 		return []*Mesh{}, nil
 	} else {
 		// Node has been involved in mesh operations, return available meshes
@@ -547,8 +562,8 @@ func (s *Service) GetMeshesByNodeID(ctx context.Context, nodeID string) ([]*Mesh
 }
 
 // AddNodeToMesh adds a node to a mesh
-func (s *Service) AddNodeToMesh(ctx context.Context, meshID, nodeID string) error {
-	s.logger.Infof("Adding node %s to mesh %s", nodeID, meshID)
+func (s *Service) AddNodeToMesh(ctx context.Context, meshID, nodeID int64) error {
+	s.logger.Infof("Adding node %d to mesh %d", nodeID, meshID)
 
 	// For now, we'll just update the node status to indicate mesh membership
 	// In a full implementation, this would insert into a node_mesh_membership table
@@ -562,13 +577,13 @@ func (s *Service) AddNodeToMesh(ctx context.Context, meshID, nodeID string) erro
 		return fmt.Errorf("failed to add node to mesh: %w", err)
 	}
 
-	s.logger.Infof("Successfully added node %s to mesh %s", nodeID, meshID)
+	s.logger.Infof("Successfully added node %d to mesh %d", nodeID, meshID)
 	return nil
 }
 
 // RemoveNodeFromMesh removes a node from a mesh
-func (s *Service) RemoveNodeFromMesh(ctx context.Context, meshID, nodeID string) error {
-	s.logger.Infof("Removing node %s from mesh %s", nodeID, meshID)
+func (s *Service) RemoveNodeFromMesh(ctx context.Context, meshID, nodeID int64) error {
+	s.logger.Infof("Removing node %d from mesh %d", nodeID, meshID)
 
 	// For now, we'll just update the node status to clean
 	// In a full implementation, this would delete from a node_mesh_membership table
@@ -582,15 +597,15 @@ func (s *Service) RemoveNodeFromMesh(ctx context.Context, meshID, nodeID string)
 		return fmt.Errorf("failed to remove node from mesh: %w", err)
 	}
 
-	s.logger.Infof("Successfully removed node %s from mesh %s", nodeID, meshID)
+	s.logger.Infof("Successfully removed node %d from mesh %d", nodeID, meshID)
 	return nil
 }
 
 // GetNodeByID retrieves a node by its ID
-func (s *Service) GetNodeByID(ctx context.Context, nodeID string) (*Node, error) {
-	s.logger.Infof("Retrieving node from database with ID: %s", nodeID)
+func (s *Service) GetNodeByID(ctx context.Context, nodeID int64) (*Node, error) {
+	s.logger.Infof("Retrieving node from database with ID: %d", nodeID)
 	query := `
-		SELECT n.node_id, n.node_name, n.node_description, n.node_platform, n.node_version, 
+		SELECT n.node_id, n.node_name, n.node_description, n.node_public_key, n.node_platform, n.node_version, 
 		       n.region_id, COALESCE(r.region_name, ''), n.ip_address, n.port, n.status, n.created, n.updated
 		FROM nodes n
 		LEFT JOIN regions r ON n.region_id = r.region_id
@@ -599,10 +614,12 @@ func (s *Service) GetNodeByID(ctx context.Context, nodeID string) (*Node, error)
 
 	var node Node
 	var regionIDScan *string
+	var publicKeyBytes []byte
 	err := s.db.Pool().QueryRow(ctx, query, nodeID).Scan(
 		&node.ID,
 		&node.Name,
 		&node.Description,
+		&publicKeyBytes,
 		&node.Platform,
 		&node.Version,
 		&regionIDScan,
@@ -626,6 +643,11 @@ func (s *Service) GetNodeByID(ctx context.Context, nodeID string) (*Node, error)
 		node.RegionID = *regionIDScan
 	} else {
 		node.RegionID = ""
+	}
+
+	// Convert public key bytes to string
+	if len(publicKeyBytes) > 0 {
+		node.PublicKey = string(publicKeyBytes)
 	}
 
 	return &node, nil

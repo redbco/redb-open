@@ -25,3 +25,6 @@ vendor/
 
 # MachOS DS_Store
 **/.DS_Store
+
+# Internal config files
+internal/

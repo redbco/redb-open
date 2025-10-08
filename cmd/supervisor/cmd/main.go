@@ -70,8 +70,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Set environment variable for database name so it's available during initialization
+	// Set environment variables so they're available to all services and during initialization
 	os.Setenv("REDB_DATABASE_NAME", cfg.Database.Name)
+	if cfg.Database.User != "" {
+		os.Setenv("REDB_DATABASE_USER", cfg.Database.User)
+	}
+	if cfg.Keyring.Backend != "" {
+		os.Setenv("REDB_KEYRING_BACKEND", cfg.Keyring.Backend)
+	}
+	if cfg.Keyring.Path != "" {
+		os.Setenv("REDB_KEYRING_PATH", cfg.Keyring.Path)
+	}
+	if cfg.InstanceGroup.GroupID != "" {
+		os.Setenv("REDB_INSTANCE_GROUP_ID", cfg.InstanceGroup.GroupID)
+	}
 
 	// Handle initialization mode
 	if *initializeFlag {

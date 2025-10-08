@@ -98,7 +98,19 @@ func (i *Initializer) getProductionDatabaseUser() string {
 		}
 	}
 
-	// Fallback to default
+	// Fallback to environment variable
+	if dbUser := os.Getenv("REDB_DATABASE_USER"); dbUser != "" {
+		return dbUser
+	}
+
+	// For multi-instance support, username should match the database name
+	// This ensures each instance has its own isolated database user
+	dbName := i.getProductionDatabaseName()
+	if dbName != "" && dbName != ProductionDatabase {
+		return dbName
+	}
+
+	// Final fallback to default (for backward compatibility)
 	return ProductionUser
 }
 
@@ -949,37 +961,45 @@ CHECK (
 	return nil
 }
 
-// generateRoutingID generates a consistent routing ID from a node ID string
-// This uses the same algorithm as the mesh service to ensure consistency
-func (i *Initializer) generateRoutingID(nodeID string) int64 {
-	if nodeID == "" {
-		return 1001 // Default fallback
-	}
+// generateUniqueNodeID generates a unique node ID using timestamp and randomness
+// This ensures different nodes initialized independently have different IDs
+func (i *Initializer) generateUniqueNodeID() int64 {
+	// Use current time in milliseconds since epoch as base
+	now := time.Now().UnixMilli() // Returns milliseconds since 1970
 
-	// Remove the "node_" prefix if present
-	cleanID := nodeID
-	if len(nodeID) > 5 && nodeID[:5] == "node_" {
-		cleanID = nodeID[5:]
-	}
-
-	// Use the same hash function as the mesh service to ensure consistent mapping
-	var hash uint64
-	for i, c := range cleanID {
-		if i >= 16 { // Limit to first 16 characters to avoid overflow
-			break
+	// Generate 4 random bytes for additional uniqueness
+	randomBytes := make([]byte, 4)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		// Fallback to timestamp + process ID if random fails
+		randomBytes = []byte{
+			byte(os.Getpid() >> 24),
+			byte(os.Getpid() >> 16),
+			byte(os.Getpid() >> 8),
+			byte(os.Getpid()),
 		}
-		hash = hash*31 + uint64(c)
 	}
 
-	// Ensure we have a reasonable range (avoid 0 and very large numbers)
-	if hash == 0 {
-		hash = 1001 // Default fallback
+	// Combine: use lower 40 bits of timestamp + 24 bits of random
+	// This gives us unique IDs while staying in positive int64 range
+	// Format: [timestamp(40 bits)][random(24 bits)]
+	timestamp := uint64(now) & 0xFFFFFFFFFF                                                   // 40 bits
+	random := uint64(randomBytes[0])<<16 | uint64(randomBytes[1])<<8 | uint64(randomBytes[2]) // 24 bits
+
+	nodeID := int64((timestamp << 24) | random)
+
+	// Ensure it's positive (though it should be with our bit masking)
+	if nodeID < 0 {
+		nodeID = -nodeID
 	}
 
-	// Keep it in a reasonable range for mesh operations (1000-999999)
-	hash = hash%999000 + 1000
+	// Ensure minimum value (avoid very small IDs)
+	if nodeID < 1000 {
+		nodeID = 1000 + nodeID
+	}
 
-	return int64(hash)
+	i.logger.Infof("Generated unique node ID: %d (timestamp: %d, random: %d)", nodeID, timestamp, random)
+	return nodeID
 }
 
 // getLocalIPAddress attempts to get the local machine's IP address
@@ -1023,39 +1043,18 @@ func (i *Initializer) createLocalNode(ctx context.Context, creds *DatabaseCreden
 	defer pool.Close()
 
 	// Check if local node already exists
-	var existingNodeID string
-	var existingRoutingID *int64 // Use pointer to handle NULL values
+	var existingNodeID int64
+	var existingNodeName string
 	err = pool.QueryRow(ctx, `
-		SELECT li.identity_id, n.routing_id
+		SELECT li.identity_id, n.node_name
 		FROM localidentity li
 		JOIN nodes n ON n.node_id = li.identity_id
 		LIMIT 1
-	`).Scan(&existingNodeID, &existingRoutingID)
+	`).Scan(&existingNodeID, &existingNodeName)
 	if err == nil {
-		// Local node already exists, check if it has routing_id
-		var existingNodeName string
-		err = pool.QueryRow(ctx, `
-			SELECT node_name FROM nodes WHERE node_id = $1
-		`, existingNodeID).Scan(&existingNodeName)
-		if err != nil {
-			return fmt.Errorf("failed to get existing node info: %w", err)
-		}
-
-		// If routing_id is missing, update the existing node
-		if existingRoutingID == nil {
-			routingID := i.generateRoutingID(existingNodeID)
-			_, err = pool.Exec(ctx, `
-				UPDATE nodes SET routing_id = $1 WHERE node_id = $2
-			`, routingID, existingNodeID)
-			if err != nil {
-				return fmt.Errorf("failed to update existing node with routing_id: %w", err)
-			}
-			i.logger.Infof("Updated existing node '%s' with routing ID '%d'", existingNodeName, routingID)
-		} else {
-			i.logger.Infof("Local node already exists: '%s' with ID '%s' and routing ID '%d'", existingNodeName, existingNodeID, *existingRoutingID)
-		}
-
-		nodeInfo.NodeID = existingNodeID
+		// Local node already exists
+		i.logger.Infof("Local node already exists: '%s' with ID '%d'", existingNodeName, existingNodeID)
+		nodeInfo.NodeID = fmt.Sprintf("%d", existingNodeID)
 		nodeInfo.NodeName = existingNodeName
 		return nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -1069,25 +1068,19 @@ func (i *Initializer) createLocalNode(ctx context.Context, creds *DatabaseCreden
 	}
 	defer tx.Rollback(ctx)
 
-	// Generate node ID and derive name
-	var nodeID string
-	err = tx.QueryRow(ctx, "SELECT generate_ulid('node')").Scan(&nodeID)
-	if err != nil {
-		return fmt.Errorf("failed to generate node ULID: %w", err)
-	}
+	// Generate a unique node ID using timestamp + random
+	// This ensures different nodes initialized at different times or on different systems have unique IDs
+	nodeID := i.generateUniqueNodeID()
 
-	// Create node name from ULID (take last 8 characters)
-	nodeIDSuffix := nodeID[len(nodeID)-8:]
-	nodeName := fmt.Sprintf("node-%s", nodeIDSuffix)
+	// Create a readable node name from the generated ID
+	nodeName := fmt.Sprintf("node-%d", nodeID)
 
-	// Generate routing ID for the node
-	routingID := i.generateRoutingID(nodeID)
-
-	// Insert node into nodes table
-	_, err = tx.Exec(ctx, `
-		INSERT INTO nodes (node_id, node_name, node_description, node_public_key, routing_id, ip_address, port, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, nodeID, nodeName, "Local node", []byte(nodeInfo.PublicKey), routingID, nodeInfo.IPAddress, nodeInfo.Port, "STATUS_ACTIVE")
+	// Insert node into nodes table with explicit node_id
+	err = tx.QueryRow(ctx, `
+		INSERT INTO nodes (node_id, node_name, node_description, node_public_key, ip_address, port, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING node_id
+	`, nodeID, nodeName, "Local node", []byte(nodeInfo.PublicKey), nodeInfo.IPAddress, nodeInfo.Port, "STATUS_ACTIVE").Scan(&nodeID)
 	if err != nil {
 		return fmt.Errorf("failed to insert node: %w", err)
 	}
@@ -1105,10 +1098,10 @@ func (i *Initializer) createLocalNode(ctx context.Context, creds *DatabaseCreden
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	nodeInfo.NodeID = nodeID
+	nodeInfo.NodeID = fmt.Sprintf("%d", nodeID)
 	nodeInfo.NodeName = nodeName
 
-	i.logger.Infof("Successfully created local node '%s' with ID '%s' and routing ID '%d'", nodeName, nodeID, routingID)
+	i.logger.Infof("Successfully created local node '%s' with ID '%d'", nodeName, nodeID)
 	return nil
 }
 

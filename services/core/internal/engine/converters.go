@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
@@ -46,11 +45,14 @@ func (s *Server) policyToProto(p *policy.Policy) (*corev1.Policy, error) {
 
 // meshToProto converts a mesh service model to protobuf
 func (s *Server) meshToProto(m *mesh.Mesh) *corev1.Mesh {
+	// Convert enum to boolean: 'OPEN' -> true, others -> false
+	allowJoin := m.AllowJoin == "OPEN"
+
 	return &corev1.Mesh{
-		MeshId:          m.ID,
+		MeshId:          fmt.Sprintf("%d", m.ID),
 		MeshName:        m.Name,
 		MeshDescription: m.Description,
-		AllowJoin:       m.AllowJoin,
+		AllowJoin:       allowJoin,
 		NodeCount:       m.NodeCount,
 		Status:          statusStringToProto(m.Status),
 	}
@@ -58,8 +60,6 @@ func (s *Server) meshToProto(m *mesh.Mesh) *corev1.Mesh {
 
 // nodeToProto converts a node service model to protobuf (legacy format)
 func (s *Server) nodeToProto(n *mesh.Node) *corev1.Node {
-	// Convert string node ID to uint64
-	nodeID, _ := strconv.ParseUint(n.ID, 10, 64)
 
 	// Map status to NodeStatus enum
 	var nodeStatus corev1.NodeStatus
@@ -79,7 +79,7 @@ func (s *Server) nodeToProto(n *mesh.Node) *corev1.Node {
 	}
 
 	return &corev1.Node{
-		NodeId:          strconv.FormatUint(nodeID, 10),
+		NodeId:          fmt.Sprintf("%d", n.ID),
 		NodeName:        n.Name,
 		NodeDescription: n.Description,
 		NodePlatform:    n.Platform,

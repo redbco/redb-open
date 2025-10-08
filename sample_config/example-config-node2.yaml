@@ -22,7 +22,7 @@ keyring:
   # Backend: "auto" (try system first, fallback to file), "system", or "file"
   backend: "file"
   # Path for file-based keyring (optional, uses default if not specified)
-  path: "./keyring.json"
+  path: "./keyring-node2.json"
   # Master key for file-based keyring encryption (use REDB_KEYRING_PASSWORD env var in production)
   # master_key: "your-secure-master-key"
   # Service name prefix for system keyring entries
@@ -33,15 +33,14 @@ instance_group:
   # Unique identifier for this instance group (change for each instance)
   group_id: "default"
   # Port offset to avoid conflicts (0 = no offset, 1000 = add 1000 to all ports)
-  # Port offset only applies to the gRPC ports, not the REST API or external Mesh ports
-  port_offset: 0
+  port_offset: 2000
 
 # Internal PostgreSQL database configuration
 database:
   # Database name
-  name: redb
+  name: node2
   # Database user (defaults to database name if not specified)
-  user: redb
+  user: node2
 
 logging:
   level: debug
@@ -101,7 +100,7 @@ services:
     args:
       - --grpc-bind=127.0.0.1:50056
       - --enable-grpc
-      - --listen=0.0.0.0:10001
+      - --listen=0.0.0.0:10002
       - --supervisor=localhost:50000
       - --config=config.yaml
     dependencies:
@@ -112,14 +111,14 @@ services:
     environment:
       SERVICE_NAME: mesh
     config:
-      services.mesh.external_port: "10001"
+      services.mesh.external_port: "10002"
       services.mesh.timeout: "30"
       services.mesh.mesh_id: "default-mesh"
-      services.mesh.node_id: "1001"
+      services.mesh.node_id: "2002"
       services.mesh.mesh_token: ""
       services.mesh.tls.enabled: "true"
-      services.mesh.tls.cert_file: "./node-1001-cert.pem"
-      services.mesh.tls.key_file: "./node-1001-key.pem"
+      services.mesh.tls.cert_file: "./node-2002-cert.pem"
+      services.mesh.tls.key_file: "./node-2002-key.pem"
       services.mesh.tls.ca_file: "./mesh-ca-cert.pem"
 
   anchor:
@@ -166,7 +165,7 @@ services:
   clientapi:
     enabled: true
     required: true
-    rest_api_port: 8080
+    rest_api_port: 8082
     executable: ./redb-clientapi
     args:
       - --port=50059

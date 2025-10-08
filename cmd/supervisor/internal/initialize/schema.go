@@ -64,12 +64,12 @@ CREATE TYPE join_key_enum AS ENUM ('OPEN', 'KEY_REQUIRED', 'CLOSED');
 
 -- Local Identity for system identification
 CREATE TABLE localidentity (
-    identity_id ulid PRIMARY KEY
+    identity_id BIGINT PRIMARY KEY
 );
 
 -- Mesh management for distributed system coordination
 CREATE TABLE mesh (
-    mesh_id ulid PRIMARY KEY DEFAULT generate_ulid('mesh'),
+    mesh_id BIGSERIAL PRIMARY KEY,
     mesh_name VARCHAR(255) UNIQUE NOT NULL,
     mesh_description TEXT DEFAULT '',
     allow_join join_key_enum DEFAULT 'KEY_REQUIRED',
@@ -109,7 +109,7 @@ CREATE TABLE regions (
 
 -- Core mesh topology (replaces old mesh_* tables)
 CREATE TABLE nodes (
-    node_id ulid PRIMARY KEY DEFAULT generate_ulid('node'),
+    node_id BIGSERIAL PRIMARY KEY,
     node_name VARCHAR(255) NOT NULL,
     node_description TEXT DEFAULT '',
     node_public_key BYTEA NOT NULL,
@@ -119,7 +119,6 @@ CREATE TABLE nodes (
     node_platform VARCHAR(100) DEFAULT '',
     node_version VARCHAR(100) DEFAULT '',
     region_id ulid REFERENCES regions(region_id) ON DELETE SET NULL,
-    routing_id BIGINT UNIQUE NOT NULL,
     ip_address INET,
     port INTEGER,
     status status_enum DEFAULT 'STATUS_CREATED',
@@ -130,8 +129,8 @@ CREATE TABLE nodes (
 
 CREATE TABLE routes (
     route_id ulid PRIMARY KEY DEFAULT generate_ulid('route'),
-    a_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
-    b_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    a_node BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    b_node BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
     latency_ms INTEGER DEFAULT 0,
     bandwidth_mbps INTEGER DEFAULT 0,
     loss DECIMAL(5,4) DEFAULT 0.0,
@@ -329,7 +328,7 @@ CREATE TABLE satellites (
     satellite_version VARCHAR(255) DEFAULT '1.0.0',
     satellite_region_id ulid REFERENCES regions(region_id),
     satellite_ip_address VARCHAR(255) NOT NULL,
-    connected_to_node_id ulid NOT NULL REFERENCES nodes(node_id),
+    connected_to_node_id BIGINT NOT NULL REFERENCES nodes(node_id),
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     status status_enum DEFAULT 'STATUS_PENDING',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -346,7 +345,7 @@ CREATE TABLE anchors (
     anchor_version VARCHAR(255) DEFAULT '1.0.0',
     anchor_region_id ulid REFERENCES regions(region_id),
     anchor_ip_address VARCHAR(255) NOT NULL,
-    connected_to_node_id ulid REFERENCES nodes(node_id),
+    connected_to_node_id BIGINT REFERENCES nodes(node_id),
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     status status_enum DEFAULT 'STATUS_PENDING',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -412,7 +411,7 @@ CREATE TABLE instances (
     tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE ON UPDATE CASCADE,
     workspace_id ulid NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE ON UPDATE CASCADE,
     environment_id ulid REFERENCES environments(environment_id) ON DELETE SET NULL ON UPDATE CASCADE,
-    connected_to_node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    connected_to_node_id BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE,
     instance_name VARCHAR(255) UNIQUE NOT NULL,
     instance_description TEXT DEFAULT '',
     instance_type VARCHAR(255) NOT NULL,
@@ -446,7 +445,7 @@ CREATE TABLE databases (
     tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE ON UPDATE CASCADE,
     workspace_id ulid NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE ON UPDATE CASCADE,
     environment_id ulid REFERENCES environments(environment_id) ON DELETE SET NULL ON UPDATE CASCADE,
-    connected_to_node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    connected_to_node_id BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE,
     instance_id ulid NOT NULL REFERENCES instances(instance_id) ON DELETE CASCADE ON UPDATE CASCADE,
     database_name VARCHAR(255) NOT NULL,
     database_description TEXT DEFAULT '',
@@ -841,7 +840,7 @@ $$ LANGUAGE plpgsql;
 -- =============================================================================
 
 CREATE TABLE mesh_lsa_versions (
-    node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    node_id BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
     version BIGINT NOT NULL,
     hash VARCHAR(64) NOT NULL,
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -854,7 +853,7 @@ CREATE TABLE mesh_raft_groups (
     type VARCHAR(10) NOT NULL CHECK (type IN ('MCG', 'DSG')),
     members JSONB NOT NULL DEFAULT '[]',
     term BIGINT DEFAULT 0,
-    leader_id ulid REFERENCES nodes(node_id) ON DELETE SET NULL,
+    leader_id BIGINT REFERENCES nodes(node_id) ON DELETE SET NULL,
     meta JSONB DEFAULT '{}',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -873,7 +872,7 @@ CREATE TABLE mesh_raft_log (
 CREATE TABLE mesh_streams (
     id ulid PRIMARY KEY DEFAULT generate_ulid('strm'),
     tenant_id ulid REFERENCES tenants(tenant_id) ON DELETE CASCADE,
-    src_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    src_node BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
     dst_nodes JSONB NOT NULL DEFAULT '[]',
     qos VARCHAR(20) DEFAULT 'QOS_NORMAL' CHECK (qos IN ('QOS_CRITICAL', 'QOS_HIGH', 'QOS_NORMAL', 'QOS_LOW')),
     priority INTEGER DEFAULT 0,
@@ -884,7 +883,7 @@ CREATE TABLE mesh_streams (
 
 CREATE TABLE mesh_stream_offsets (
     stream_id ulid NOT NULL REFERENCES mesh_streams(id) ON DELETE CASCADE,
-    node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    node_id BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
     committed_seq BIGINT DEFAULT 0,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (stream_id, node_id)
@@ -893,8 +892,8 @@ CREATE TABLE mesh_stream_offsets (
 CREATE TABLE mesh_delivery_log (
     stream_id ulid NOT NULL REFERENCES mesh_streams(id) ON DELETE CASCADE,
     message_id ulid NOT NULL,
-    src_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
-    dst_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    src_node BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    dst_node BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
     state status_enum DEFAULT 'STATUS_RECEIVED',
     err TEXT DEFAULT '',
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -944,10 +943,10 @@ CREATE TABLE mesh_config_kv (
 
 -- Event log for mesh state synchronization
 CREATE TABLE mesh_event_log (
-    event_id ulid PRIMARY KEY DEFAULT generate_ulid('evt'),
+    event_id BIGSERIAL PRIMARY KEY,
     event_type VARCHAR(50) NOT NULL,
-    originator_node ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
-    affected_node ulid REFERENCES nodes(node_id) ON DELETE CASCADE,
+    originator_node BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    affected_node BIGINT REFERENCES nodes(node_id) ON DELETE CASCADE,
     sequence_number BIGINT NOT NULL,
     event_data JSONB DEFAULT '{}',
     processed BOOLEAN DEFAULT FALSE,
@@ -964,8 +963,8 @@ CREATE TABLE mesh_table_versions (
 
 -- Node membership tracking in meshes
 CREATE TABLE mesh_node_membership (
-    mesh_id ulid NOT NULL REFERENCES mesh(mesh_id) ON DELETE CASCADE,
-    node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    mesh_id BIGINT NOT NULL REFERENCES mesh(mesh_id) ON DELETE CASCADE,
+    node_id BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status VARCHAR(20) DEFAULT 'ACTIVE',
     PRIMARY KEY (mesh_id, node_id)
@@ -973,7 +972,7 @@ CREATE TABLE mesh_node_membership (
 
 -- Consensus state tracking for split-brain detection
 CREATE TABLE mesh_consensus_state (
-    mesh_id ulid PRIMARY KEY REFERENCES mesh(mesh_id) ON DELETE CASCADE,
+    mesh_id BIGINT PRIMARY KEY REFERENCES mesh(mesh_id) ON DELETE CASCADE,
     total_nodes INTEGER NOT NULL DEFAULT 0,
     online_nodes INTEGER NOT NULL DEFAULT 0,
     split_detected BOOLEAN DEFAULT FALSE,
@@ -988,8 +987,8 @@ CREATE TABLE mesh_consensus_state (
 -- License keys storage
 CREATE TABLE license_keys (
     key_id VARCHAR(255) PRIMARY KEY,
-    local_identity ulid NOT NULL,
-    mesh_id ulid REFERENCES mesh(mesh_id),
+    local_identity BIGINT NOT NULL,
+    mesh_id BIGINT REFERENCES mesh(mesh_id),
     key_hash VARCHAR(64) UNIQUE NOT NULL,  -- SHA-256 hash of the JWT key
     features TEXT[] NOT NULL DEFAULT '{}',
     issued_at TIMESTAMP NOT NULL,
@@ -1002,8 +1001,8 @@ CREATE TABLE license_keys (
 -- Feature usage tracking
 CREATE TABLE license_feature_usage (
     feature VARCHAR(255) NOT NULL,
-    local_identity ulid NOT NULL,
-    mesh_id ulid REFERENCES mesh(mesh_id),
+    local_identity BIGINT NOT NULL,
+    mesh_id BIGINT REFERENCES mesh(mesh_id),
     current_usage INTEGER DEFAULT 0,
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (feature, local_identity, mesh_id)

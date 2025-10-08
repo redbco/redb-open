@@ -9,12 +9,13 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/redbco/redb-open/pkg/keyring"
 )
 
 const (
-	// Keyring service name for reDB security
+	// Keyring service name for reDB security (base name)
 	KeyringService = "redb-security"
 	// Keyring key prefixes for tenant keys
 	TenantPrivateKeyKeyPrefix = "tenant-private-key"
@@ -24,17 +25,45 @@ const (
 // TenantEncryptionManager handles encryption and decryption using tenant-specific RSA keys
 type TenantEncryptionManager struct {
 	keyringManager *keyring.KeyringManager
+	serviceName    string // instance-aware service name
 }
 
 // NewTenantEncryptionManager creates a new tenant encryption manager
+// with multi-instance support through environment variables
 func NewTenantEncryptionManager() *TenantEncryptionManager {
-	// Initialize keyring manager
-	keyringPath := keyring.GetDefaultKeyringPath()
+	// Get instance group ID from environment for multi-instance support
+	groupID := os.Getenv("REDB_INSTANCE_GROUP_ID")
+	if groupID == "" {
+		groupID = "default"
+	}
+
+	// Get keyring backend type from environment (auto, file, or system)
+	backend := os.Getenv("REDB_KEYRING_BACKEND")
+	if backend == "" {
+		backend = "auto"
+	}
+
+	// Get keyring path from environment or use default
+	keyringPath := os.Getenv("REDB_KEYRING_PATH")
+	if keyringPath == "" {
+		keyringPath = keyring.GetDefaultKeyringPath()
+	}
+
+	// Apply instance group isolation to keyring path if using file backend
+	if backend == "file" || backend == "auto" {
+		keyringPath = keyring.GetKeyringPathWithGroup(keyringPath, groupID)
+	}
+
+	// Initialize keyring manager with proper backend support
 	masterPassword := keyring.GetMasterPasswordFromEnv()
-	km := keyring.NewKeyringManager(keyringPath, masterPassword)
+	km := keyring.NewKeyringManagerWithBackend(keyringPath, masterPassword, backend)
+
+	// Get instance-aware service name
+	serviceName := keyring.GetServiceNameWithGroup(KeyringService, groupID)
 
 	return &TenantEncryptionManager{
 		keyringManager: km,
+		serviceName:    serviceName,
 	}
 }
 
@@ -55,7 +84,7 @@ func (tem *TenantEncryptionManager) getTenantPrivateKey(tenantID string) (*rsa.P
 	}
 
 	keyName := tem.getTenantPrivateKeyName(tenantID)
-	privateKeyPEM, err := tem.keyringManager.Get(KeyringService, keyName)
+	privateKeyPEM, err := tem.keyringManager.Get(tem.serviceName, keyName)
 	if err != nil {
 		return nil, fmt.Errorf("tenant private key not found for tenant %s: %w", tenantID, err)
 	}
@@ -82,7 +111,7 @@ func (tem *TenantEncryptionManager) getTenantPublicKey(tenantID string) (*rsa.Pu
 	}
 
 	keyName := tem.getTenantPublicKeyName(tenantID)
-	publicKeyPEM, err := tem.keyringManager.Get(KeyringService, keyName)
+	publicKeyPEM, err := tem.keyringManager.Get(tem.serviceName, keyName)
 	if err != nil {
 		return nil, fmt.Errorf("tenant public key not found for tenant %s: %w", tenantID, err)
 	}
@@ -214,14 +243,14 @@ func (tem *TenantEncryptionManager) ValidateTenantKeys(tenantID string) error {
 
 	// Check if private key exists
 	privateKeyName := tem.getTenantPrivateKeyName(tenantID)
-	_, err := tem.keyringManager.Get(KeyringService, privateKeyName)
+	_, err := tem.keyringManager.Get(tem.serviceName, privateKeyName)
 	if err != nil {
 		return fmt.Errorf("tenant private key not found for tenant %s: %w", tenantID, err)
 	}
 
 	// Check if public key exists
 	publicKeyName := tem.getTenantPublicKeyName(tenantID)
-	_, err = tem.keyringManager.Get(KeyringService, publicKeyName)
+	_, err = tem.keyringManager.Get(tem.serviceName, publicKeyName)
 	if err != nil {
 		return fmt.Errorf("tenant public key not found for tenant %s: %w", tenantID, err)
 	}

@@ -23,6 +23,9 @@ const (
 	MessageTypeResponse            = "response"
 	MessageTypeMeshEvent           = "mesh_event"
 	MessageTypeDatabaseSyncRequest = "database_sync_request"
+	MessageTypeMeshSyncRequest     = "mesh_sync_request"  // Request mesh data from peer
+	MessageTypeMeshSyncResponse    = "mesh_sync_response" // Response with mesh data
+	MessageTypeNodeJoinNotify      = "node_join_notify"   // Notify about joining node
 )
 
 // CoreMessage represents a structured message between core services
@@ -341,7 +344,8 @@ func (m *MeshCommunicationManager) processMessages(subID string, sub *MeshSubscr
 	m.logger.Infof("Starting message processing for subscription %s", subID)
 
 	// Use a goroutine to handle Recv() calls with proper context cancellation
-	msgCh := make(chan *meshv1.Received, 1)
+	// Buffer size of 1024 to handle bursts of messages without blocking
+	msgCh := make(chan *meshv1.Received, 1024)
 	errCh := make(chan error, 1)
 	recvDone := make(chan struct{})
 
@@ -465,8 +469,8 @@ func (m *MeshCommunicationManager) processMessages(subID string, sub *MeshSubscr
 
 // handleReceivedMessage handles incoming messages from other nodes
 func (m *MeshCommunicationManager) handleReceivedMessage(ctx context.Context, msg *meshv1.Received) error {
-	m.logger.Debugf("Received message from node %d, msg_id: %d, corr_id: %d",
-		msg.SrcNode, msg.MsgId, msg.CorrId)
+	m.logger.Debugf("Received message from node %d, msg_id: %d, corr_id: %d, payload size: %d",
+		msg.SrcNode, msg.MsgId, msg.CorrId, len(msg.Payload))
 
 	// Parse the core message
 	var coreMsg CoreMessage
@@ -474,6 +478,8 @@ func (m *MeshCommunicationManager) handleReceivedMessage(ctx context.Context, ms
 		m.logger.Errorf("Failed to unmarshal core message: %v", err)
 		return err
 	}
+
+	m.logger.Debugf("Parsed message type: '%s', operation: '%s'", coreMsg.Type, coreMsg.Operation)
 
 	// Check if this is a response to a pending request
 	if coreMsg.RequestID != "" && coreMsg.Type == MessageTypeResponse {
@@ -495,7 +501,7 @@ func (m *MeshCommunicationManager) handleReceivedMessage(ctx context.Context, ms
 	m.mu.RUnlock()
 
 	if !exists {
-		m.logger.Warnf("No handler registered for message type: %s", coreMsg.Type)
+		m.logger.Warnf("No handler registered for message type: '%s' (operation: '%s')", coreMsg.Type, coreMsg.Operation)
 		return nil
 	}
 
@@ -533,6 +539,9 @@ func (m *MeshCommunicationManager) registerDefaultHandlers() {
 	m.RegisterMessageHandler(MessageTypeDBUpdate, m.handleDBUpdate)
 	m.RegisterMessageHandler(MessageTypeAnchorQuery, m.handleAnchorQuery)
 	m.RegisterMessageHandler(MessageTypeCommand, m.handleCommand)
+	m.RegisterMessageHandler(MessageTypeMeshSyncRequest, m.handleMeshSyncRequest)
+	m.RegisterMessageHandler(MessageTypeMeshSyncResponse, m.handleMeshSyncResponse)
+	m.RegisterMessageHandler(MessageTypeNodeJoinNotify, m.handleNodeJoinNotify)
 	// Note: mesh_event handler is registered when SetEventManager is called
 }
 
@@ -785,4 +794,128 @@ func (m *MeshCommunicationManager) QueryAnchorService(ctx context.Context, targe
 	}
 
 	return response.Data, nil
+}
+
+// === Mesh Synchronization Handlers ===
+
+// handleMeshSyncRequest handles requests for mesh data from joining nodes
+func (m *MeshCommunicationManager) handleMeshSyncRequest(ctx context.Context, msg *meshv1.Received) error {
+	m.logger.Infof("Handling mesh sync request from node %d", msg.SrcNode)
+
+	// Parse request message
+	var reqMsg CoreMessage
+	if err := json.Unmarshal(msg.Payload, &reqMsg); err != nil {
+		m.logger.Errorf("Failed to unmarshal mesh sync request: %v", err)
+		return fmt.Errorf("failed to unmarshal request: %w", err)
+	}
+
+	// Get sync manager
+	var syncManager *DatabaseSyncManager
+	if m.eventManager != nil {
+		syncManager = m.eventManager.GetSyncManager()
+	}
+
+	if syncManager == nil {
+		m.logger.Warn("Database sync manager not available, cannot provide mesh data")
+		return fmt.Errorf("sync manager not available")
+	}
+
+	// Get mesh data for synchronization
+	meshData, nodesData, routesData, err := syncManager.GetMeshDataForSync(ctx)
+	if err != nil {
+		m.logger.Errorf("Failed to get mesh data for sync: %v", err)
+		return err
+	}
+
+	// Build response
+	response := &CoreMessage{
+		Type:      MessageTypeMeshSyncResponse,
+		Operation: "sync_response",
+		RequestID: reqMsg.RequestID, // Echo back request ID for correlation
+		Data: map[string]interface{}{
+			"mesh":   meshData,
+			"nodes":  nodesData,
+			"routes": routesData,
+		},
+		Timestamp: time.Now().Unix(),
+	}
+
+	// Send response back to requesting node
+	_, err = m.SendMessage(ctx, msg.SrcNode, response)
+	if err != nil {
+		m.logger.Errorf("Failed to send mesh sync response to node %d: %v", msg.SrcNode, err)
+		return err
+	}
+
+	m.logger.Infof("Successfully sent mesh sync response to node %d", msg.SrcNode)
+	return nil
+}
+
+// handleMeshSyncResponse handles mesh data responses from seed nodes
+func (m *MeshCommunicationManager) handleMeshSyncResponse(ctx context.Context, msg *meshv1.Received) error {
+	m.logger.Infof("Handling mesh sync response from node %d", msg.SrcNode)
+
+	// Parse response message
+	var respMsg CoreMessage
+	if err := json.Unmarshal(msg.Payload, &respMsg); err != nil {
+		m.logger.Errorf("Failed to unmarshal mesh sync response: %v", err)
+		return fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	// Get sync manager
+	var syncManager *DatabaseSyncManager
+	if m.eventManager != nil {
+		syncManager = m.eventManager.GetSyncManager()
+	}
+
+	if syncManager == nil {
+		m.logger.Warn("Database sync manager not available, cannot apply synced data")
+		return fmt.Errorf("sync manager not available")
+	}
+
+	// Apply synced mesh data to local database
+	err := syncManager.ApplySyncedMeshData(ctx, respMsg.Data)
+	if err != nil {
+		m.logger.Errorf("Failed to apply synced mesh data from node %d: %v", msg.SrcNode, err)
+		return err
+	}
+
+	m.logger.Infof("Successfully applied mesh sync from node %d", msg.SrcNode)
+	return nil
+}
+
+// handleNodeJoinNotify handles notifications about joining nodes
+func (m *MeshCommunicationManager) handleNodeJoinNotify(ctx context.Context, msg *meshv1.Received) error {
+	m.logger.Infof("Handling node join notification from node %d (payload size: %d)", msg.SrcNode, len(msg.Payload))
+
+	// Parse notification message
+	var notifyMsg CoreMessage
+	if err := json.Unmarshal(msg.Payload, &notifyMsg); err != nil {
+		m.logger.Errorf("Failed to unmarshal node join notification: %v", err)
+		return fmt.Errorf("failed to unmarshal notification: %w", err)
+	}
+
+	m.logger.Infof("Join notification parsed: type=%s, operation=%s, has %d data fields",
+		notifyMsg.Type, notifyMsg.Operation, len(notifyMsg.Data))
+
+	// Get sync manager
+	var syncManager *DatabaseSyncManager
+	if m.eventManager != nil {
+		syncManager = m.eventManager.GetSyncManager()
+	}
+
+	if syncManager == nil {
+		m.logger.Warn("Database sync manager not available, cannot add joining node")
+		return fmt.Errorf("sync manager not available")
+	}
+
+	// Add joining node to local database
+	err := syncManager.AddJoiningNode(ctx, msg.SrcNode, notifyMsg.Data)
+	if err != nil {
+		m.logger.Errorf("Failed to add joining node %d: %v", msg.SrcNode, err)
+		return err
+	}
+
+	m.logger.Infof("Successfully processed join notification from node %d", msg.SrcNode)
+	return nil
 }

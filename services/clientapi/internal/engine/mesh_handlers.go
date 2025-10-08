@@ -148,7 +148,11 @@ func (mh *MeshHandlers) JoinMesh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert gRPC response to REST response
-	mesh := mh.meshFromProto(grpcResp.Mesh)
+	// Note: Mesh may be nil during background sync
+	var mesh Mesh
+	if grpcResp.Mesh != nil {
+		mesh = mh.meshFromProto(grpcResp.Mesh)
+	}
 
 	response := JoinMeshResponse{
 		Message:    grpcResp.Message,

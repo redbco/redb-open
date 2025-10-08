@@ -325,7 +325,7 @@ func (s *DatabaseSyncManager) getMeshRecords(ctx context.Context, sinceVersion u
 // getNodeRecords gets node table records for sync
 func (s *DatabaseSyncManager) getNodeRecords(ctx context.Context, sinceVersion uint64, nodeIDs []string) ([]*corev1.DatabaseRecord, error) {
 	query := `
-		SELECT node_id, node_name, node_description, routing_id, ip_address, port, status, seed_node, created, updated
+		SELECT node_id, node_name, node_description, ip_address, port, status, seed_node, created, updated
 		FROM nodes
 		ORDER BY updated DESC
 		LIMIT 100
@@ -341,22 +341,21 @@ func (s *DatabaseSyncManager) getNodeRecords(ctx context.Context, sinceVersion u
 	version := sinceVersion + 1
 
 	for rows.Next() {
-		var nodeID, nodeName, nodeDescription, ipAddress, status string
-		var routingID, port int64
+		var nodeName, nodeDescription, ipAddress, status string
+		var nodeID, port int64
 		var seedNode bool
 		var created, updated time.Time
 
-		if err := rows.Scan(&nodeID, &nodeName, &nodeDescription, &routingID, &ipAddress, &port, &status, &seedNode, &created, &updated); err != nil {
+		if err := rows.Scan(&nodeID, &nodeName, &nodeDescription, &ipAddress, &port, &status, &seedNode, &created, &updated); err != nil {
 			return nil, err
 		}
 
 		record := &corev1.DatabaseRecord{
 			Operation: "UPSERT",
 			Data: map[string]string{
-				"node_id":          nodeID,
+				"node_id":          strconv.FormatInt(nodeID, 10),
 				"node_name":        nodeName,
 				"node_description": nodeDescription,
-				"routing_id":       strconv.FormatInt(routingID, 10),
 				"ip_address":       ipAddress,
 				"port":             strconv.FormatInt(port, 10),
 				"status":           status,
@@ -530,17 +529,16 @@ func (s *DatabaseSyncManager) upsertMeshRecord(ctx context.Context, data map[str
 
 // upsertNodeRecord upserts a node record
 func (s *DatabaseSyncManager) upsertNodeRecord(ctx context.Context, data map[string]string) error {
-	routingID, _ := strconv.ParseInt(data["routing_id"], 10, 64)
+	nodeID, _ := strconv.ParseInt(data["node_id"], 10, 64)
 	port, _ := strconv.ParseInt(data["port"], 10, 32)
 	seedNode, _ := strconv.ParseBool(data["seed_node"])
 
 	query := `
-		INSERT INTO nodes (node_id, node_name, node_description, routing_id, ip_address, port, status, seed_node)
-		VALUES ($1, $2, $3, $4, $5::inet, $6, $7::status_enum, $8)
+		INSERT INTO nodes (node_id, node_name, node_description, ip_address, port, status, seed_node)
+		VALUES ($1, $2, $3, $4::inet, $5, $6::status_enum, $7)
 		ON CONFLICT (node_id) DO UPDATE SET
 			node_name = EXCLUDED.node_name,
 			node_description = EXCLUDED.node_description,
-			routing_id = EXCLUDED.routing_id,
 			ip_address = EXCLUDED.ip_address,
 			port = EXCLUDED.port,
 			status = EXCLUDED.status,
@@ -549,10 +547,9 @@ func (s *DatabaseSyncManager) upsertNodeRecord(ctx context.Context, data map[str
 	`
 
 	_, err := s.db.Pool().Exec(ctx, query,
-		data["node_id"],
+		nodeID,
 		data["node_name"],
 		data["node_description"],
-		routingID,
 		data["ip_address"],
 		int32(port),
 		data["status"],
@@ -618,4 +615,384 @@ func (s *DatabaseSyncManager) updateRecord(ctx context.Context, tableName string
 func (s *DatabaseSyncManager) deleteRecord(ctx context.Context, tableName string, data map[string]string) error {
 	s.logger.Infof("Delete operation not implemented for table %s", tableName)
 	return nil
+}
+
+// === Mesh Synchronization Methods ===
+
+// GetMeshDataForSync retrieves mesh, nodes, and routes data for synchronization
+func (s *DatabaseSyncManager) GetMeshDataForSync(ctx context.Context) (map[string]interface{}, map[string]interface{}, map[string]interface{}, error) {
+	s.logger.Info("Gathering mesh data for synchronization")
+
+	meshData := make(map[string]interface{})
+	nodesData := make(map[string]interface{})
+	routesData := make(map[string]interface{})
+
+	// Get mesh information
+	meshQuery := `
+		SELECT mesh_id, mesh_name, mesh_description, allow_join, status, created, updated
+		FROM mesh
+		LIMIT 1
+	`
+	var meshID int64
+	var meshName, meshDescription, allowJoin, meshStatus string
+	var created, updated time.Time
+
+	err := s.db.Pool().QueryRow(ctx, meshQuery).Scan(&meshID, &meshName, &meshDescription, &allowJoin, &meshStatus, &created, &updated)
+	if err != nil {
+		s.logger.Warnf("No mesh found for sync: %v", err)
+	} else {
+		meshData["mesh_id"] = meshID
+		meshData["mesh_name"] = meshName
+		meshData["mesh_description"] = meshDescription
+		meshData["allow_join"] = allowJoin
+		meshData["status"] = meshStatus
+		meshData["created"] = created.Format(time.RFC3339)
+		meshData["updated"] = updated.Format(time.RFC3339)
+	}
+
+	// Get all nodes
+	nodesQuery := `
+		SELECT node_id, node_name, node_description, node_public_key, host(ip_address) as ip_address, port, status, seed_node
+		FROM nodes
+		ORDER BY node_id
+	`
+	rows, err := s.db.Pool().Query(ctx, nodesQuery)
+	if err != nil {
+		s.logger.Errorf("Failed to query nodes: %v", err)
+	} else {
+		defer rows.Close()
+		nodesList := []map[string]interface{}{}
+
+		for rows.Next() {
+			var nodeID, port int64
+			var nodeName, nodeDescription, ipAddress, nodeStatus string
+			var nodePublicKey []byte
+			var seedNode bool
+
+			if err := rows.Scan(&nodeID, &nodeName, &nodeDescription, &nodePublicKey, &ipAddress, &port, &nodeStatus, &seedNode); err != nil {
+				s.logger.Warnf("Failed to scan node row: %v", err)
+				continue
+			}
+
+			nodesList = append(nodesList, map[string]interface{}{
+				"node_id":          fmt.Sprintf("%d", nodeID), // Send as string to preserve int64 precision
+				"node_name":        nodeName,
+				"node_description": nodeDescription,
+				"node_public_key":  string(nodePublicKey), // Convert to string for JSON transmission
+				"ip_address":       ipAddress,
+				"port":             port,
+				"status":           nodeStatus,
+				"seed_node":        seedNode,
+			})
+		}
+		nodesData["nodes"] = nodesList
+		s.logger.Infof("Found %d nodes for sync", len(nodesList))
+	}
+
+	// Get all routes
+	routesQuery := `
+		SELECT a_node, b_node, latency_ms, status
+		FROM routes
+		ORDER BY a_node, b_node
+	`
+	routeRows, err := s.db.Pool().Query(ctx, routesQuery)
+	if err != nil {
+		s.logger.Errorf("Failed to query routes: %v", err)
+	} else {
+		defer routeRows.Close()
+		routesList := []map[string]interface{}{}
+
+		for routeRows.Next() {
+			var aNode, bNode int64
+			var latencyMs int32
+			var routeStatus string
+
+			if err := routeRows.Scan(&aNode, &bNode, &latencyMs, &routeStatus); err != nil {
+				s.logger.Warnf("Failed to scan route row: %v", err)
+				continue
+			}
+
+			routesList = append(routesList, map[string]interface{}{
+				"a_node":     fmt.Sprintf("%d", aNode), // Send as string to preserve int64 precision
+				"b_node":     fmt.Sprintf("%d", bNode), // Send as string to preserve int64 precision
+				"latency_ms": latencyMs,
+				"status":     routeStatus,
+			})
+		}
+		routesData["routes"] = routesList
+		s.logger.Infof("Found %d routes for sync", len(routesList))
+	}
+
+	return meshData, nodesData, routesData, nil
+}
+
+// ApplySyncedMeshData applies synced mesh data to the local database
+func (s *DatabaseSyncManager) ApplySyncedMeshData(ctx context.Context, data map[string]interface{}) error {
+	s.logger.Info("Applying synced mesh data to local database")
+
+	// Apply mesh data
+	if meshData, ok := data["mesh"].(map[string]interface{}); ok {
+		s.logger.Infof("Applying mesh data")
+		if err := s.upsertMesh(ctx, meshData); err != nil {
+			return fmt.Errorf("failed to upsert mesh: %w", err)
+		}
+	}
+
+	// Apply nodes data
+	if nodesData, ok := data["nodes"].(map[string]interface{}); ok {
+		if nodesList, ok := nodesData["nodes"].([]interface{}); ok {
+			s.logger.Infof("Applying %d nodes", len(nodesList))
+			for _, nodeInterface := range nodesList {
+				if node, ok := nodeInterface.(map[string]interface{}); ok {
+					// Parse node_id from string to preserve int64 precision
+					if nodeIDStr, ok := node["node_id"].(string); ok {
+						if nodeID, err := strconv.ParseInt(nodeIDStr, 10, 64); err == nil {
+							node["node_id"] = nodeID
+						} else {
+							s.logger.Warnf("Failed to parse node_id '%s': %v", nodeIDStr, err)
+							continue
+						}
+					}
+					if err := s.upsertNode(ctx, node); err != nil {
+						s.logger.Warnf("Failed to upsert node: %v", err)
+					}
+				}
+			}
+		}
+	}
+
+	// Apply routes data
+	if routesData, ok := data["routes"].(map[string]interface{}); ok {
+		if routesList, ok := routesData["routes"].([]interface{}); ok {
+			s.logger.Infof("Applying %d routes", len(routesList))
+			for _, routeInterface := range routesList {
+				if route, ok := routeInterface.(map[string]interface{}); ok {
+					// Parse a_node and b_node from string to preserve int64 precision
+					if aNodeStr, ok := route["a_node"].(string); ok {
+						if aNode, err := strconv.ParseInt(aNodeStr, 10, 64); err == nil {
+							route["a_node"] = aNode
+						} else {
+							s.logger.Warnf("Failed to parse a_node '%s': %v", aNodeStr, err)
+							continue
+						}
+					}
+					if bNodeStr, ok := route["b_node"].(string); ok {
+						if bNode, err := strconv.ParseInt(bNodeStr, 10, 64); err == nil {
+							route["b_node"] = bNode
+						} else {
+							s.logger.Warnf("Failed to parse b_node '%s': %v", bNodeStr, err)
+							continue
+						}
+					}
+					if err := s.upsertRoute(ctx, route); err != nil {
+						s.logger.Warnf("Failed to upsert route: %v", err)
+					}
+				}
+			}
+		}
+	}
+
+	s.logger.Info("Successfully applied all synced mesh data")
+	return nil
+}
+
+// AddJoiningNode adds a joining node to the local database
+func (s *DatabaseSyncManager) AddJoiningNode(ctx context.Context, nodeID uint64, data map[string]interface{}) error {
+	s.logger.Infof("Adding joining node %d to local database (data has %d fields)", nodeID, len(data))
+
+	// Log what data we received
+	for k, v := range data {
+		if k == "node_public_key" {
+			if b, ok := v.([]byte); ok {
+				s.logger.Debugf("  %s: []byte (len=%d)", k, len(b))
+			} else if str, ok := v.(string); ok {
+				s.logger.Debugf("  %s: string (len=%d)", k, len(str))
+			} else {
+				s.logger.Debugf("  %s: %T", k, v)
+			}
+		} else {
+			s.logger.Debugf("  %s: %v", k, v)
+		}
+	}
+
+	// Upsert the node
+	nodeData := make(map[string]interface{})
+	// Use the nodeID parameter (uint64) directly, not from data map where it's float64
+	nodeData["node_id"] = int64(nodeID)
+
+	// Extract node information from data, but skip node_id (we already set it correctly)
+	for key, value := range data {
+		if key != "node_id" {
+			nodeData[key] = value
+		}
+	}
+
+	if err := s.upsertNode(ctx, nodeData); err != nil {
+		return fmt.Errorf("failed to upsert joining node: %w", err)
+	}
+
+	// Create route to joining node
+	localNodeID, err := s.getLocalNodeID(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get local node ID: %w", err)
+	}
+
+	routeData := map[string]interface{}{
+		"a_node":     localNodeID,
+		"b_node":     nodeID,
+		"latency_ms": 0,
+		"status":     "STATUS_ACTIVE",
+	}
+
+	if err := s.upsertRoute(ctx, routeData); err != nil {
+		s.logger.Warnf("Failed to create route to joining node: %v", err)
+	}
+
+	// Create reverse route
+	routeData = map[string]interface{}{
+		"a_node":     nodeID,
+		"b_node":     localNodeID,
+		"latency_ms": 0,
+		"status":     "STATUS_ACTIVE",
+	}
+
+	if err := s.upsertRoute(ctx, routeData); err != nil {
+		s.logger.Warnf("Failed to create reverse route: %v", err)
+	}
+
+	s.logger.Infof("Successfully added joining node %d", nodeID)
+	return nil
+}
+
+// Helper methods for upserting individual records
+
+func (s *DatabaseSyncManager) upsertMesh(ctx context.Context, data map[string]interface{}) error {
+	query := `
+		INSERT INTO mesh (mesh_id, mesh_name, mesh_description, allow_join, status, created, updated)
+		VALUES ($1, $2, $3, $4::join_key_enum, $5::status_enum, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (mesh_id) DO UPDATE SET
+			mesh_name = EXCLUDED.mesh_name,
+			mesh_description = EXCLUDED.mesh_description,
+			allow_join = EXCLUDED.allow_join,
+			status = EXCLUDED.status,
+			updated = CURRENT_TIMESTAMP
+	`
+
+	_, err := s.db.Pool().Exec(ctx, query,
+		data["mesh_id"],
+		data["mesh_name"],
+		data["mesh_description"],
+		data["allow_join"],
+		data["status"],
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to upsert mesh: %w", err)
+	}
+
+	s.logger.Infof("Upserted mesh: %v", data["mesh_name"])
+	return nil
+}
+
+func (s *DatabaseSyncManager) upsertNode(ctx context.Context, data map[string]interface{}) error {
+	query := `
+		INSERT INTO nodes (node_id, node_name, node_description, node_public_key, ip_address, port, status, seed_node, created, updated)
+		VALUES ($1, $2, $3, $4, $5::inet, $6, $7::status_enum, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (node_id) DO UPDATE SET
+			node_name = EXCLUDED.node_name,
+			node_description = EXCLUDED.node_description,
+			node_public_key = EXCLUDED.node_public_key,
+			ip_address = EXCLUDED.ip_address,
+			port = EXCLUDED.port,
+			status = EXCLUDED.status,
+			seed_node = EXCLUDED.seed_node,
+			updated = CURRENT_TIMESTAMP
+	`
+
+	seedNode := false
+	if val, ok := data["seed_node"].(bool); ok {
+		seedNode = val
+	}
+
+	// Get node_public_key - it's required
+	// Public keys are transmitted as strings (PEM format) to avoid encoding issues
+	var nodePublicKey []byte
+	if val, ok := data["node_public_key"].(string); ok {
+		// Convert string to bytes for database storage
+		nodePublicKey = []byte(val)
+	} else if val, ok := data["node_public_key"].([]byte); ok {
+		// Direct byte array (fallback for compatibility)
+		nodePublicKey = val
+	} else {
+		// If not provided, use empty byte slice (for compatibility)
+		s.logger.Warnf("Node public key not found or invalid type for node %v (type: %T)", data["node_id"], data["node_public_key"])
+		nodePublicKey = []byte{}
+	}
+
+	_, err := s.db.Pool().Exec(ctx, query,
+		data["node_id"],
+		data["node_name"],
+		data["node_description"],
+		nodePublicKey,
+		data["ip_address"],
+		data["port"],
+		data["status"],
+		seedNode,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to upsert node: %w", err)
+	}
+
+	s.logger.Debugf("Upserted node: %v", data["node_id"])
+	return nil
+}
+
+func (s *DatabaseSyncManager) upsertRoute(ctx context.Context, data map[string]interface{}) error {
+	query := `
+		INSERT INTO routes (a_node, b_node, latency_ms, status, created, updated)
+		VALUES ($1, $2, $3, $4::status_enum, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT (a_node, b_node) DO UPDATE SET
+			latency_ms = EXCLUDED.latency_ms,
+			status = EXCLUDED.status,
+			updated = CURRENT_TIMESTAMP
+	`
+
+	latencyMs := 0
+	if val, ok := data["latency_ms"].(int); ok {
+		latencyMs = val
+	} else if val, ok := data["latency_ms"].(float64); ok {
+		latencyMs = int(val)
+	} else if val, ok := data["latency_ms"].(int32); ok {
+		latencyMs = int(val)
+	}
+
+	routeStatus := "STATUS_ACTIVE"
+	if val, ok := data["status"].(string); ok && val != "" {
+		routeStatus = val
+	}
+
+	_, err := s.db.Pool().Exec(ctx, query,
+		data["a_node"],
+		data["b_node"],
+		latencyMs,
+		routeStatus,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to upsert route: %w", err)
+	}
+
+	s.logger.Debugf("Upserted route: %v -> %v", data["a_node"], data["b_node"])
+	return nil
+}
+
+func (s *DatabaseSyncManager) getLocalNodeID(ctx context.Context) (int64, error) {
+	var nodeID int64
+	query := `SELECT identity_id FROM localidentity LIMIT 1`
+	err := s.db.Pool().QueryRow(ctx, query).Scan(&nodeID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get local node ID: %w", err)
+	}
+	return nodeID, nil
 }

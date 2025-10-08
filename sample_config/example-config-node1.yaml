@@ -22,7 +22,7 @@ keyring:
   # Backend: "auto" (try system first, fallback to file), "system", or "file"
   backend: "file"
   # Path for file-based keyring (optional, uses default if not specified)
-  # path: "/custom/path/to/keyring.json"
+  path: "./keyring-node1.json"
   # Master key for file-based keyring encryption (use REDB_KEYRING_PASSWORD env var in production)
   # master_key: "your-secure-master-key"
   # Service name prefix for system keyring entries
@@ -31,17 +31,19 @@ keyring:
 # Instance group configuration for running multiple instances on the same machine
 instance_group:
   # Unique identifier for this instance group (change for each instance)
-  group_id: "instance2"
+  group_id: "default"
   # Port offset to avoid conflicts (0 = no offset, 1000 = add 1000 to all ports)
   port_offset: 1000
 
 # Internal PostgreSQL database configuration
 database:
   # Database name
-  name: redb
+  name: node1
+  # Database user (defaults to database name if not specified)
+  user: node1
 
 logging:
-  level: info
+  level: debug
   retention_days: 7
   max_size_mb: 1024
 
@@ -100,7 +102,7 @@ services:
       - --enable-grpc
       - --listen=0.0.0.0:10001
       - --supervisor=localhost:50000
-      - --config=config_instance2.yaml
+      - --config=config.yaml
     dependencies:
       - security
       - webhook
@@ -163,6 +165,7 @@ services:
   clientapi:
     enabled: true
     required: true
+    rest_api_port: 8081
     executable: ./redb-clientapi
     args:
       - --port=50059

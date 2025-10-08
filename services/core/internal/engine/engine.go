@@ -524,21 +524,22 @@ func (e *Engine) getNodeIDFromDatabase(ctx context.Context) (uint64, error) {
 		return 0, fmt.Errorf("database not available")
 	}
 
-	// Query the routing ID from nodes table via localidentity join
-	var routingID int64
+	// Query the node ID from nodes table via localidentity join
+	// node_id now serves as both the identifier and routing ID
+	var nodeID int64
 	query := `
-		SELECT n.routing_id 
+		SELECT n.node_id 
 		FROM nodes n
 		JOIN localidentity li ON n.node_id = li.identity_id
 		LIMIT 1
 	`
 
-	err := e.db.Pool().QueryRow(ctx, query).Scan(&routingID)
+	err := e.db.Pool().QueryRow(ctx, query).Scan(&nodeID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to query routing ID from nodes via localidentity: %w", err)
+		return 0, fmt.Errorf("failed to query node ID from nodes via localidentity: %w", err)
 	}
 
-	return uint64(routingID), nil
+	return uint64(nodeID), nil
 }
 
 // parseNodeID converts a string node ID to uint64
@@ -556,8 +557,8 @@ func (e *Engine) updateLocalNodeStatus(ctx context.Context, status string) error
 	updateCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	// Get the local node ID from localidentity
-	var nodeID string
+	// Get the local node ID from localidentity (BIGINT)
+	var nodeID int64
 	query := `SELECT identity_id FROM localidentity LIMIT 1`
 	err := e.db.Pool().QueryRow(updateCtx, query).Scan(&nodeID)
 	if err != nil {
@@ -572,7 +573,7 @@ func (e *Engine) updateLocalNodeStatus(ctx context.Context, status string) error
 	}
 
 	if e.logger != nil {
-		e.logger.Infof("Successfully updated node %s status to %s", nodeID, status)
+		e.logger.Infof("Successfully updated node %d status to %s", nodeID, status)
 	}
 
 	return nil
@@ -588,8 +589,8 @@ func (e *Engine) updateLocalMeshStatus(ctx context.Context, status string) error
 	updateCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	// Get the local node ID from localidentity
-	var nodeID string
+	// Get the local node ID from localidentity (BIGINT)
+	var nodeID int64
 	query := `SELECT identity_id FROM localidentity LIMIT 1`
 	err := e.db.Pool().QueryRow(updateCtx, query).Scan(&nodeID)
 	if err != nil {
@@ -606,7 +607,7 @@ func (e *Engine) updateLocalMeshStatus(ctx context.Context, status string) error
 
 	if nodeStatus == "STATUS_CLEAN" {
 		if e.logger != nil {
-			e.logger.Infof("Node %s is clean (not part of any mesh), skipping mesh status update", nodeID)
+			e.logger.Infof("Node %d is clean (not part of any mesh), skipping mesh status update", nodeID)
 		}
 		return nil
 	}
@@ -625,7 +626,7 @@ func (e *Engine) updateLocalMeshStatus(ctx context.Context, status string) error
 
 	rowsAffected := result.RowsAffected()
 	if e.logger != nil {
-		e.logger.Infof("Successfully updated %d mesh(es) status to %s for node %s", rowsAffected, status, nodeID)
+		e.logger.Infof("Successfully updated %d mesh(es) status to %s for node %d", rowsAffected, status, nodeID)
 	}
 
 	return nil

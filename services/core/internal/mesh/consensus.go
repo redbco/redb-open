@@ -275,7 +275,7 @@ func (c *ConsensusChecker) getMeshInfo(ctx context.Context) (*MeshInfo, error) {
 		SELECT 
 			COALESCE((SELECT COUNT(*) FROM mesh_node_membership WHERE status = 'ACTIVE'), 0) as total_nodes,
 			COALESCE(m.split_strategy, 'SEED_NODE_PREVAILS_IN_EVEN_SPLIT') as split_strategy,
-			COALESCE((SELECT routing_id FROM nodes WHERE seed_node = TRUE LIMIT 1), 0) as seed_node_id
+			COALESCE((SELECT node_id FROM nodes WHERE seed_node = TRUE LIMIT 1), 0) as seed_node_id
 		FROM mesh m
 		WHERE EXISTS (
 			SELECT 1 FROM nodes n 

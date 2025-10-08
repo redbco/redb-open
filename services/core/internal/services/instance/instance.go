@@ -129,14 +129,13 @@ func (s *Service) Create(ctx context.Context, tenantID, workspaceName, name, des
 	if nodeID != nil && *nodeID != "" {
 		finalNodeID = *nodeID
 	} else {
-		// Default to the identity_id from localidentity table
-		err = s.db.Pool().QueryRow(ctx, "SELECT identity_id FROM localidentity LIMIT 1").Scan(&finalNodeID)
+		// Default to the identity_id from localidentity table (BIGINT)
+		var identityID int64
+		err = s.db.Pool().QueryRow(ctx, "SELECT identity_id FROM localidentity LIMIT 1").Scan(&identityID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get local identity: %w", err)
 		}
-		if finalNodeID == "" {
-			return nil, errors.New("no local identity found in database")
-		}
+		finalNodeID = fmt.Sprintf("%d", identityID)
 	}
 
 	// Check if the node exists

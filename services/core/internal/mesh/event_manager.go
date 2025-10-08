@@ -337,6 +337,34 @@ func (m *MeshEventManager) storeEvent(ctx context.Context, event *MeshEvent) err
 		return fmt.Errorf("failed to marshal event data: %w", err)
 	}
 
+	// Check if originator_node exists in our local database
+	if event.OriginatorNode != 0 {
+		var exists bool
+		checkQuery := `SELECT EXISTS(SELECT 1 FROM nodes WHERE node_id = $1)`
+		if err := m.db.Pool().QueryRow(ctx, checkQuery, event.OriginatorNode).Scan(&exists); err != nil {
+			return fmt.Errorf("failed to check if originator node exists: %w", err)
+		}
+		if !exists {
+			// Node doesn't exist locally yet - skip storing this event
+			m.logger.Debugf("Skipping storage of event from unknown originator node %d - not in local database yet", event.OriginatorNode)
+			return nil
+		}
+	}
+
+	// Check if affected_node exists in our local database (if specified)
+	if event.AffectedNode != 0 {
+		var exists bool
+		checkQuery := `SELECT EXISTS(SELECT 1 FROM nodes WHERE node_id = $1)`
+		if err := m.db.Pool().QueryRow(ctx, checkQuery, event.AffectedNode).Scan(&exists); err != nil {
+			return fmt.Errorf("failed to check if affected node exists: %w", err)
+		}
+		if !exists {
+			// Node doesn't exist locally yet - skip storing this event
+			m.logger.Debugf("Skipping storage of event for unknown affected node %d - not in local database yet", event.AffectedNode)
+			return nil
+		}
+	}
+
 	query := `
 		INSERT INTO mesh_event_log (event_type, originator_node, affected_node, sequence_number, event_data)
 		VALUES ($1, $2, $3, $4, $5)
@@ -345,8 +373,8 @@ func (m *MeshEventManager) storeEvent(ctx context.Context, event *MeshEvent) err
 
 	_, err = m.db.Pool().Exec(ctx, query,
 		event.Type.String(),
-		fmt.Sprintf("%d", event.OriginatorNode),
-		fmt.Sprintf("%d", event.AffectedNode),
+		event.OriginatorNode,
+		event.AffectedNode,
 		event.Sequence,
 		eventData,
 	)
@@ -358,7 +386,7 @@ func (m *MeshEventManager) eventExists(ctx context.Context, originatorNode, sequ
 	var exists bool
 	query := `SELECT EXISTS(SELECT 1 FROM mesh_event_log WHERE originator_node = $1 AND sequence_number = $2)`
 
-	err := m.db.Pool().QueryRow(ctx, query, fmt.Sprintf("%d", originatorNode), sequence).Scan(&exists)
+	err := m.db.Pool().QueryRow(ctx, query, originatorNode, sequence).Scan(&exists)
 	return exists, err
 }
 
@@ -379,11 +407,12 @@ func (m *MeshEventManager) processUnprocessedEvents(ctx context.Context) error {
 
 	var processedCount int
 	for rows.Next() {
-		var eventTypeStr, originatorNodeStr, affectedNodeStr string
+		var eventTypeStr string
+		var originatorNode, affectedNode int64
 		var sequence uint64
 		var eventDataJSON []byte
 
-		if err := rows.Scan(&eventTypeStr, &originatorNodeStr, &affectedNodeStr, &sequence, &eventDataJSON); err != nil {
+		if err := rows.Scan(&eventTypeStr, &originatorNode, &affectedNode, &sequence, &eventDataJSON); err != nil {
 			m.logger.Errorf("Failed to scan event row: %v", err)
 			continue
 		}
@@ -398,8 +427,8 @@ func (m *MeshEventManager) processUnprocessedEvents(ctx context.Context) error {
 		// Convert to MeshEvent
 		event := &MeshEvent{
 			Type:           m.parseEventType(eventTypeStr),
-			OriginatorNode: m.parseNodeID(originatorNodeStr),
-			AffectedNode:   m.parseNodeID(affectedNodeStr),
+			OriginatorNode: uint64(originatorNode),
+			AffectedNode:   uint64(affectedNode),
 			Sequence:       sequence,
 		}
 
@@ -439,7 +468,7 @@ func (m *MeshEventManager) processUnprocessedEvents(ctx context.Context) error {
 
 func (m *MeshEventManager) markEventProcessed(ctx context.Context, originatorNode, sequence uint64) error {
 	query := `UPDATE mesh_event_log SET processed = TRUE WHERE originator_node = $1 AND sequence_number = $2`
-	_, err := m.db.Pool().Exec(ctx, query, fmt.Sprintf("%d", originatorNode), sequence)
+	_, err := m.db.Pool().Exec(ctx, query, int64(originatorNode), sequence)
 	return err
 }
 
@@ -475,12 +504,6 @@ func (m *MeshEventManager) parseEventType(eventTypeStr string) corev1.MeshEventT
 	default:
 		return corev1.MeshEventType_MESH_EVENT_UNSPECIFIED
 	}
-}
-
-func (m *MeshEventManager) parseNodeID(nodeIDStr string) uint64 {
-	// In a real implementation, this would parse the ULID string to uint64
-	// For now, return 0 as placeholder
-	return 0
 }
 
 // Event handlers (to be implemented in next steps)
@@ -572,4 +595,9 @@ func (m *MeshEventManager) handleSplitResolved(ctx context.Context, event *MeshE
 		return m.syncManager.FullSync(ctx)
 	}
 	return nil
+}
+
+// GetSyncManager returns the database sync manager
+func (m *MeshEventManager) GetSyncManager() *DatabaseSyncManager {
+	return m.syncManager
 }

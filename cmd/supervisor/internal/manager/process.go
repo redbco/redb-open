@@ -54,22 +54,16 @@ func (p *ServiceProcess) Start(ctx context.Context) error {
 		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	// Add EXTERNAL_PORT environment variable if configured (with port offset applied)
+	// Add EXTERNAL_PORT environment variable if configured
+	// External port is for external-facing services and should NOT be offset
 	if p.config.ExternalPort > 0 {
-		externalPort := p.config.ExternalPort
-		if p.globalConfig != nil {
-			externalPort = p.globalConfig.ApplyPortOffset(p.config.ExternalPort)
-		}
-		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("EXTERNAL_PORT=%d", externalPort))
+		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("EXTERNAL_PORT=%d", p.config.ExternalPort))
 	}
 
-	// Add REST_API_PORT environment variable if configured (with port offset applied)
+	// Add REST_API_PORT environment variable if configured
+	// REST API port is external-facing and should NOT be offset
 	if p.config.RestAPIPort > 0 {
-		restAPIPort := p.config.RestAPIPort
-		if p.globalConfig != nil {
-			restAPIPort = p.globalConfig.ApplyPortOffset(p.config.RestAPIPort)
-		}
-		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REST_API_PORT=%d", restAPIPort))
+		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REST_API_PORT=%d", p.config.RestAPIPort))
 	}
 
 	// Add database configuration from supervisor config
@@ -83,6 +77,19 @@ func (p *ServiceProcess) Start(ctx context.Context) error {
 		if p.globalConfig.Database.User != "" {
 			p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_DATABASE_USER=%s", p.globalConfig.Database.User))
 		}
+
+		// Pass keyring configuration for multi-instance support
+		if p.globalConfig.Keyring.Backend != "" {
+			p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_KEYRING_BACKEND=%s", p.globalConfig.Keyring.Backend))
+		}
+		if p.globalConfig.Keyring.Path != "" {
+			p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_KEYRING_PATH=%s", p.globalConfig.Keyring.Path))
+		}
+
+		// Pass instance group ID for multi-instance isolation
+		if p.globalConfig.InstanceGroup.GroupID != "" {
+			p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_INSTANCE_GROUP_ID=%s", p.globalConfig.InstanceGroup.GroupID))
+		}
 	}
 
 	// Also check environment variables as fallback
@@ -91,6 +98,15 @@ func (p *ServiceProcess) Start(ctx context.Context) error {
 	}
 	if databaseUser := os.Getenv("REDB_DATABASE_USER"); databaseUser != "" {
 		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_DATABASE_USER=%s", databaseUser))
+	}
+	if keyringBackend := os.Getenv("REDB_KEYRING_BACKEND"); keyringBackend != "" {
+		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_KEYRING_BACKEND=%s", keyringBackend))
+	}
+	if keyringPath := os.Getenv("REDB_KEYRING_PATH"); keyringPath != "" {
+		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_KEYRING_PATH=%s", keyringPath))
+	}
+	if instanceGroupID := os.Getenv("REDB_INSTANCE_GROUP_ID"); instanceGroupID != "" {
+		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("REDB_INSTANCE_GROUP_ID=%s", instanceGroupID))
 	}
 
 	// Set output
@@ -160,7 +176,7 @@ func (p *ServiceProcess) applyPortOffsets(args []string) []string {
 	copy(modifiedArgs, args)
 
 	for i, arg := range modifiedArgs {
-		// Handle --port=XXXX format
+		// Handle --port=XXXX format (internal gRPC ports)
 		if strings.HasPrefix(arg, "--port=") {
 			portStr := strings.TrimPrefix(arg, "--port=")
 			if port, err := strconv.Atoi(portStr); err == nil {
@@ -168,7 +184,7 @@ func (p *ServiceProcess) applyPortOffsets(args []string) []string {
 				modifiedArgs[i] = fmt.Sprintf("--port=%d", newPort)
 			}
 		}
-		// Handle --supervisor=host:port format
+		// Handle --supervisor=host:port format (internal communication)
 		if strings.HasPrefix(arg, "--supervisor=") {
 			supervisorStr := strings.TrimPrefix(arg, "--supervisor=")
 			if strings.Contains(supervisorStr, ":") {
@@ -181,7 +197,7 @@ func (p *ServiceProcess) applyPortOffsets(args []string) []string {
 				}
 			}
 		}
-		// Handle --grpc-bind=host:port format
+		// Handle --grpc-bind=host:port format (internal gRPC)
 		if strings.HasPrefix(arg, "--grpc-bind=") {
 			bindStr := strings.TrimPrefix(arg, "--grpc-bind=")
 			if strings.Contains(bindStr, ":") {
@@ -194,19 +210,8 @@ func (p *ServiceProcess) applyPortOffsets(args []string) []string {
 				}
 			}
 		}
-		// Handle --listen=host:port format
-		if strings.HasPrefix(arg, "--listen=") {
-			listenStr := strings.TrimPrefix(arg, "--listen=")
-			if strings.Contains(listenStr, ":") {
-				parts := strings.Split(listenStr, ":")
-				if len(parts) == 2 {
-					if port, err := strconv.Atoi(parts[1]); err == nil {
-						newPort := p.globalConfig.ApplyPortOffset(port)
-						modifiedArgs[i] = fmt.Sprintf("--listen=%s:%d", parts[0], newPort)
-					}
-				}
-			}
-		}
+		// Note: --listen is for external mesh port - NOT offset
+		// External ports should be explicitly configured in the config file
 	}
 
 	return modifiedArgs

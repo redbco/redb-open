@@ -698,38 +698,48 @@ async fn main() -> anyhow::Result<()> {
                             // Create message channel for outbound session
                             let (message_tx, message_rx) = mpsc::unbounded_channel::<OutboundMessage>();
                             
-                            // Apply timeout to the connection attempt
-                            let connection_result = tokio::time::timeout(
+                            // Spawn the session to run in the background
+                            let _session_task = tokio::spawn(async move {
+                                if let Err(e) = Session::run_outbound_with_messages(config_connect, addr, tls_client_config_clone, tx_connect, Some((message_tx, message_rx))).await {
+                                    warn!("Session to {} ended with error: {:#}", addr, e);
+                                }
+                            });
+                            
+                            // Poll for the session to appear in the registry with timeout
+                            let poll_interval = Duration::from_millis(50);
+                            let wait_result: Result<Result<(u64, SocketAddr), anyhow::Error>, _> = tokio::time::timeout(
                                 Duration::from_secs(timeout_seconds as u64),
-                                Session::run_outbound_with_messages(config_connect, addr, tls_client_config_clone, tx_connect, Some((message_tx, message_rx)))
+                                async {
+                                    loop {
+                                        // Check if session exists in registry
+                                        if let Some(ref registry) = session_registry_clone {
+                                            let sessions = registry.read().await;
+                                            if let Some((peer_node_id, _info)) = sessions.iter()
+                                                .find(|(_, info)| info.remote_addr == addr)
+                                            {
+                                                return Ok((*peer_node_id, addr));
+                                            }
+                                        }
+                                        
+                                        // Wait before next poll
+                                        tokio::time::sleep(poll_interval).await;
+                                    }
+                                }
                             ).await;
                             
-                            let result = match connection_result {
-                                Ok(Ok(())) => {
-                                    // Connection successful, try to get the peer node ID from the session registry
-                                    // Wait a bit for the session to be registered
-                                    tokio::time::sleep(Duration::from_millis(100)).await;
-                                    
-                                    let peer_node_id = if let Some(ref registry) = session_registry_clone {
-                                        let sessions = registry.read().await;
-                                        // Find the session with matching remote address
-                                        sessions.iter()
-                                            .find(|(_, info)| info.remote_addr == addr)
-                                            .map(|(node_id, _)| *node_id)
-                                    } else {
-                                        None
-                                    };
-                                    
+                            let result = match wait_result {
+                                Ok(Ok((peer_node_id, remote_addr))) => {
+                                    info!("Session to {} connected successfully (peer_node_id: {})", addr, peer_node_id);
                                     SessionOperationResult {
                                         success: true,
                                         message: format!("Successfully connected to {}", addr),
                                         error_code: None,
-                                        peer_node_id,
-                                        remote_addr: Some(addr.to_string()),
+                                        peer_node_id: Some(peer_node_id),
+                                        remote_addr: Some(remote_addr.to_string()),
                                     }
                                 }
                                 Ok(Err(e)) => {
-                                    warn!("Outbound session error to {}: {:#}", addr, e);
+                                    warn!("Failed to wait for connection to {}: {:#}", addr, e);
                                     SessionOperationResult {
                                         success: false,
                                         message: format!("Connection failed: {}", e),
