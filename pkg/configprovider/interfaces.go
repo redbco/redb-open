@@ -52,6 +52,15 @@ type DatabaseConfigProvider interface {
 	GetDatabaseUser() string
 }
 
+// ServiceConfigProvider provides service-specific configuration
+type ServiceConfigProvider interface {
+	// GetServiceConfig returns the configuration map for a specific service
+	GetServiceConfig(serviceName string) map[string]string
+
+	// GetServiceExternalPort returns the external port for a specific service
+	GetServiceExternalPort(serviceName string) int
+}
+
 // MultiInstanceConfigProvider combines all configuration interfaces needed
 // for multi-instance initialization and service communication
 type MultiInstanceConfigProvider interface {
@@ -60,4 +69,5 @@ type MultiInstanceConfigProvider interface {
 	ServiceNameProvider
 	GRPCServiceProvider
 	DatabaseConfigProvider
+	ServiceConfigProvider
 }

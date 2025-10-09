@@ -93,7 +93,7 @@ func main() {
 		initCtx, initCancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer initCancel()
 
-		initializer := initialize.NewWithConfig(log, cfg)
+		initializer := initialize.NewWithConfigAndVersion(log, cfg, Version)
 
 		// Use single-tenant initialization if configured
 		if cfg.IsSingleTenant() {
@@ -122,7 +122,7 @@ func main() {
 		initCtx, initCancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer initCancel()
 
-		initializer := initialize.NewWithConfig(log, cfg)
+		initializer := initialize.NewWithConfigAndVersion(log, cfg, Version)
 
 		// Use single-tenant initialization if configured
 		if cfg.IsSingleTenant() {

@@ -346,3 +346,38 @@ func (c *Config) GetDatabaseName() string {
 func (c *Config) GetDatabaseUser() string {
 	return c.Database.User
 }
+
+// GetServiceConfig implements ServiceConfigProvider
+func (c *Config) GetServiceConfig(serviceName string) map[string]string {
+	if serviceConfig, exists := c.Services[serviceName]; exists {
+		return serviceConfig.Config
+	}
+	return nil
+}
+
+// GetServiceExternalPort implements ServiceConfigProvider
+func (c *Config) GetServiceExternalPort(serviceName string) int {
+	if serviceConfig, exists := c.Services[serviceName]; exists {
+		// First check if there's a direct external_port field
+		if serviceConfig.ExternalPort > 0 {
+			return serviceConfig.ExternalPort
+		}
+
+		// Then check in the config map
+		if serviceConfig.Config != nil {
+			// Try different possible config keys
+			portKeys := []string{
+				fmt.Sprintf("services.%s.external_port", serviceName),
+				"external_port",
+			}
+			for _, key := range portKeys {
+				if portStr, ok := serviceConfig.Config[key]; ok {
+					if port, err := strconv.Atoi(portStr); err == nil {
+						return port
+					}
+				}
+			}
+		}
+	}
+	return 0
+}

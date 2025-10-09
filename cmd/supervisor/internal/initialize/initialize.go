@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -119,6 +120,7 @@ type Initializer struct {
 	reader         io.Reader
 	keyringManager *keyring.KeyringManager
 	config         interface{} // Store config for instance-aware service names
+	version        string      // Application version
 }
 
 type DatabaseCredentials struct {
@@ -136,6 +138,8 @@ type NodeInfo struct {
 	Port       int
 	PublicKey  string
 	PrivateKey string
+	Platform   string
+	Version    string
 }
 
 type TenantInfo struct {
@@ -156,8 +160,18 @@ func New(logger logger.LoggerInterface) *Initializer {
 	return NewWithConfig(logger, nil)
 }
 
+// NewWithVersion creates a new initializer instance with version information
+func NewWithVersion(logger logger.LoggerInterface, version string) *Initializer {
+	return NewWithConfigAndVersion(logger, nil, version)
+}
+
 // NewWithConfig creates a new initializer instance with configuration
 func NewWithConfig(logger logger.LoggerInterface, config interface{}) *Initializer {
+	return NewWithConfigAndVersion(logger, config, "unknown")
+}
+
+// NewWithConfigAndVersion creates a new initializer instance with configuration and version
+func NewWithConfigAndVersion(logger logger.LoggerInterface, config interface{}, version string) *Initializer {
 	// Initialize keyring manager with configuration if available
 	var keyringPath string
 	var masterPassword string
@@ -206,6 +220,7 @@ func NewWithConfig(logger logger.LoggerInterface, config interface{}) *Initializ
 		reader:         os.Stdin,
 		keyringManager: km,
 		config:         config,
+		version:        version,
 	}
 }
 
@@ -220,6 +235,44 @@ func (i *Initializer) getKeyringServiceName(service string) string {
 
 	// Fallback to default naming
 	return fmt.Sprintf("redb-%s", service)
+}
+
+// getMeshExternalPort returns the mesh external port from configuration
+func (i *Initializer) getMeshExternalPort() int {
+	defaultPort := 10001 // Default mesh external port
+
+	if i.config == nil {
+		i.logger.Warnf("No config available, using default mesh external port %d", defaultPort)
+		return defaultPort
+	}
+
+	// Try to use the ServiceConfigProvider interface
+	if serviceConfigProvider, ok := i.config.(interface {
+		GetServiceExternalPort(serviceName string) int
+	}); ok {
+		port := serviceConfigProvider.GetServiceExternalPort("mesh")
+		if port > 0 {
+			i.logger.Infof("Using mesh external port from configuration: %d", port)
+			return port
+		}
+	}
+
+	// Fallback to default port
+	i.logger.Warnf("Could not read mesh external port from configuration, using default: %d", defaultPort)
+	return defaultPort
+}
+
+// getPlatform returns the platform string (OS/Architecture)
+func (i *Initializer) getPlatform() string {
+	return fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+}
+
+// getVersion returns the application version
+func (i *Initializer) getVersion() string {
+	if i.version == "" || i.version == "unknown" {
+		return "v0.0.1" // Default version
+	}
+	return i.version
 }
 
 // Initialize performs the complete node initialization process
@@ -492,7 +545,9 @@ func (i *Initializer) generateNodeKeys() (*NodeInfo, error) {
 			nodeInfo := &NodeInfo{
 				PublicKey:  existingPublicKey,
 				PrivateKey: existingPrivateKey,
-				Port:       8443, // Default port
+				Port:       i.getMeshExternalPort(),
+				Platform:   i.getPlatform(),
+				Version:    i.getVersion(),
 			}
 
 			// Get local IP address
@@ -543,7 +598,9 @@ func (i *Initializer) generateNodeKeys() (*NodeInfo, error) {
 	nodeInfo := &NodeInfo{
 		PublicKey:  string(publicKeyPEM),
 		PrivateKey: string(privateKeyPEM),
-		Port:       8443, // Default port
+		Port:       i.getMeshExternalPort(),
+		Platform:   i.getPlatform(),
+		Version:    i.getVersion(),
 	}
 
 	// Get local IP address
@@ -1077,10 +1134,10 @@ func (i *Initializer) createLocalNode(ctx context.Context, creds *DatabaseCreden
 
 	// Insert node into nodes table with explicit node_id
 	err = tx.QueryRow(ctx, `
-		INSERT INTO nodes (node_id, node_name, node_description, node_public_key, ip_address, port, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO nodes (node_id, node_name, node_description, node_public_key, ip_address, port, node_platform, node_version, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING node_id
-	`, nodeID, nodeName, "Local node", []byte(nodeInfo.PublicKey), nodeInfo.IPAddress, nodeInfo.Port, "STATUS_ACTIVE").Scan(&nodeID)
+	`, nodeID, nodeName, "Local node", []byte(nodeInfo.PublicKey), nodeInfo.IPAddress, nodeInfo.Port, nodeInfo.Platform, nodeInfo.Version, "STATUS_ACTIVE").Scan(&nodeID)
 	if err != nil {
 		return fmt.Errorf("failed to insert node: %w", err)
 	}
