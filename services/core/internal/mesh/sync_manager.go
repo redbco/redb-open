@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	meshv1 "github.com/redbco/redb-open/api/proto/mesh/v1"
@@ -650,9 +651,9 @@ func (s *DatabaseSyncManager) GetMeshDataForSync(ctx context.Context) (map[strin
 		meshData["updated"] = updated.Format(time.RFC3339)
 	}
 
-	// Get all nodes
+	// Get all nodes (including region_id for later restoration after user data sync)
 	nodesQuery := `
-		SELECT node_id, node_name, node_description, node_public_key, host(ip_address) as ip_address, port, status, seed_node
+		SELECT node_id, node_name, node_description, node_public_key, host(ip_address) as ip_address, port, status, seed_node, region_id
 		FROM nodes
 		ORDER BY node_id
 	`
@@ -668,13 +669,14 @@ func (s *DatabaseSyncManager) GetMeshDataForSync(ctx context.Context) (map[strin
 			var nodeName, nodeDescription, ipAddress, nodeStatus string
 			var nodePublicKey []byte
 			var seedNode bool
+			var regionID *string // nullable
 
-			if err := rows.Scan(&nodeID, &nodeName, &nodeDescription, &nodePublicKey, &ipAddress, &port, &nodeStatus, &seedNode); err != nil {
+			if err := rows.Scan(&nodeID, &nodeName, &nodeDescription, &nodePublicKey, &ipAddress, &port, &nodeStatus, &seedNode, &regionID); err != nil {
 				s.logger.Warnf("Failed to scan node row: %v", err)
 				continue
 			}
 
-			nodesList = append(nodesList, map[string]interface{}{
+			nodeData := map[string]interface{}{
 				"node_id":          fmt.Sprintf("%d", nodeID), // Send as string to preserve int64 precision
 				"node_name":        nodeName,
 				"node_description": nodeDescription,
@@ -683,7 +685,15 @@ func (s *DatabaseSyncManager) GetMeshDataForSync(ctx context.Context) (map[strin
 				"port":             port,
 				"status":           nodeStatus,
 				"seed_node":        seedNode,
-			})
+			}
+
+			// Include original region_id for potential restoration after user data sync
+			// But it will be set to NULL during initial node insertion (Step 1)
+			if regionID != nil {
+				nodeData["original_region_id"] = *regionID
+			}
+
+			nodesList = append(nodesList, nodeData)
 		}
 		nodesData["nodes"] = nodesList
 		s.logger.Infof("Found %d nodes for sync", len(nodesList))
@@ -762,6 +772,7 @@ func (s *DatabaseSyncManager) ApplySyncedMeshData(ctx context.Context, data map[
 	}
 
 	// Apply routes data
+	var syncedNodeIDs []int64
 	if routesData, ok := data["routes"].(map[string]interface{}); ok {
 		if routesList, ok := routesData["routes"].([]interface{}); ok {
 			s.logger.Infof("Applying %d routes", len(routesList))
@@ -788,6 +799,64 @@ func (s *DatabaseSyncManager) ApplySyncedMeshData(ctx context.Context, data map[
 						s.logger.Warnf("Failed to upsert route: %v", err)
 					}
 				}
+			}
+		}
+	}
+
+	// Create routes to all synced nodes if not already present
+	// This handles the case where seed node hasn't created routes yet
+	if nodesData, ok := data["nodes"].(map[string]interface{}); ok {
+		if nodesList, ok := nodesData["nodes"].([]interface{}); ok {
+			for _, nodeInterface := range nodesList {
+				if node, ok := nodeInterface.(map[string]interface{}); ok {
+					var nodeID int64
+					if nodeIDStr, ok := node["node_id"].(string); ok {
+						if parsedID, err := strconv.ParseInt(nodeIDStr, 10, 64); err == nil {
+							nodeID = parsedID
+						}
+					} else if nodeIDInt, ok := node["node_id"].(int64); ok {
+						nodeID = nodeIDInt
+					} else if nodeIDFloat, ok := node["node_id"].(float64); ok {
+						nodeID = int64(nodeIDFloat)
+					}
+
+					if nodeID != 0 {
+						syncedNodeIDs = append(syncedNodeIDs, nodeID)
+					}
+				}
+			}
+		}
+	}
+
+	// Get local node ID
+	localNodeID, err := s.getLocalNodeID(ctx)
+	if err == nil && len(syncedNodeIDs) > 0 {
+		s.logger.Infof("Creating routes to %d synced nodes", len(syncedNodeIDs))
+		for _, remoteNodeID := range syncedNodeIDs {
+			if remoteNodeID == localNodeID {
+				continue // Skip route to self
+			}
+
+			// Create bidirectional routes
+			routeData := map[string]interface{}{
+				"a_node":     localNodeID,
+				"b_node":     remoteNodeID,
+				"latency_ms": 0,
+				"status":     "STATUS_ACTIVE",
+			}
+			if err := s.upsertRoute(ctx, routeData); err != nil {
+				s.logger.Debugf("Route to node %d may already exist: %v", remoteNodeID, err)
+			}
+
+			// Reverse route
+			routeData = map[string]interface{}{
+				"a_node":     remoteNodeID,
+				"b_node":     localNodeID,
+				"latency_ms": 0,
+				"status":     "STATUS_ACTIVE",
+			}
+			if err := s.upsertRoute(ctx, routeData); err != nil {
+				s.logger.Debugf("Reverse route from node %d may already exist: %v", remoteNodeID, err)
 			}
 		}
 	}
@@ -895,9 +964,13 @@ func (s *DatabaseSyncManager) upsertMesh(ctx context.Context, data map[string]in
 }
 
 func (s *DatabaseSyncManager) upsertNode(ctx context.Context, data map[string]interface{}) error {
+	// Note: region_id is intentionally NOT included in this INSERT
+	// During mesh sync (Step 1), region_id must be NULL because the regions table
+	// hasn't been synced yet. After user data sync (Step 3), region_id can be
+	// restored if original_region_id was provided in the sync data.
 	query := `
-		INSERT INTO nodes (node_id, node_name, node_description, node_public_key, ip_address, port, status, seed_node, created, updated)
-		VALUES ($1, $2, $3, $4, $5::inet, $6, $7::status_enum, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO nodes (node_id, node_name, node_description, node_public_key, ip_address, port, status, seed_node, region_id, created, updated)
+		VALUES ($1, $2, $3, $4, $5::inet, $6, $7::status_enum, $8, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT (node_id) DO UPDATE SET
 			node_name = EXCLUDED.node_name,
 			node_description = EXCLUDED.node_description,
@@ -907,6 +980,7 @@ func (s *DatabaseSyncManager) upsertNode(ctx context.Context, data map[string]in
 			status = EXCLUDED.status,
 			seed_node = EXCLUDED.seed_node,
 			updated = CURRENT_TIMESTAMP
+			-- region_id is NOT updated here - it stays NULL until regions are synced
 	`
 
 	seedNode := false
@@ -995,4 +1069,586 @@ func (s *DatabaseSyncManager) getLocalNodeID(ctx context.Context) (int64, error)
 		return 0, fmt.Errorf("failed to get local node ID: %w", err)
 	}
 	return nodeID, nil
+}
+
+// === User-Level Table Synchronization ===
+
+// GetUserDataForSync retrieves all user-level table data for synchronization
+// Returns data in a single structure to be sent as one message
+func (s *DatabaseSyncManager) GetUserDataForSync(ctx context.Context) (map[string]interface{}, error) {
+	s.logger.Info("Gathering user-level data for synchronization")
+
+	userData := make(map[string]interface{})
+
+	// Define the order of tables to sync (respecting foreign key constraints)
+	// Order matters: parent tables before child tables
+	tableOrder := []string{
+		"tenants",
+		"users",
+		"workspaces",
+		"regions",
+		"environments",
+		"instances",
+		"databases",
+		"repos",
+		"branches",
+		"commits",
+		"mapping_rules",
+		"mappings",
+		"mapping_rule_mappings",
+		"relationships",
+	}
+
+	for _, tableName := range tableOrder {
+		tableData, err := s.getUserTableData(ctx, tableName)
+		if err != nil {
+			s.logger.Warnf("Failed to get data for table %s: %v", tableName, err)
+			// Continue with other tables even if one fails
+			userData[tableName] = []map[string]interface{}{}
+			continue
+		}
+		userData[tableName] = tableData
+		s.logger.Debugf("Gathered %d rows from %s", len(tableData), tableName)
+	}
+
+	s.logger.Infof("Successfully gathered user-level data from %d tables", len(tableOrder))
+	return userData, nil
+}
+
+// getUserTableData retrieves all rows from a user-level table
+func (s *DatabaseSyncManager) getUserTableData(ctx context.Context, tableName string) ([]map[string]interface{}, error) {
+	// Get all columns for the table
+	columnsQuery := `
+		SELECT column_name, data_type, udt_name
+		FROM information_schema.columns
+		WHERE table_name = $1
+		ORDER BY ordinal_position
+	`
+
+	colRows, err := s.db.Pool().Query(ctx, columnsQuery, tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query columns for %s: %w", tableName, err)
+	}
+	defer colRows.Close()
+
+	var columns []string
+	for colRows.Next() {
+		var colName, dataType, udtName string
+		if err := colRows.Scan(&colName, &dataType, &udtName); err != nil {
+			return nil, fmt.Errorf("failed to scan column info: %w", err)
+		}
+		columns = append(columns, colName)
+	}
+
+	if len(columns) == 0 {
+		return []map[string]interface{}{}, nil
+	}
+
+	// Query all rows
+	query := fmt.Sprintf("SELECT %s FROM %s ORDER BY 1", strings.Join(columns, ", "), tableName)
+	rows, err := s.db.Pool().Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query table %s: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	var result []map[string]interface{}
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			s.logger.Warnf("Failed to scan row from %s: %v", tableName, err)
+			continue
+		}
+
+		rowData := make(map[string]interface{})
+		for i, colName := range columns {
+			// Convert int64 values to strings to preserve precision in JSON
+			if v, ok := values[i].(int64); ok {
+				rowData[colName] = fmt.Sprintf("%d", v)
+			} else if v, ok := values[i].(int32); ok {
+				rowData[colName] = fmt.Sprintf("%d", v)
+			} else {
+				rowData[colName] = values[i]
+			}
+		}
+		result = append(result, rowData)
+	}
+
+	return result, nil
+}
+
+// ApplyUserDataSync applies user-level data to the local database
+// This overwrites all user-level data on the joining node
+func (s *DatabaseSyncManager) ApplyUserDataSync(ctx context.Context, userData map[string]interface{}) error {
+	s.logger.Info("Applying user-level data to local database")
+
+	// Clean up existing user sessions before overwriting user data
+	if err := s.cleanupUserSessions(ctx); err != nil {
+		s.logger.Warnf("Failed to cleanup user sessions: %v", err)
+		// Continue anyway - sessions will eventually timeout
+	}
+
+	// Define the order of tables to apply (respecting foreign key constraints)
+	// Must match the order in GetUserDataForSync
+	tableOrder := []string{
+		"tenants",
+		"users",
+		"workspaces",
+		"regions",
+		"environments",
+		"instances",
+		"databases",
+		"repos",
+		"branches",
+		"commits",
+		"mapping_rules",
+		"mappings",
+		"mapping_rule_mappings",
+		"relationships",
+	}
+
+	// Start a transaction for all user-level data
+	s.logger.Info("Beginning transaction for user-level data sync")
+	tx, err := s.db.Pool().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	s.logger.Info("Transaction started successfully")
+	defer tx.Rollback(ctx)
+
+	// Set a statement timeout to prevent indefinite waiting on locks
+	_, err = tx.Exec(ctx, "SET LOCAL statement_timeout = '30s'")
+	if err != nil {
+		s.logger.Warnf("Failed to set statement timeout: %v", err)
+	} else {
+		s.logger.Info("Set statement timeout to 30s for this transaction")
+	}
+
+	// Delete existing data from user-level tables only
+	// This ensures mesh consistency - all nodes have identical user-level data
+	// We DELETE (not TRUNCATE) from specific tables to:
+	// 1. Avoid TRUNCATE CASCADE which would wipe system tables (mesh, nodes, routes)
+	// 2. Respect FK constraints (instances/databases reference nodes, but deleting them doesn't affect nodes)
+	// 3. Allow nodes.region_id to be SET NULL when regions is deleted (per FK definition)
+	// Delete in reverse order to respect FK dependencies (leaf tables first)
+	s.logger.Info("Deleting existing user-level data (mesh consistency)")
+
+	// Reverse order: delete leaf tables first to avoid FK violations
+	for i := len(tableOrder) - 1; i >= 0; i-- {
+		tableName := tableOrder[i]
+		s.logger.Debugf("Deleting all rows from %s", tableName)
+		result, err := tx.Exec(ctx, fmt.Sprintf("DELETE FROM %s", tableName))
+		if err != nil {
+			s.logger.Errorf("Failed to delete from %s: %v", tableName, err)
+
+			// Check if it's a lock timeout or cancellation
+			errStr := err.Error()
+			if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "lock") {
+				s.logger.Errorf("DELETE on %s failed due to lock/timeout", tableName)
+				s.logBlockingQueries(ctx, tableName)
+			}
+
+			return fmt.Errorf("failed to delete from %s: %w", tableName, err)
+		}
+		rowsDeleted := result.RowsAffected()
+		s.logger.Debugf("Deleted %d rows from %s", rowsDeleted, tableName)
+	}
+
+	s.logger.Info("User-level data cleared, starting to apply synced data")
+
+	// Apply data for each table in forward order
+	for _, tableName := range tableOrder {
+		s.logger.Debugf("Processing table %s", tableName)
+		tableDataInterface, ok := userData[tableName]
+		if !ok {
+			s.logger.Debugf("No data for table %s", tableName)
+			continue
+		}
+
+		s.logger.Debugf("Converting data for table %s", tableName)
+		// Handle both []interface{} and []map[string]interface{} from JSON
+		var tableData []interface{}
+		switch v := tableDataInterface.(type) {
+		case []interface{}:
+			tableData = v
+		case []map[string]interface{}:
+			// Convert to []interface{}
+			for _, item := range v {
+				tableData = append(tableData, item)
+			}
+		default:
+			s.logger.Warnf("Invalid data format for table %s (type: %T)", tableName, tableDataInterface)
+			continue
+		}
+
+		if len(tableData) == 0 {
+			s.logger.Debugf("Table %s is empty, skipping", tableName)
+			continue
+		}
+
+		s.logger.Infof("Applying %d rows to %s", len(tableData), tableName)
+
+		// Debug: Log the data being inserted for instances and databases
+		if tableName == "instances" || tableName == "databases" {
+			for i, rowInterface := range tableData {
+				if row, ok := rowInterface.(map[string]interface{}); ok {
+					s.logger.Debugf("  Row %d: connected_to_node_id=%v (type=%T)", i, row["connected_to_node_id"], row["connected_to_node_id"])
+				}
+			}
+		}
+
+		s.logger.Debugf("About to call applyTableData for %s", tableName)
+		if err := s.applyTableData(ctx, tx, tableName, tableData); err != nil {
+			return fmt.Errorf("failed to apply data for %s: %w", tableName, err)
+		}
+		s.logger.Debugf("Completed applyTableData for %s", tableName)
+	}
+
+	s.logger.Info("All table data applied successfully, committing transaction")
+	// Commit the transaction - FK constraints will be checked here
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	s.logger.Info("Successfully applied all user-level data")
+	return nil
+}
+
+// cleanupUserSessions removes all active user sessions
+func (s *DatabaseSyncManager) cleanupUserSessions(ctx context.Context) error {
+	s.logger.Info("Cleaning up user sessions before data sync")
+
+	// Check if user_sessions table exists
+	checkQuery := `
+		SELECT EXISTS (
+			SELECT FROM information_schema.tables 
+			WHERE table_name = 'user_sessions'
+		)
+	`
+	var exists bool
+	if err := s.db.Pool().QueryRow(ctx, checkQuery).Scan(&exists); err != nil {
+		return fmt.Errorf("failed to check for user_sessions table: %w", err)
+	}
+
+	if !exists {
+		s.logger.Debug("user_sessions table does not exist, skipping cleanup")
+		return nil
+	}
+
+	// Delete all sessions
+	result, err := s.db.Pool().Exec(ctx, "DELETE FROM user_sessions")
+	if err != nil {
+		return fmt.Errorf("failed to delete user sessions: %w", err)
+	}
+
+	rowsAffected := result.RowsAffected()
+	s.logger.Infof("Cleaned up %d user sessions", rowsAffected)
+	return nil
+}
+
+// applyTableData inserts data into a single table
+func (s *DatabaseSyncManager) applyTableData(ctx context.Context, tx pgx.Tx, tableName string, data []interface{}) error {
+	s.logger.Debugf("applyTableData: entered for table %s with %d rows", tableName, len(data))
+	if len(data) == 0 {
+		return nil
+	}
+
+	// Get the first row to determine columns
+	firstRow, ok := data[0].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid row format for %s", tableName)
+	}
+
+	// Build column list
+	var columns []string
+	for colName := range firstRow {
+		columns = append(columns, colName)
+	}
+	s.logger.Debugf("applyTableData: built column list for %s, %d columns", tableName, len(columns))
+
+	// Get the actual primary key columns from the database
+	s.logger.Debugf("applyTableData: getting primary key columns for %s", tableName)
+	pkColumns, err := s.getPrimaryKeyColumns(ctx, tx, tableName)
+	s.logger.Debugf("applyTableData: got primary key columns for %s: %v (err: %v)", tableName, pkColumns, err)
+	if err != nil {
+		s.logger.Warnf("Failed to get primary key for %s: %v", tableName, err)
+		// Fallback: use simple INSERT without ON CONFLICT
+		return s.applyTableDataSimple(ctx, tx, tableName, columns, data)
+	}
+
+	// Build INSERT statement with ON CONFLICT DO UPDATE
+	var placeholders []string
+	var updateClauses []string
+	for i, col := range columns {
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+		// Update all columns except primary keys on conflict
+		isPK := false
+		for _, pkCol := range pkColumns {
+			if col == pkCol {
+				isPK = true
+				break
+			}
+		}
+		if !isPK {
+			updateClauses = append(updateClauses, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
+		}
+	}
+
+	var query string
+	if len(pkColumns) > 0 {
+		// Build ON CONFLICT clause with actual primary keys
+		pkConstraint := strings.Join(pkColumns, ", ")
+
+		if len(updateClauses) > 0 {
+			query = fmt.Sprintf(
+				"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+				tableName,
+				strings.Join(columns, ", "),
+				strings.Join(placeholders, ", "),
+				pkConstraint,
+				strings.Join(updateClauses, ", "),
+			)
+		} else {
+			// All columns are primary keys - just skip on conflict
+			query = fmt.Sprintf(
+				"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO NOTHING",
+				tableName,
+				strings.Join(columns, ", "),
+				strings.Join(placeholders, ", "),
+				pkConstraint,
+			)
+		}
+	} else {
+		// No primary key - just insert
+		query = fmt.Sprintf(
+			"INSERT INTO %s (%s) VALUES (%s)",
+			tableName,
+			strings.Join(columns, ", "),
+			strings.Join(placeholders, ", "),
+		)
+	}
+
+	// Insert each row
+	rowsInserted := 0
+	for _, rowInterface := range data {
+		row, ok := rowInterface.(map[string]interface{})
+		if !ok {
+			s.logger.Warnf("Skipping invalid row in %s", tableName)
+			continue
+		}
+
+		// Build values array in same order as columns
+		var values []interface{}
+		for _, col := range columns {
+			val := row[col]
+
+			// Convert different numeric types to appropriate format
+			switch v := val.(type) {
+			case string:
+				// Try to parse as int64 for ID columns
+				if strings.HasSuffix(col, "_id") || strings.HasSuffix(col, "_node") {
+					if intVal, err := strconv.ParseInt(v, 10, 64); err == nil {
+						values = append(values, intVal)
+						continue
+					}
+				}
+				values = append(values, v)
+			case float64:
+				// JSON unmarshaling often produces float64 for numbers
+				// Convert to int64 for ID columns
+				if strings.HasSuffix(col, "_id") || strings.HasSuffix(col, "_node") {
+					values = append(values, int64(v))
+				} else {
+					values = append(values, v)
+				}
+			case int:
+				values = append(values, int64(v))
+			case int64:
+				values = append(values, v)
+			case nil:
+				values = append(values, nil)
+			default:
+				values = append(values, val)
+			}
+		}
+
+		// Execute insert
+		_, err := tx.Exec(ctx, query, values...)
+		if err != nil {
+			// Enhanced error logging for debugging foreign key issues
+			if tableName == "instances" || tableName == "databases" {
+				s.logger.Errorf("Failed to insert row into %s: %v", tableName, err)
+				s.logger.Errorf("  Query: %s", query)
+				s.logger.Errorf("  Values: %+v", values)
+				// Find the connected_to_node_id column and log its value
+				for i, col := range columns {
+					if col == "connected_to_node_id" && i < len(values) {
+						s.logger.Errorf("  connected_to_node_id value: %v (type=%T)", values[i], values[i])
+					}
+				}
+			} else {
+				s.logger.Warnf("Failed to insert row into %s: %v", tableName, err)
+			}
+			continue
+		}
+
+		rowsInserted++
+	}
+
+	s.logger.Debugf("Inserted/updated %d rows in %s", rowsInserted, tableName)
+	return nil
+}
+
+// getPrimaryKeyColumns retrieves the primary key column names for a table
+func (s *DatabaseSyncManager) getPrimaryKeyColumns(ctx context.Context, tx pgx.Tx, tableName string) ([]string, error) {
+	query := `
+		SELECT a.attname
+		FROM pg_index i
+		JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+		WHERE i.indrelid = $1::regclass
+		  AND i.indisprimary
+		ORDER BY a.attnum
+	`
+
+	rows, err := tx.Query(ctx, query, tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query primary keys: %w", err)
+	}
+	defer rows.Close()
+
+	var pkColumns []string
+	for rows.Next() {
+		var colName string
+		if err := rows.Scan(&colName); err != nil {
+			return nil, fmt.Errorf("failed to scan primary key column: %w", err)
+		}
+		pkColumns = append(pkColumns, colName)
+	}
+
+	return pkColumns, nil
+}
+
+// applyTableDataSimple inserts data without ON CONFLICT handling (fallback method)
+func (s *DatabaseSyncManager) applyTableDataSimple(ctx context.Context, tx pgx.Tx, tableName string, columns []string, data []interface{}) error {
+	// Build simple INSERT statement
+	var placeholders []string
+	for i := range columns {
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+	}
+
+	query := fmt.Sprintf(
+		"INSERT INTO %s (%s) VALUES (%s)",
+		tableName,
+		strings.Join(columns, ", "),
+		strings.Join(placeholders, ", "),
+	)
+
+	// Insert each row
+	rowsInserted := 0
+	for _, rowInterface := range data {
+		row, ok := rowInterface.(map[string]interface{})
+		if !ok {
+			s.logger.Warnf("Skipping invalid row in %s", tableName)
+			continue
+		}
+
+		// Build values array in same order as columns
+		var values []interface{}
+		for _, col := range columns {
+			val := row[col]
+
+			// Convert different numeric types to appropriate format
+			switch v := val.(type) {
+			case string:
+				// Try to parse as int64 for ID columns
+				if strings.HasSuffix(col, "_id") || strings.HasSuffix(col, "_node") {
+					if intVal, err := strconv.ParseInt(v, 10, 64); err == nil {
+						values = append(values, intVal)
+						continue
+					}
+				}
+				values = append(values, v)
+			case float64:
+				// JSON unmarshaling often produces float64 for numbers
+				// Convert to int64 for ID columns
+				if strings.HasSuffix(col, "_id") || strings.HasSuffix(col, "_node") {
+					values = append(values, int64(v))
+				} else {
+					values = append(values, v)
+				}
+			case int:
+				values = append(values, int64(v))
+			case int64:
+				values = append(values, v)
+			case nil:
+				values = append(values, nil)
+			default:
+				values = append(values, val)
+			}
+		}
+
+		// Execute insert
+		_, err := tx.Exec(ctx, query, values...)
+		if err != nil {
+			s.logger.Warnf("Failed to insert row into %s: %v", tableName, err)
+			continue
+		}
+
+		rowsInserted++
+	}
+
+	s.logger.Debugf("Inserted %d rows in %s (simple mode)", rowsInserted, tableName)
+	return nil
+}
+
+// logBlockingQueries attempts to log information about queries blocking table operations
+func (s *DatabaseSyncManager) logBlockingQueries(ctx context.Context, tableName string) {
+	// Query to find blocking queries
+	query := `
+		SELECT 
+			pid,
+			usename,
+			application_name,
+			state,
+			query,
+			state_change,
+			NOW() - state_change AS duration
+		FROM pg_stat_activity
+		WHERE state != 'idle'
+		  AND pid != pg_backend_pid()
+		ORDER BY state_change
+		LIMIT 10
+	`
+
+	// Use a separate connection to avoid transaction issues
+	rows, err := s.db.Pool().Query(ctx, query)
+	if err != nil {
+		s.logger.Warnf("Failed to query blocking processes: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	s.logger.Warnf("Active queries that may be blocking TRUNCATE on %s:", tableName)
+	count := 0
+	for rows.Next() {
+		var pid int
+		var username, appName, state, query, duration string
+		var stateChange time.Time
+		if err := rows.Scan(&pid, &username, &appName, &state, &query, &stateChange, &duration); err != nil {
+			s.logger.Warnf("Failed to scan row: %v", err)
+			continue
+		}
+
+		// Truncate long queries
+		if len(query) > 100 {
+			query = query[:100] + "..."
+		}
+
+		s.logger.Warnf("  [PID %d] %s/%s: %s (duration: %s)", pid, username, appName, query, duration)
+		count++
+	}
+
+	if count == 0 {
+		s.logger.Warn("  No active queries found (they may have completed)")
+	}
 }

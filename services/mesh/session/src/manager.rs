@@ -6,7 +6,7 @@
 use crate::session::SessionEvent;
 use crate::failure_tracker::RoutingFailureTracker;
 use mesh_routing::{Router, RoutingContext, RoutingDecision, RoutingTable, DropReason};
-use mesh_wire::{FrameBuilder, FrameType, TopologyUpdate};
+use mesh_wire::{FrameBuilder, FrameType, TopologyUpdate, DEFAULT_MAX_FRAME_SIZE};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -864,7 +864,7 @@ pub fn build_data_frame(
     let payload_bytes = Bytes::from(message.payload.clone());
     builder = builder.payload(payload_bytes);
     
-    // Build with max frame size (64KB)
-    let frame_bytes = builder.build(65536)?;
+    // Build with max frame size (16 MiB default)
+    let frame_bytes = builder.build(DEFAULT_MAX_FRAME_SIZE)?;
     Ok(frame_bytes.to_vec())
 }

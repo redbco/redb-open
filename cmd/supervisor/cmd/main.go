@@ -158,7 +158,7 @@ func main() {
 
 	// Use supervisor port from config (which already has port offset applied)
 	// or fall back to command-line flag with port offset applied
-	supervisorPort := *port
+	var supervisorPort int
 	if cfg.Supervisor.Port > 0 {
 		// Config port already has offset applied in superconfig.Load()
 		supervisorPort = cfg.Supervisor.Port

@@ -23,9 +23,15 @@ const (
 	MessageTypeResponse            = "response"
 	MessageTypeMeshEvent           = "mesh_event"
 	MessageTypeDatabaseSyncRequest = "database_sync_request"
-	MessageTypeMeshSyncRequest     = "mesh_sync_request"  // Request mesh data from peer
-	MessageTypeMeshSyncResponse    = "mesh_sync_response" // Response with mesh data
-	MessageTypeNodeJoinNotify      = "node_join_notify"   // Notify about joining node
+
+	// System-level synchronization (mesh, nodes, routes)
+	MessageTypeMeshSyncRequest  = "mesh_sync_request"  // Request mesh data from peer
+	MessageTypeMeshSyncResponse = "mesh_sync_response" // Response with mesh data
+	MessageTypeNodeJoinNotify   = "node_join_notify"   // Notify about joining node
+
+	// User-level synchronization (tenants, users, workspaces, etc.)
+	MessageTypeUserDataSyncRequest  = "user_data_sync_request"  // Request user-level data from peer
+	MessageTypeUserDataSyncResponse = "user_data_sync_response" // Response with user-level data
 )
 
 // CoreMessage represents a structured message between core services
@@ -35,6 +41,14 @@ type CoreMessage struct {
 	Data      map[string]interface{} `json:"data"`
 	RequestID string                 `json:"request_id,omitempty"`
 	Timestamp int64                  `json:"timestamp"`
+}
+
+// ResponseAck represents an application-level acknowledgment
+type ResponseAck struct {
+	MsgID    uint64
+	Success  bool
+	Message  string
+	Response *meshv1.Received // Optional response message
 }
 
 // MessageHandler defines the interface for handling received messages
@@ -58,6 +72,8 @@ type MeshCommunicationManager struct {
 	subscriptions     map[string]*MeshSubscription
 	messageHandlers   map[string]MessageHandler
 	pendingRequests   map[string]chan *meshv1.Received // For synchronous request-response
+	pendingAcks       map[uint64]chan *ResponseAck     // For waiting on application-level ACKs (keyed by correlation ID)
+	processedMessages map[string]time.Time             // For message deduplication (key: "srcNode:msgId:corrId")
 	eventManager      *MeshEventManager                // Reference to event manager for handling mesh events
 	mu                sync.RWMutex
 	ctx               context.Context
@@ -83,6 +99,8 @@ func NewMeshCommunicationManager(
 		subscriptions:     make(map[string]*MeshSubscription),
 		messageHandlers:   make(map[string]MessageHandler),
 		pendingRequests:   make(map[string]chan *meshv1.Received),
+		pendingAcks:       make(map[uint64]chan *ResponseAck),
+		processedMessages: make(map[string]time.Time),
 		ctx:               ctx,
 		cancel:            cancel,
 	}
@@ -126,8 +144,39 @@ func (m *MeshCommunicationManager) Start(ctx context.Context) error {
 	}
 	m.logger.Debug("Mesh message subscription completed")
 
+	// Start cleanup routine for processed messages
+	go m.cleanupProcessedMessages()
+
 	m.logger.Info("Mesh communication manager started successfully")
 	return nil
+}
+
+// cleanupProcessedMessages periodically removes old processed message entries
+func (m *MeshCommunicationManager) cleanupProcessedMessages() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			m.mu.Lock()
+			now := time.Now()
+			count := 0
+			for key, timestamp := range m.processedMessages {
+				// Remove entries older than 2 minutes
+				if now.Sub(timestamp) > 2*time.Minute {
+					delete(m.processedMessages, key)
+					count++
+				}
+			}
+			if count > 0 {
+				m.logger.Debugf("Cleaned up %d old processed message entries", count)
+			}
+			m.mu.Unlock()
+		}
+	}
 }
 
 // Stop gracefully shuts down the mesh communication manager
@@ -198,6 +247,13 @@ func (m *MeshCommunicationManager) Stop() error {
 
 // SendMessage sends a message to another node in the mesh
 func (m *MeshCommunicationManager) SendMessage(ctx context.Context, targetNodeID uint64, message *CoreMessage) (*meshv1.SendResponse, error) {
+	return m.SendMessageWithCorrID(ctx, targetNodeID, message, uint64(time.Now().UnixNano()))
+}
+
+// SendMessageWithCorrID sends a message with a specific correlation ID
+// This is useful for responses that need to preserve the correlation ID from the request
+// Uses FIRE_AND_FORGET mode to avoid blocking the message handler goroutine
+func (m *MeshCommunicationManager) SendMessageWithCorrID(ctx context.Context, targetNodeID uint64, message *CoreMessage, corrID uint64) (*meshv1.SendResponse, error) {
 	// Serialize the message
 	payload, err := json.Marshal(message)
 	if err != nil {
@@ -205,12 +261,14 @@ func (m *MeshCommunicationManager) SendMessage(ctx context.Context, targetNodeID
 	}
 
 	// Create send request
+	// CRITICAL: Use FIRE_AND_FORGET for response messages sent from handlers
+	// to avoid blocking the message processing goroutine
 	req := &meshv1.SendRequest{
 		DstNode:    targetNodeID,
 		Payload:    payload,
-		CorrId:     uint64(time.Now().UnixNano()), // Use timestamp as correlation ID
-		RequireAck: true,                          // Require acknowledgment for all messages
-		Mode:       meshv1.SendMode_SEND_MODE_WAIT_FOR_DELIVERY,
+		CorrId:     corrID,                                    // Use provided correlation ID
+		RequireAck: true,                                      // Require acknowledgment for reliability
+		Mode:       meshv1.SendMode_SEND_MODE_FIRE_AND_FORGET, // Non-blocking send from handlers
 		QosClass:   m.getQoSClass(message.Type),
 		Partition:  m.getPartition(message.Type),
 	}
@@ -223,16 +281,75 @@ func (m *MeshCommunicationManager) SendMessage(ctx context.Context, targetNodeID
 	}
 
 	// Send the message
+	m.logger.Debugf("Sending message to node %d: type=%s, operation=%s, corr_id=%d, require_ack=%v, mode=%v",
+		targetNodeID, message.Type, message.Operation, corrID, req.RequireAck, req.Mode)
+
 	resp, err := m.meshDataClient.Send(ctx, req)
 	if err != nil {
 		m.logger.Errorf("Failed to send message to node %d: %v", targetNodeID, err)
 		return nil, err
 	}
 
-	m.logger.Debugf("Message sent to node %d, msg_id: %d, status: %v",
-		targetNodeID, resp.MsgId, resp.Status)
+	m.logger.Infof("Message sent to node %d: msg_id=%d, corr_id=%d, type=%s, operation=%s, status=%v, require_ack=%v",
+		targetNodeID, resp.MsgId, corrID, message.Type, message.Operation, resp.Status, resp.RequireAck)
 
 	return resp, nil
+}
+
+// SendMessageWithCallback sends a message with FIRE_AND_FORGET and registers a callback
+// for application-level ACK. Returns immediately after sending.
+func (m *MeshCommunicationManager) SendMessageWithCallback(ctx context.Context, targetNodeID uint64, message *CoreMessage, ackChan chan *ResponseAck) error {
+	// Serialize the message
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("failed to serialize message: %w", err)
+	}
+
+	// Generate a unique correlation ID for this request-response pair
+	corrId := uint64(time.Now().UnixNano())
+
+	// Create send request with FIRE_AND_FORGET for non-blocking send
+	req := &meshv1.SendRequest{
+		DstNode:    targetNodeID,
+		Payload:    payload,
+		CorrId:     corrId,                                    // Unique correlation ID
+		RequireAck: true,                                      // We want application-level ACK
+		Mode:       meshv1.SendMode_SEND_MODE_FIRE_AND_FORGET, // Non-blocking send
+		QosClass:   m.getQoSClass(message.Type),
+		Partition:  m.getPartition(message.Type),
+	}
+
+	// Add headers
+	req.Headers = []*meshv1.Header{
+		{Key: "message_type", Value: []byte(message.Type)},
+		{Key: "operation", Value: []byte(message.Operation)},
+		{Key: "source_node", Value: []byte(fmt.Sprintf("%d", m.nodeID))},
+	}
+
+	// Register the callback channel for this correlation ID BEFORE sending
+	// This ensures we don't miss any fast responses
+	m.mu.Lock()
+	m.pendingAcks[corrId] = ackChan
+	m.mu.Unlock()
+
+	// Send the message
+	m.logger.Debugf("Sending message with callback to node %d: type=%s, operation=%s, corr_id=%d",
+		targetNodeID, message.Type, message.Operation, corrId)
+
+	resp, err := m.meshDataClient.Send(ctx, req)
+	if err != nil {
+		m.logger.Errorf("Failed to send message to node %d: %v", targetNodeID, err)
+		// Clean up the pending ACK registration on error
+		m.mu.Lock()
+		delete(m.pendingAcks, corrId)
+		m.mu.Unlock()
+		return err
+	}
+
+	m.logger.Infof("Message sent to node %d: msg_id=%d, corr_id=%d, type=%s, operation=%s, waiting for application ACK",
+		targetNodeID, resp.MsgId, corrId, message.Type, message.Operation)
+
+	return nil
 }
 
 // SendMessageWithResponse sends a message and waits for a response
@@ -426,28 +543,71 @@ func (m *MeshCommunicationManager) processMessages(subID string, sub *MeshSubscr
 			}
 		case msg := <-msgCh:
 			if msg == nil {
+				m.logger.Debugf("Received nil message from channel, subscription %s ending", subID)
 				return // Channel closed
 			}
 
+			m.logger.Infof("=== PROCESSING MESSAGE: src=%d, msg_id=%d, corr_id=%d, require_ack=%v, payload_size=%d ===",
+				msg.SrcNode, msg.MsgId, msg.CorrId, msg.RequireAck, len(msg.Payload))
+
+			// Check for duplicate messages
+			msgKey := fmt.Sprintf("%d:%d:%d", msg.SrcNode, msg.MsgId, msg.CorrId)
+			m.mu.Lock()
+			if lastProcessed, exists := m.processedMessages[msgKey]; exists {
+				// Skip if processed within last 60 seconds
+				if time.Since(lastProcessed) < 60*time.Second {
+					m.logger.Warnf("Skipping duplicate message: src=%d, msg_id=%d, corr_id=%d (last processed %v ago)",
+						msg.SrcNode, msg.MsgId, msg.CorrId, time.Since(lastProcessed))
+					m.mu.Unlock()
+
+					// Still send ACK if required to avoid message retry
+					if msg.RequireAck {
+						ack := &meshv1.Ack{
+							SrcNode: msg.SrcNode,
+							MsgId:   msg.MsgId,
+							Success: true,
+							Message: "Duplicate message, already processed",
+						}
+						ackCtx, ackCancel := context.WithTimeout(context.Background(), 1*time.Second)
+						m.meshDataClient.AckMessage(ackCtx, ack)
+						ackCancel()
+					}
+					continue
+				}
+			}
+			// Mark as processed
+			m.processedMessages[msgKey] = time.Now()
+			m.mu.Unlock()
+
 			// Handle the message with context checking
+			var handlerErr error
 			select {
 			case <-m.ctx.Done():
 				return
 			case <-sub.ctx.Done():
 				return
 			default:
-				if err := sub.handler(m.ctx, msg); err != nil {
-					m.logger.Errorf("Error handling message: %v", err)
+				handlerErr = sub.handler(m.ctx, msg)
+				if handlerErr != nil {
+					m.logger.Errorf("Error handling message: %v", handlerErr)
 				}
 			}
 
 			// Send acknowledgment if required
 			if msg.RequireAck {
+				m.logger.Debugf("Message %d requires ACK, sending acknowledgment to node %d", msg.MsgId, msg.SrcNode)
+
+				ackSuccess := handlerErr == nil
+				ackMsg := "Message processed successfully"
+				if !ackSuccess {
+					ackMsg = fmt.Sprintf("Handler error: %v", handlerErr)
+				}
+
 				ack := &meshv1.Ack{
 					SrcNode: msg.SrcNode,
 					MsgId:   msg.MsgId,
-					Success: true,
-					Message: "Message processed successfully",
+					Success: ackSuccess,
+					Message: ackMsg,
 				}
 
 				// Use a timeout for acknowledgment to prevent blocking during shutdown
@@ -458,10 +618,38 @@ func (m *MeshCommunicationManager) processMessages(subID string, sub *MeshSubscr
 					case <-m.ctx.Done():
 					case <-sub.ctx.Done():
 					default:
-						m.logger.Errorf("Failed to acknowledge message %d: %v", msg.MsgId, err)
+						m.logger.Errorf("Failed to send ACK for message %d from node %d: %v", msg.MsgId, msg.SrcNode, err)
+					}
+				} else {
+					m.logger.Debugf("Successfully sent ACK for message %d from node %d (success=%v)", msg.MsgId, msg.SrcNode, ackSuccess)
+
+					// Check if this is a response message for which we have a pending callback
+					// Response messages have correlation IDs that match the original request
+					if msg.CorrId > 0 {
+						m.mu.Lock()
+						if ackChan, exists := m.pendingAcks[msg.CorrId]; exists {
+							m.logger.Infof("Notifying callback for correlation ID %d (success=%v)", msg.CorrId, ackSuccess)
+							// Send the ACK notification in a non-blocking way
+							select {
+							case ackChan <- &ResponseAck{
+								MsgID:    msg.MsgId,
+								Success:  ackSuccess,
+								Message:  ackMsg,
+								Response: msg,
+							}:
+								m.logger.Debugf("ACK notification sent for correlation ID %d", msg.CorrId)
+							default:
+								m.logger.Warnf("Could not send ACK notification for correlation ID %d (channel full or closed)", msg.CorrId)
+							}
+							// Clean up the pending ACK registration
+							delete(m.pendingAcks, msg.CorrId)
+						}
+						m.mu.Unlock()
 					}
 				}
 				ackCancel()
+			} else {
+				m.logger.Debugf("Message %d does not require ACK", msg.MsgId)
 			}
 		}
 	}
@@ -539,9 +727,17 @@ func (m *MeshCommunicationManager) registerDefaultHandlers() {
 	m.RegisterMessageHandler(MessageTypeDBUpdate, m.handleDBUpdate)
 	m.RegisterMessageHandler(MessageTypeAnchorQuery, m.handleAnchorQuery)
 	m.RegisterMessageHandler(MessageTypeCommand, m.handleCommand)
+
+	// System-level sync handlers
 	m.RegisterMessageHandler(MessageTypeMeshSyncRequest, m.handleMeshSyncRequest)
 	m.RegisterMessageHandler(MessageTypeMeshSyncResponse, m.handleMeshSyncResponse)
 	m.RegisterMessageHandler(MessageTypeNodeJoinNotify, m.handleNodeJoinNotify)
+	m.RegisterMessageHandler("node_join_ack", m.handleNodeJoinAck)
+
+	// User-level sync handlers
+	m.RegisterMessageHandler(MessageTypeUserDataSyncRequest, m.handleUserDataSyncRequest)
+	m.RegisterMessageHandler(MessageTypeUserDataSyncResponse, m.handleUserDataSyncResponse)
+
 	// Note: mesh_event handler is registered when SetEventManager is called
 }
 
@@ -840,14 +1036,16 @@ func (m *MeshCommunicationManager) handleMeshSyncRequest(ctx context.Context, ms
 		Timestamp: time.Now().Unix(),
 	}
 
-	// Send response back to requesting node
-	_, err = m.SendMessage(ctx, msg.SrcNode, response)
+	// Send response back to requesting node using the same correlation ID from the request
+	// This is critical for the callback mechanism to match the response to the request
+	// Uses FIRE_AND_FORGET to avoid blocking the message handler goroutine
+	_, err = m.SendMessageWithCorrID(ctx, msg.SrcNode, response, msg.CorrId)
 	if err != nil {
 		m.logger.Errorf("Failed to send mesh sync response to node %d: %v", msg.SrcNode, err)
 		return err
 	}
 
-	m.logger.Infof("Successfully sent mesh sync response to node %d", msg.SrcNode)
+	m.logger.Infof("Successfully sent mesh sync response to node %d with corr_id=%d (non-blocking)", msg.SrcNode, msg.CorrId)
 	return nil
 }
 
@@ -917,5 +1115,161 @@ func (m *MeshCommunicationManager) handleNodeJoinNotify(ctx context.Context, msg
 	}
 
 	m.logger.Infof("Successfully processed join notification from node %d", msg.SrcNode)
+
+	// Send acknowledgment response to complete the handshake
+	// This allows the joining node to know the notification was processed successfully
+	// Uses FIRE_AND_FORGET to avoid blocking the message handler goroutine
+	ackResponse := &CoreMessage{
+		Type:      "node_join_ack",
+		Operation: "join_acknowledged",
+		Data: map[string]interface{}{
+			"success": true,
+			"message": "Node join notification processed successfully",
+		},
+		Timestamp: time.Now().Unix(),
+	}
+
+	// Send response using the same correlation ID from the notification
+	_, err = m.SendMessageWithCorrID(ctx, msg.SrcNode, ackResponse, msg.CorrId)
+	if err != nil {
+		m.logger.Errorf("Failed to send join acknowledgment to node %d: %v", msg.SrcNode, err)
+		// Don't fail the whole operation if we can't send the ack response
+		// The mesh layer ACK is sufficient for reliability
+		return nil
+	}
+
+	m.logger.Infof("Sent join acknowledgment response to node %d with corr_id=%d (non-blocking)", msg.SrcNode, msg.CorrId)
+	return nil
+}
+
+// handleNodeJoinAck handles acknowledgment responses to join notifications
+func (m *MeshCommunicationManager) handleNodeJoinAck(ctx context.Context, msg *meshv1.Received) error {
+	m.logger.Infof("Received join acknowledgment from node %d", msg.SrcNode)
+
+	// Parse acknowledgment message
+	var ackMsg CoreMessage
+	if err := json.Unmarshal(msg.Payload, &ackMsg); err != nil {
+		m.logger.Errorf("Failed to unmarshal join ack: %v", err)
+		return fmt.Errorf("failed to unmarshal ack: %w", err)
+	}
+
+	m.logger.Debugf("Join ack parsed: type=%s, operation=%s, data=%+v",
+		ackMsg.Type, ackMsg.Operation, ackMsg.Data)
+
+	// Check if the join was successful
+	if success, ok := ackMsg.Data["success"].(bool); ok && success {
+		m.logger.Infof("Join notification to node %d was successfully acknowledged", msg.SrcNode)
+	} else {
+		m.logger.Warnf("Join notification to node %d was acknowledged with failure", msg.SrcNode)
+	}
+
+	return nil
+}
+
+// === User-Level Data Synchronization Handlers ===
+
+// handleUserDataSyncRequest handles requests for user-level data from joining nodes
+func (m *MeshCommunicationManager) handleUserDataSyncRequest(ctx context.Context, msg *meshv1.Received) error {
+	m.logger.Infof("=== ENTERING handleUserDataSyncRequest from node %d (payload size: %d bytes) ===", msg.SrcNode, len(msg.Payload))
+
+	// Parse request message
+	var reqMsg CoreMessage
+	if err := json.Unmarshal(msg.Payload, &reqMsg); err != nil {
+		m.logger.Errorf("Failed to unmarshal user data sync request: %v", err)
+		return fmt.Errorf("failed to unmarshal request: %w", err)
+	}
+
+	m.logger.Debugf("Parsed user data sync request: type=%s, operation=%s", reqMsg.Type, reqMsg.Operation)
+
+	// Get sync manager
+	var syncManager *DatabaseSyncManager
+	if m.eventManager != nil {
+		syncManager = m.eventManager.GetSyncManager()
+	}
+
+	if syncManager == nil {
+		m.logger.Warn("Database sync manager not available")
+		return fmt.Errorf("sync manager not available")
+	}
+
+	// Gather user-level data
+	userData, err := syncManager.GetUserDataForSync(ctx)
+	if err != nil {
+		m.logger.Errorf("Failed to get user-level data: %v", err)
+		return err
+	}
+
+	// Send response
+	respMsg := &CoreMessage{
+		Type:      MessageTypeUserDataSyncResponse,
+		Operation: "sync_response",
+		Data: map[string]interface{}{
+			"user_data": userData,
+		},
+		Timestamp: time.Now().Unix(),
+	}
+
+	respPayload, err := json.Marshal(respMsg)
+	if err != nil {
+		m.logger.Errorf("Failed to marshal user data sync response: %v", err)
+		return err
+	}
+
+	m.logger.Infof("Sending user-level data sync response to node %d (payload size: %d bytes)", msg.SrcNode, len(respPayload))
+	// Send response using the same correlation ID from the request for callback matching
+	// Uses FIRE_AND_FORGET to avoid blocking the message handler goroutine
+	_, err = m.SendMessageWithCorrID(ctx, msg.SrcNode, respMsg, msg.CorrId)
+	if err != nil {
+		m.logger.Errorf("Failed to send user data sync response: %v", err)
+		return err
+	}
+
+	m.logger.Infof("Successfully sent user-level data to node %d with corr_id=%d (non-blocking)", msg.SrcNode, msg.CorrId)
+	return nil
+}
+
+// handleUserDataSyncResponse handles user-level data responses from seed nodes
+func (m *MeshCommunicationManager) handleUserDataSyncResponse(ctx context.Context, msg *meshv1.Received) error {
+	m.logger.Infof("Handling user-level data sync response from node %d", msg.SrcNode)
+
+	// Parse response message
+	var respMsg CoreMessage
+	if err := json.Unmarshal(msg.Payload, &respMsg); err != nil {
+		m.logger.Errorf("Failed to unmarshal user data sync response: %v", err)
+		return fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	// Get sync manager
+	var syncManager *DatabaseSyncManager
+	if m.eventManager != nil {
+		syncManager = m.eventManager.GetSyncManager()
+	}
+
+	if syncManager == nil {
+		m.logger.Warn("Database sync manager not available")
+		return fmt.Errorf("sync manager not available")
+	}
+
+	// Extract user data
+	userDataInterface, ok := respMsg.Data["user_data"]
+	if !ok {
+		m.logger.Warn("No user_data in response")
+		return fmt.Errorf("no user_data in response")
+	}
+
+	userData, ok := userDataInterface.(map[string]interface{})
+	if !ok {
+		m.logger.Errorf("Invalid user_data format (type: %T)", userDataInterface)
+		return fmt.Errorf("invalid user_data format")
+	}
+
+	// Apply user-level data
+	err := syncManager.ApplyUserDataSync(ctx, userData)
+	if err != nil {
+		m.logger.Errorf("Failed to apply user-level data: %v", err)
+		return err
+	}
+
+	m.logger.Infof("Successfully applied user-level data from node %d", msg.SrcNode)
 	return nil
 }

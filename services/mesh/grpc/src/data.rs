@@ -304,14 +304,21 @@ impl MeshDataService {
             delivery_status.status_message
         );
         
+        info!(
+            "Delivery status message: msg_id={}, status={}, message='{}' from node {} ===",
+            delivery_status.original_msg_id, delivery_status.status, delivery_status.status_message, message.src_node
+        );
+        
         // Convert status code back to MessageStatus
         let status = match delivery_status.status {
             x if x == MessageStatus::Delivered as i32 => MessageStatus::Delivered,
             x if x == MessageStatus::PendingClient as i32 => MessageStatus::PendingClient,
             x if x == MessageStatus::WaitingForClientAck as i32 => MessageStatus::WaitingForClientAck,
+            x if x == MessageStatus::AckSuccess as i32 => MessageStatus::AckSuccess,
+            x if x == MessageStatus::AckFailure as i32 => MessageStatus::AckFailure,
             x if x == MessageStatus::Undeliverable as i32 => MessageStatus::Undeliverable,
             _ => {
-                warn!("Unknown delivery status code: {}", delivery_status.status);
+                warn!("Unknown delivery status code: {} - this should be handled!", delivery_status.status);
                 return;
             }
         };
@@ -931,9 +938,9 @@ impl MeshData for MeshDataService {
     async fn ack_message(&self, request: Request<Ack>) -> Result<Response<()>> {
         let ack = request.into_inner();
         
-        debug!(
-            "Ack received: src_node={}, msg_id={}, success={}",
-            ack.src_node, ack.msg_id, ack.success
+        info!(
+            "ACK received: src_node={}, msg_id={}, success={}, message='{}'",
+            ack.src_node, ack.msg_id, ack.success, ack.message
         );
         
         // Store acknowledgment for app-level idempotency
@@ -956,19 +963,27 @@ impl MeshData for MeshDataService {
             }
         };
         
+        info!(
+            "Updating local message tracker for msg_id={} to status={:?}",
+            ack.msg_id, status
+        );
         self.message_tracker.update_status(ack.msg_id, status, status_message.clone());
         
         // Send acknowledgment status back to source node
+        info!(
+            "Sending ACK delivery status back to source node {} for msg_id={}",
+            ack.src_node, ack.msg_id
+        );
         self.send_delivery_status_to_source(
             ack.src_node,
             ack.msg_id,
             status,
-            status_message,
+            status_message.clone(),
         ).await;
         
         info!(
-            "Message {} from node {} acknowledged with status: {}",
-            ack.msg_id, ack.src_node, if ack.success { "success" } else { "failure" }
+            "Message {} from node {} acknowledged with status: {}, status_message: '{}'",
+            ack.msg_id, ack.src_node, if ack.success { "success" } else { "failure" }, status_message
         );
         
         Ok(Response::new(()))

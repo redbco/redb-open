@@ -183,7 +183,20 @@ func (s *Server) JoinMesh(ctx context.Context, req *corev1.JoinMeshRequest) (*co
 		// The Rust SessionManager needs time to update its internal routing tables
 		time.Sleep(100 * time.Millisecond)
 
-		// Request mesh sync from seed node via mesh messaging
+		// Perform stateful handshake: send message, wait for application ACK, proceed
+		// This ensures each step completes successfully before moving to the next
+		// Using FIRE_AND_FORGET for non-blocking sends, but waiting for application-level ACKs
+
+		// Create a channel to receive ACK responses for this join session
+		ackChan := make(chan *mesh.ResponseAck, 3)
+		// Use a longer timeout for the handshake to account for:
+		// - Network latency between steps
+		// - Database operations (truncate + insert)
+		// - Large data transfers (user data can be substantial)
+		handshakeCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		// Step 1: Request mesh sync from seed node
 		syncReq := &mesh.CoreMessage{
 			Type:      mesh.MessageTypeMeshSyncRequest,
 			Operation: "request_sync",
@@ -195,18 +208,26 @@ func (s *Server) JoinMesh(ctx context.Context, req *corev1.JoinMeshRequest) (*co
 			Timestamp: time.Now().Unix(),
 		}
 
-		// Send sync request (non-blocking)
-		go func() {
-			s.engine.logger.Infof("Sending mesh sync request to node %d", addSessionResp.PeerNodeId)
-			_, err := meshMgr.SendMessage(context.Background(), addSessionResp.PeerNodeId, syncReq)
-			if err != nil {
-				s.engine.logger.Warnf("Failed to send mesh sync request: %v", err)
-			} else {
-				s.engine.logger.Infof("Mesh sync request sent to node %d", addSessionResp.PeerNodeId)
-			}
-		}()
+		s.engine.logger.Infof("Step 1/3: Sending mesh sync request to node %d", addSessionResp.PeerNodeId)
+		if err := meshMgr.SendMessageWithCallback(handshakeCtx, addSessionResp.PeerNodeId, syncReq, ackChan); err != nil {
+			s.engine.logger.Errorf("Failed to send mesh sync request: %v", err)
+			return nil, status.Errorf(codes.Internal, "mesh sync failed: %v", err)
+		}
 
-		// Notify seed about local node joining
+		// Wait for mesh sync response ACK
+		select {
+		case ack := <-ackChan:
+			if !ack.Success {
+				s.engine.logger.Errorf("Mesh sync failed: %s", ack.Message)
+				return nil, status.Errorf(codes.Internal, "mesh sync failed: %s", ack.Message)
+			}
+			s.engine.logger.Infof("Step 1/3: Mesh sync completed successfully")
+		case <-handshakeCtx.Done():
+			s.engine.logger.Errorf("Mesh sync timed out")
+			return nil, status.Error(codes.DeadlineExceeded, "mesh sync timed out")
+		}
+
+		// Step 2: Notify seed about local node joining
 		joinNotify := &mesh.CoreMessage{
 			Type:      mesh.MessageTypeNodeJoinNotify,
 			Operation: "node_joined",
@@ -214,7 +235,7 @@ func (s *Server) JoinMesh(ctx context.Context, req *corev1.JoinMeshRequest) (*co
 				"node_id":          localNode.ID,
 				"node_name":        localNode.Name,
 				"node_description": localNode.Description,
-				"node_public_key":  localNode.PublicKey, // Keep as string to avoid double-encoding
+				"node_public_key":  localNode.PublicKey,
 				"ip_address":       localNode.IPAddress,
 				"port":             localNode.Port,
 				"status":           "STATUS_ACTIVE",
@@ -223,23 +244,63 @@ func (s *Server) JoinMesh(ctx context.Context, req *corev1.JoinMeshRequest) (*co
 			Timestamp: time.Now().Unix(),
 		}
 
-		// Send join notification (non-blocking)
-		go func() {
-			s.engine.logger.Infof("Sending join notification to node %d", addSessionResp.PeerNodeId)
-			_, err := meshMgr.SendMessage(context.Background(), addSessionResp.PeerNodeId, joinNotify)
-			if err != nil {
-				s.engine.logger.Warnf("Failed to send join notification: %v", err)
-			} else {
-				s.engine.logger.Infof("Join notification sent to node %d", addSessionResp.PeerNodeId)
+		s.engine.logger.Infof("Step 2/3: Sending join notification to node %d", addSessionResp.PeerNodeId)
+		if err := meshMgr.SendMessageWithCallback(handshakeCtx, addSessionResp.PeerNodeId, joinNotify, ackChan); err != nil {
+			s.engine.logger.Errorf("Failed to send join notification: %v", err)
+			return nil, status.Errorf(codes.Internal, "join notification failed: %v", err)
+		}
+
+		// Wait for join notification ACK
+		select {
+		case ack := <-ackChan:
+			if !ack.Success {
+				s.engine.logger.Errorf("Join notification failed: %s", ack.Message)
+				return nil, status.Errorf(codes.Internal, "join notification failed: %s", ack.Message)
 			}
-		}()
+			s.engine.logger.Infof("Step 2/3: Join notification completed successfully")
+		case <-handshakeCtx.Done():
+			s.engine.logger.Errorf("Join notification timed out")
+			return nil, status.Error(codes.DeadlineExceeded, "join notification timed out")
+		}
+
+		// Step 3: Request user-level data sync from seed node
+		userDataSyncReq := &mesh.CoreMessage{
+			Type:      mesh.MessageTypeUserDataSyncRequest,
+			Operation: "request_user_data",
+			Data: map[string]interface{}{
+				"sync_all": true,
+			},
+			Timestamp: time.Now().Unix(),
+		}
+
+		s.engine.logger.Infof("Step 3/3: Sending user-level data sync request to node %d", addSessionResp.PeerNodeId)
+		if err := meshMgr.SendMessageWithCallback(handshakeCtx, addSessionResp.PeerNodeId, userDataSyncReq, ackChan); err != nil {
+			s.engine.logger.Errorf("Failed to send user data sync request: %v", err)
+			return nil, status.Errorf(codes.Internal, "user data sync failed: %v", err)
+		}
+
+		// Wait for user data sync response ACK
+		select {
+		case ack := <-ackChan:
+			if !ack.Success {
+				s.engine.logger.Errorf("User data sync failed: %s", ack.Message)
+				return nil, status.Errorf(codes.Internal, "user data sync failed: %s", ack.Message)
+			}
+			s.engine.logger.Infof("Step 3/3: User data sync completed successfully")
+		case <-handshakeCtx.Done():
+			s.engine.logger.Errorf("User data sync timed out")
+			return nil, status.Error(codes.DeadlineExceeded, "user data sync timed out")
+		}
+
+		s.engine.logger.Infof("All mesh join handshake steps completed successfully")
 	} else {
 		s.engine.logger.Warn("Mesh communication manager not available - skipping sync")
 	}
 
 	// Synchronization happens in background via mesh messaging
-	// The handlers will apply the synced mesh, nodes, and routes data
-	s.engine.logger.Infof("Mesh join initiated - synchronization in progress via mesh messaging")
+	// The handlers will apply the synced system-level (mesh, nodes, routes)
+	// and user-level (tenants, users, workspaces, etc.) data
+	s.engine.logger.Infof("Mesh join initiated - system and user-level synchronization in progress via mesh messaging")
 
 	// Update node status to ACTIVE
 	if err := meshService.UpdateNodeStatus(ctx, localNode.ID, "STATUS_ACTIVE"); err != nil {
