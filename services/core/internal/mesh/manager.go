@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -25,9 +26,10 @@ const (
 	MessageTypeDatabaseSyncRequest = "database_sync_request"
 
 	// System-level synchronization (mesh, nodes, routes)
-	MessageTypeMeshSyncRequest  = "mesh_sync_request"  // Request mesh data from peer
-	MessageTypeMeshSyncResponse = "mesh_sync_response" // Response with mesh data
-	MessageTypeNodeJoinNotify   = "node_join_notify"   // Notify about joining node
+	MessageTypeMeshSyncRequest   = "mesh_sync_request"   // Request mesh data from peer
+	MessageTypeMeshSyncResponse  = "mesh_sync_response"  // Response with mesh data
+	MessageTypeNodeJoinNotify    = "node_join_notify"    // Notify about joining node (direct)
+	MessageTypeNodeJoinBroadcast = "node_join_broadcast" // Broadcast joining node to mesh
 
 	// User-level synchronization (tenants, users, workspaces, etc.)
 	MessageTypeUserDataSyncRequest  = "user_data_sync_request"  // Request user-level data from peer
@@ -732,6 +734,7 @@ func (m *MeshCommunicationManager) registerDefaultHandlers() {
 	m.RegisterMessageHandler(MessageTypeMeshSyncRequest, m.handleMeshSyncRequest)
 	m.RegisterMessageHandler(MessageTypeMeshSyncResponse, m.handleMeshSyncResponse)
 	m.RegisterMessageHandler(MessageTypeNodeJoinNotify, m.handleNodeJoinNotify)
+	m.RegisterMessageHandler(MessageTypeNodeJoinBroadcast, m.handleNodeJoinBroadcast)
 	m.RegisterMessageHandler("node_join_ack", m.handleNodeJoinAck)
 
 	// User-level sync handlers
@@ -1082,7 +1085,65 @@ func (m *MeshCommunicationManager) handleMeshSyncResponse(ctx context.Context, m
 	return nil
 }
 
-// handleNodeJoinNotify handles notifications about joining nodes
+// broadcastJoinNotificationToMesh broadcasts a join notification to all nodes in the mesh
+// Uses routing_id = 0 to reach all nodes through the mesh routing infrastructure
+func (m *MeshCommunicationManager) broadcastJoinNotificationToMesh(ctx context.Context, joiningNodeID uint64, nodeData map[string]interface{}) error {
+	m.logger.Infof("Broadcasting join notification for node %d to all mesh nodes", joiningNodeID)
+
+	// Create a copy of nodeData and ensure node_id is properly formatted as string
+	// This prevents precision loss when large int64 values go through JSON float64 conversion
+	broadcastData := make(map[string]interface{})
+	for k, v := range nodeData {
+		broadcastData[k] = v
+	}
+	// Override node_id with string representation to preserve precision
+	broadcastData["node_id"] = fmt.Sprintf("%d", joiningNodeID)
+
+	// Create broadcast message using a different message type to distinguish from direct notifications
+	broadcastMsg := &CoreMessage{
+		Type:      MessageTypeNodeJoinBroadcast,
+		Operation: "node_joined_broadcast",
+		Data:      broadcastData,
+		Timestamp: time.Now().Unix(),
+	}
+
+	// Serialize the message
+	payload, err := json.Marshal(broadcastMsg)
+	if err != nil {
+		return fmt.Errorf("failed to serialize broadcast message: %w", err)
+	}
+
+	// Create broadcast request using routing_id = 0 to reach all nodes
+	req := &meshv1.SendRequest{
+		DstNode:    0, // routing_id = 0 for broadcast
+		Payload:    payload,
+		CorrId:     uint64(time.Now().UnixNano()),
+		RequireAck: false,                                     // Broadcast doesn't require individual ACKs
+		Mode:       meshv1.SendMode_SEND_MODE_FIRE_AND_FORGET, // Non-blocking
+		QosClass:   2,                                         // High priority for topology updates
+		Partition:  0,                                         // Control partition
+	}
+
+	// Add headers
+	req.Headers = []*meshv1.Header{
+		{Key: "message_type", Value: []byte(broadcastMsg.Type)},
+		{Key: "operation", Value: []byte(broadcastMsg.Operation)},
+		{Key: "source_node", Value: []byte(fmt.Sprintf("%d", m.nodeID))},
+		{Key: "broadcast", Value: []byte("true")},
+	}
+
+	// Send broadcast
+	resp, err := m.meshDataClient.Send(ctx, req)
+	if err != nil {
+		m.logger.Errorf("Failed to broadcast join notification: %v", err)
+		return err
+	}
+
+	m.logger.Infof("Successfully broadcasted join notification for node %d (msg_id=%d)", joiningNodeID, resp.MsgId)
+	return nil
+}
+
+// handleNodeJoinNotify handles direct notifications about joining nodes
 func (m *MeshCommunicationManager) handleNodeJoinNotify(ctx context.Context, msg *meshv1.Received) error {
 	m.logger.Infof("Handling node join notification from node %d (payload size: %d)", msg.SrcNode, len(msg.Payload))
 
@@ -1116,6 +1177,20 @@ func (m *MeshCommunicationManager) handleNodeJoinNotify(ctx context.Context, msg
 
 	m.logger.Infof("Successfully processed join notification from node %d", msg.SrcNode)
 
+	// Broadcast the join notification to all other nodes in the mesh asynchronously
+	// This ensures global topology consistency without blocking the ACK response
+	// Run in goroutine to avoid delaying the join handshake
+	go func(nodeID uint64, data map[string]interface{}) {
+		// Use a separate context with timeout for the broadcast
+		broadcastCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := m.broadcastJoinNotificationToMesh(broadcastCtx, nodeID, data); err != nil {
+			m.logger.Warnf("Failed to broadcast join notification to mesh: %v", err)
+			// Don't fail the operation - the joining node was successfully added locally
+		}
+	}(msg.SrcNode, notifyMsg.Data)
+
 	// Send acknowledgment response to complete the handshake
 	// This allows the joining node to know the notification was processed successfully
 	// Uses FIRE_AND_FORGET to avoid blocking the message handler goroutine
@@ -1139,6 +1214,83 @@ func (m *MeshCommunicationManager) handleNodeJoinNotify(ctx context.Context, msg
 	}
 
 	m.logger.Infof("Sent join acknowledgment response to node %d with corr_id=%d (non-blocking)", msg.SrcNode, msg.CorrId)
+	return nil
+}
+
+// handleNodeJoinBroadcast handles broadcast notifications about joining nodes
+// This is separate from handleNodeJoinNotify to avoid interfering with direct join notifications
+func (m *MeshCommunicationManager) handleNodeJoinBroadcast(ctx context.Context, msg *meshv1.Received) error {
+	m.logger.Infof("Handling broadcast join notification from node %d (payload size: %d)", msg.SrcNode, len(msg.Payload))
+
+	// Parse broadcast message
+	var broadcastMsg CoreMessage
+	if err := json.Unmarshal(msg.Payload, &broadcastMsg); err != nil {
+		m.logger.Errorf("Failed to unmarshal broadcast join notification: %v", err)
+		return fmt.Errorf("failed to unmarshal broadcast: %w", err)
+	}
+
+	m.logger.Infof("Broadcast join notification parsed: type=%s, operation=%s, has %d data fields",
+		broadcastMsg.Type, broadcastMsg.Operation, len(broadcastMsg.Data))
+
+	// Get sync manager
+	var syncManager *DatabaseSyncManager
+	if m.eventManager != nil {
+		syncManager = m.eventManager.GetSyncManager()
+	}
+
+	if syncManager == nil {
+		m.logger.Warn("Database sync manager not available, cannot add joining node from broadcast")
+		return fmt.Errorf("sync manager not available")
+	}
+
+	// Extract the joining node ID from the broadcast data
+	var joiningNodeID uint64
+	if nodeIDData, ok := broadcastMsg.Data["node_id"]; ok {
+		switch v := nodeIDData.(type) {
+		case string:
+			// Parse string representation (prevents precision loss from float64)
+			parsed, err := strconv.ParseUint(v, 10, 64)
+			if err != nil {
+				m.logger.Errorf("Failed to parse node_id string '%s': %v", v, err)
+				return fmt.Errorf("invalid node_id string in broadcast: %w", err)
+			}
+			joiningNodeID = parsed
+		case float64:
+			joiningNodeID = uint64(v)
+		case int64:
+			joiningNodeID = uint64(v)
+		case uint64:
+			joiningNodeID = v
+		default:
+			m.logger.Warnf("Unexpected type for node_id in broadcast: %T", nodeIDData)
+			return fmt.Errorf("invalid node_id type in broadcast")
+		}
+	} else {
+		m.logger.Warn("No node_id in broadcast data")
+		return fmt.Errorf("missing node_id in broadcast")
+	}
+
+	m.logger.Infof("Processing broadcast for joining node %d (forwarded by node %d)", joiningNodeID, msg.SrcNode)
+
+	// Check if we already know about this node (deduplication)
+	// This prevents duplicate processing when receiving broadcast notifications
+	if nodeExists, err := syncManager.NodeExists(ctx, joiningNodeID); err == nil && nodeExists {
+		m.logger.Debugf("Node %d already exists locally, skipping broadcast notification (deduplication)", joiningNodeID)
+		return nil
+	}
+
+	// Add joining node to local database
+	err := syncManager.AddJoiningNode(ctx, joiningNodeID, broadcastMsg.Data)
+	if err != nil {
+		m.logger.Errorf("Failed to add joining node %d from broadcast: %v", joiningNodeID, err)
+		return err
+	}
+
+	m.logger.Infof("Successfully processed broadcast join notification for node %d", joiningNodeID)
+
+	// Note: Broadcasts do NOT trigger re-broadcasts (prevents loops)
+	// Note: Broadcasts do NOT send ACK responses (not expected by broadcaster)
+
 	return nil
 }
 

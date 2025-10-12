@@ -653,7 +653,7 @@ func (s *DatabaseSyncManager) GetMeshDataForSync(ctx context.Context) (map[strin
 
 	// Get all nodes (including region_id for later restoration after user data sync)
 	nodesQuery := `
-		SELECT node_id, node_name, node_description, node_public_key, host(ip_address) as ip_address, port, status, seed_node, region_id
+		SELECT node_id, node_name, node_description, node_public_key, node_platform, node_version, host(ip_address) as ip_address, port, status, seed_node, region_id
 		FROM nodes
 		ORDER BY node_id
 	`
@@ -666,12 +666,12 @@ func (s *DatabaseSyncManager) GetMeshDataForSync(ctx context.Context) (map[strin
 
 		for rows.Next() {
 			var nodeID, port int64
-			var nodeName, nodeDescription, ipAddress, nodeStatus string
+			var nodeName, nodeDescription, nodePlatform, nodeVersion, ipAddress, nodeStatus string
 			var nodePublicKey []byte
 			var seedNode bool
 			var regionID *string // nullable
 
-			if err := rows.Scan(&nodeID, &nodeName, &nodeDescription, &nodePublicKey, &ipAddress, &port, &nodeStatus, &seedNode, &regionID); err != nil {
+			if err := rows.Scan(&nodeID, &nodeName, &nodeDescription, &nodePublicKey, &nodePlatform, &nodeVersion, &ipAddress, &port, &nodeStatus, &seedNode, &regionID); err != nil {
 				s.logger.Warnf("Failed to scan node row: %v", err)
 				continue
 			}
@@ -681,6 +681,8 @@ func (s *DatabaseSyncManager) GetMeshDataForSync(ctx context.Context) (map[strin
 				"node_name":        nodeName,
 				"node_description": nodeDescription,
 				"node_public_key":  string(nodePublicKey), // Convert to string for JSON transmission
+				"node_platform":    nodePlatform,
+				"node_version":     nodeVersion,
 				"ip_address":       ipAddress,
 				"port":             port,
 				"status":           nodeStatus,
@@ -969,12 +971,14 @@ func (s *DatabaseSyncManager) upsertNode(ctx context.Context, data map[string]in
 	// hasn't been synced yet. After user data sync (Step 3), region_id can be
 	// restored if original_region_id was provided in the sync data.
 	query := `
-		INSERT INTO nodes (node_id, node_name, node_description, node_public_key, ip_address, port, status, seed_node, region_id, created, updated)
-		VALUES ($1, $2, $3, $4, $5::inet, $6, $7::status_enum, $8, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO nodes (node_id, node_name, node_description, node_public_key, node_platform, node_version, ip_address, port, status, seed_node, region_id, created, updated)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::inet, $8, $9::status_enum, $10, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT (node_id) DO UPDATE SET
 			node_name = EXCLUDED.node_name,
 			node_description = EXCLUDED.node_description,
 			node_public_key = EXCLUDED.node_public_key,
+			node_platform = EXCLUDED.node_platform,
+			node_version = EXCLUDED.node_version,
 			ip_address = EXCLUDED.ip_address,
 			port = EXCLUDED.port,
 			status = EXCLUDED.status,
@@ -1003,11 +1007,24 @@ func (s *DatabaseSyncManager) upsertNode(ctx context.Context, data map[string]in
 		nodePublicKey = []byte{}
 	}
 
+	// Get node_platform and node_version (optional fields)
+	nodePlatform := ""
+	if val, ok := data["node_platform"].(string); ok {
+		nodePlatform = val
+	}
+
+	nodeVersion := ""
+	if val, ok := data["node_version"].(string); ok {
+		nodeVersion = val
+	}
+
 	_, err := s.db.Pool().Exec(ctx, query,
 		data["node_id"],
 		data["node_name"],
 		data["node_description"],
 		nodePublicKey,
+		nodePlatform,
+		nodeVersion,
 		data["ip_address"],
 		data["port"],
 		data["status"],
@@ -1069,6 +1086,14 @@ func (s *DatabaseSyncManager) getLocalNodeID(ctx context.Context) (int64, error)
 		return 0, fmt.Errorf("failed to get local node ID: %w", err)
 	}
 	return nodeID, nil
+}
+
+// NodeExists checks if a node exists in the local database
+func (s *DatabaseSyncManager) NodeExists(ctx context.Context, nodeID uint64) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM nodes WHERE node_id = $1)`
+	var exists bool
+	err := s.db.Pool().QueryRow(ctx, query, int64(nodeID)).Scan(&exists)
+	return exists, err
 }
 
 // === User-Level Table Synchronization ===

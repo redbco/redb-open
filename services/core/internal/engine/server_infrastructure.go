@@ -240,6 +240,8 @@ func (s *Server) JoinMesh(ctx context.Context, req *corev1.JoinMeshRequest) (*co
 				"port":             localNode.Port,
 				"status":           "STATUS_ACTIVE",
 				"seed_node":        false,
+				"node_platform":    localNode.Platform,
+				"node_version":     localNode.Version,
 			},
 			Timestamp: time.Now().Unix(),
 		}
