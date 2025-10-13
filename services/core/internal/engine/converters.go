@@ -197,6 +197,49 @@ func (s *Server) instanceToProto(inst *instance.Instance) *corev1.Instance {
 	}
 }
 
+// instanceToRecordData converts an instance to record data for broadcasting
+func (s *Server) instanceToRecordData(inst *instance.Instance) map[string]interface{} {
+	recordData := map[string]interface{}{
+		"instance_id":                inst.ID,
+		"tenant_id":                  inst.TenantID,
+		"workspace_id":               inst.WorkspaceID,
+		"connected_to_node_id":       inst.ConnectedToNodeID,
+		"instance_name":              inst.Name,
+		"instance_description":       inst.Description,
+		"instance_type":              inst.Type,
+		"instance_vendor":            inst.Vendor,
+		"instance_version":           inst.Version,
+		"instance_unique_identifier": inst.UniqueIdentifier,
+		"instance_host":              inst.Host,
+		"instance_port":              inst.Port,
+		"instance_username":          inst.Username,
+		"instance_password":          inst.Password,
+		"instance_system_db_name":    inst.SystemDBName,
+		"instance_enabled":           inst.Enabled,
+		"instance_ssl":               inst.SSL,
+		"instance_ssl_mode":          inst.SSLMode,
+		"owner_id":                   inst.OwnerID,
+		"instance_status_message":    inst.StatusMessage,
+		"status":                     inst.Status,
+	}
+
+	// Add optional fields
+	if inst.EnvironmentID != nil {
+		recordData["environment_id"] = *inst.EnvironmentID
+	}
+	if inst.SSLCert != nil {
+		recordData["instance_ssl_cert"] = *inst.SSLCert
+	}
+	if inst.SSLKey != nil {
+		recordData["instance_ssl_key"] = *inst.SSLKey
+	}
+	if inst.SSLRootCert != nil {
+		recordData["instance_ssl_root_cert"] = *inst.SSLRootCert
+	}
+
+	return recordData
+}
+
 // databaseToProto converts a database service model to protobuf
 func (s *Server) databaseToProto(db *database.Database) *corev1.Database {
 	environmentId := ""
@@ -252,6 +295,36 @@ func (s *Server) databaseToProto(db *database.Database) *corev1.Database {
 		InstanceStatusMessage: db.InstanceStatusMessage,
 		InstanceStatus:        db.InstanceStatus,
 	}
+}
+
+// databaseToRecordData converts a database to record data for broadcasting
+func (s *Server) databaseToRecordData(db *database.Database) map[string]interface{} {
+	recordData := map[string]interface{}{
+		"database_id":             db.ID,
+		"tenant_id":               db.TenantID,
+		"workspace_id":            db.WorkspaceID,
+		"connected_to_node_id":    db.ConnectedToNodeID,
+		"instance_id":             db.InstanceID,
+		"database_name":           db.Name,
+		"database_description":    db.Description,
+		"database_type":           db.Type,
+		"database_vendor":         db.Vendor,
+		"database_version":        db.Version,
+		"database_username":       db.Username,
+		"database_password":       db.Password,
+		"database_db_name":        db.DBName,
+		"database_enabled":        db.Enabled,
+		"owner_id":                db.OwnerID,
+		"database_status_message": db.StatusMessage,
+		"status":                  db.Status,
+	}
+
+	// Add optional fields
+	if db.EnvironmentID != nil {
+		recordData["environment_id"] = *db.EnvironmentID
+	}
+
+	return recordData
 }
 
 // Helper function to convert repo to protobuf
@@ -399,6 +472,8 @@ func statusStringToProto(status string) commonv1.Status {
 		return commonv1.Status_STATUS_ACTIVE
 	case "STATUS_CLEAN":
 		return commonv1.Status_STATUS_CLEAN
+	case "STATUS_INCONSISTENT":
+		return commonv1.Status_STATUS_INCONSISTENT
 	default:
 		return commonv1.Status_STATUS_UNKNOWN
 	}

@@ -93,6 +93,11 @@ func (e *Engine) GetDatabase() *database.PostgreSQL {
 	return e.db
 }
 
+// GetSyncManager returns the database sync manager for mesh operations
+func (e *Engine) GetSyncManager() *mesh.DatabaseSyncManager {
+	return e.syncManager
+}
+
 // RegisterCoreServices registers all core services with the gRPC server
 func (e *Engine) RegisterCoreServices() error {
 	if e.grpcServer == nil {

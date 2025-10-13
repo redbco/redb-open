@@ -2,11 +2,14 @@ package mesh
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
@@ -25,6 +28,10 @@ type DatabaseSyncManager struct {
 
 	// Configuration
 	syncTables []string // Tables to keep synchronized
+
+	// Broadcast tracking for deduplication
+	processedBroadcastIDs map[string]time.Time // broadcastID -> timestamp
+	broadcastMu           sync.RWMutex         // protects processedBroadcastIDs
 }
 
 // NewDatabaseSyncManager creates a new database sync manager
@@ -46,6 +53,7 @@ func NewDatabaseSyncManager(
 			"mesh_consensus_state",
 			// Add other tables that need synchronization
 		},
+		processedBroadcastIDs: make(map[string]time.Time),
 	}
 }
 
@@ -1535,7 +1543,16 @@ func (s *DatabaseSyncManager) getPrimaryKeyColumns(ctx context.Context, tx pgx.T
 		ORDER BY a.attnum
 	`
 
-	rows, err := tx.Query(ctx, query, tableName)
+	var rows pgx.Rows
+	var err error
+
+	// Use transaction if available, otherwise use pool
+	if tx != nil {
+		rows, err = tx.Query(ctx, query, tableName)
+	} else {
+		rows, err = s.db.Pool().Query(ctx, query, tableName)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to query primary keys: %w", err)
 	}
@@ -1675,5 +1692,477 @@ func (s *DatabaseSyncManager) logBlockingQueries(ctx context.Context, tableName 
 
 	if count == 0 {
 		s.logger.Warn("  No active queries found (they may have completed)")
+	}
+}
+
+// === User Data Broadcasting Methods ===
+
+// ShouldBroadcastUserData checks if node is in mesh with multiple nodes
+func (s *DatabaseSyncManager) ShouldBroadcastUserData(ctx context.Context) (bool, error) {
+	// Check if mesh exists
+	var meshCount int
+	err := s.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM mesh").Scan(&meshCount)
+	if err != nil {
+		s.logger.Errorf("Failed to check mesh existence: %v", err)
+		return false, fmt.Errorf("failed to check mesh existence: %w", err)
+	}
+
+	s.logger.Debugf("Mesh count: %d", meshCount)
+	if meshCount == 0 {
+		// Not in a mesh
+		s.logger.Debugf("Not in a mesh, not broadcasting")
+		return false, nil
+	}
+
+	// Check number of online nodes by getting active mesh sessions
+	sessionsResp, err := s.meshManager.meshControlClient.GetSessions(ctx, &meshv1.GetSessionsRequest{})
+	if err != nil {
+		s.logger.Errorf("Failed to get online nodes: %v", err)
+		return false, fmt.Errorf("failed to get online nodes: %w", err)
+	}
+
+	// Count connected sessions (other nodes) + 1 for local node
+	totalOnlineNodes := len(sessionsResp.Sessions) + 1
+
+	s.logger.Debugf("Online node count: %d (sessions: %d + local: 1)", totalOnlineNodes, len(sessionsResp.Sessions))
+
+	// Only broadcast if there are at least 2 online nodes (this node + at least one other)
+	shouldBroadcast := totalOnlineNodes >= 2
+	s.logger.Infof("Should broadcast user data: %v (mesh_count=%d, online_nodes=%d, sessions=%d)",
+		shouldBroadcast, meshCount, totalOnlineNodes, len(sessionsResp.Sessions))
+	return shouldBroadcast, nil
+}
+
+// BroadcastUserDataOperationSync broadcasts a single operation synchronously (waits for completion)
+func (s *DatabaseSyncManager) BroadcastUserDataOperationSync(ctx context.Context, tableName string, operation string, recordData map[string]interface{}, primaryKey map[string]interface{}) error {
+	s.logger.Debugf("Broadcasting user data operation (sync): table=%s, operation=%s", tableName, operation)
+
+	// Generate unique broadcast ID for deduplication
+	broadcastID := uuid.New().String()
+
+	// Create broadcast message
+	broadcastMsg := &UserDataBroadcastMessage{
+		TableName:    tableName,
+		Operation:    operation,
+		RecordData:   recordData,
+		PrimaryKey:   primaryKey,
+		SourceNodeID: s.nodeID,
+		Timestamp:    time.Now().Unix(),
+		BroadcastID:  broadcastID,
+	}
+
+	// Serialize message
+	payload, err := json.Marshal(broadcastMsg)
+	if err != nil {
+		return fmt.Errorf("failed to serialize broadcast message: %w", err)
+	}
+
+	// Determine message type based on operation
+	var messageType string
+	switch operation {
+	case "INSERT":
+		messageType = MessageTypeUserDataInsert
+	case "UPDATE":
+		messageType = MessageTypeUserDataUpdate
+	case "DELETE":
+		messageType = MessageTypeUserDataDelete
+	default:
+		return fmt.Errorf("unknown operation: %s", operation)
+	}
+
+	// Create broadcast request using routing_id = 0 to reach all nodes
+	req := &meshv1.SendRequest{
+		DstNode:    0, // routing_id = 0 for broadcast
+		Payload:    payload,
+		CorrId:     uint64(time.Now().UnixNano()),
+		RequireAck: false,                                     // Fire and forget
+		Mode:       meshv1.SendMode_SEND_MODE_FIRE_AND_FORGET, // Non-blocking
+		QosClass:   2,                                         // High priority for data updates
+		Partition:  1,                                         // Data partition
+	}
+
+	// Add headers
+	req.Headers = []*meshv1.Header{
+		{Key: "message_type", Value: []byte(messageType)},
+		{Key: "operation", Value: []byte(operation)},
+		{Key: "source_node", Value: []byte(fmt.Sprintf("%d", s.nodeID))},
+		{Key: "broadcast_id", Value: []byte(broadcastID)},
+		{Key: "table_name", Value: []byte(tableName)},
+	}
+
+	// Send broadcast synchronously
+	s.logger.Infof("Sending broadcast (sync) for %s operation on table %s (broadcast_id=%s)", operation, tableName, broadcastID)
+	resp, err := s.meshManager.meshDataClient.Send(ctx, req)
+	if err != nil {
+		s.logger.Errorf("Failed to broadcast %s operation for table %s: %v", operation, tableName, err)
+		// Mark local node as potentially inconsistent if broadcast fails
+		s.markNodeAsInconsistent(context.Background(), fmt.Sprintf("Failed to broadcast %s operation: %v", operation, err))
+		return err
+	}
+
+	s.logger.Infof("Successfully broadcasted %s operation for table %s (msg_id=%d, broadcast_id=%s)",
+		operation, tableName, resp.MsgId, broadcastID)
+	return nil
+}
+
+// BroadcastUserDataOperation broadcasts a single operation to all mesh nodes (async)
+func (s *DatabaseSyncManager) BroadcastUserDataOperation(ctx context.Context, tableName string, operation string, recordData map[string]interface{}, primaryKey map[string]interface{}) error {
+	s.logger.Debugf("Broadcasting user data operation: table=%s, operation=%s", tableName, operation)
+
+	// Generate unique broadcast ID for deduplication
+	broadcastID := uuid.New().String()
+
+	// Create broadcast message
+	broadcastMsg := &UserDataBroadcastMessage{
+		TableName:    tableName,
+		Operation:    operation,
+		RecordData:   recordData,
+		PrimaryKey:   primaryKey,
+		SourceNodeID: s.nodeID,
+		Timestamp:    time.Now().Unix(),
+		BroadcastID:  broadcastID,
+	}
+
+	// Serialize message
+	payload, err := json.Marshal(broadcastMsg)
+	if err != nil {
+		return fmt.Errorf("failed to serialize broadcast message: %w", err)
+	}
+
+	// Determine message type based on operation
+	var messageType string
+	switch operation {
+	case "INSERT":
+		messageType = MessageTypeUserDataInsert
+	case "UPDATE":
+		messageType = MessageTypeUserDataUpdate
+	case "DELETE":
+		messageType = MessageTypeUserDataDelete
+	default:
+		return fmt.Errorf("unknown operation: %s", operation)
+	}
+
+	// Create broadcast request using routing_id = 0 to reach all nodes
+	req := &meshv1.SendRequest{
+		DstNode:    0, // routing_id = 0 for broadcast
+		Payload:    payload,
+		CorrId:     uint64(time.Now().UnixNano()),
+		RequireAck: false,                                     // Fire and forget
+		Mode:       meshv1.SendMode_SEND_MODE_FIRE_AND_FORGET, // Non-blocking
+		QosClass:   2,                                         // High priority for data updates
+		Partition:  1,                                         // Data partition
+	}
+
+	// Add headers
+	req.Headers = []*meshv1.Header{
+		{Key: "message_type", Value: []byte(messageType)},
+		{Key: "operation", Value: []byte(operation)},
+		{Key: "source_node", Value: []byte(fmt.Sprintf("%d", s.nodeID))},
+		{Key: "broadcast_id", Value: []byte(broadcastID)},
+		{Key: "table_name", Value: []byte(tableName)},
+	}
+
+	// Send broadcast asynchronously and collect acknowledgments in goroutine
+	s.logger.Infof("Sending broadcast for %s operation on table %s (broadcast_id=%s)", operation, tableName, broadcastID)
+	go func() {
+		broadcastCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		s.logger.Debugf("Calling meshDataClient.Send for %s operation on %s", operation, tableName)
+		resp, err := s.meshManager.meshDataClient.Send(broadcastCtx, req)
+		if err != nil {
+			s.logger.Errorf("Failed to broadcast %s operation for table %s: %v", operation, tableName, err)
+			// Mark local node as potentially inconsistent if broadcast fails
+			s.markNodeAsInconsistent(context.Background(), fmt.Sprintf("Failed to broadcast %s operation: %v", operation, err))
+			return
+		}
+
+		s.logger.Infof("Successfully broadcasted %s operation for table %s (msg_id=%d, broadcast_id=%s)",
+			operation, tableName, resp.MsgId, broadcastID)
+	}()
+
+	s.logger.Debugf("Broadcast goroutine started for %s operation on %s", operation, tableName)
+	return nil
+}
+
+// HandleUserDataBroadcast handles incoming user data broadcasts from other nodes
+func (s *DatabaseSyncManager) HandleUserDataBroadcast(ctx context.Context, msg *UserDataBroadcastMessage) error {
+	// Check for duplicate broadcasts
+	s.broadcastMu.Lock()
+	if _, exists := s.processedBroadcastIDs[msg.BroadcastID]; exists {
+		s.broadcastMu.Unlock()
+		s.logger.Debugf("Ignoring duplicate broadcast: %s", msg.BroadcastID)
+		return nil
+	}
+	// Mark as processed
+	s.processedBroadcastIDs[msg.BroadcastID] = time.Now()
+	s.broadcastMu.Unlock()
+
+	// Clean up old broadcast IDs periodically (keep last 5 minutes)
+	go s.cleanupOldBroadcastIDs()
+
+	s.logger.Infof("Processing user data broadcast: table=%s, operation=%s, from node %d",
+		msg.TableName, msg.Operation, msg.SourceNodeID)
+
+	// Apply the operation
+	if err := s.applyUserDataOperation(ctx, msg.TableName, msg.Operation, msg.RecordData, msg.PrimaryKey); err != nil {
+		s.logger.Errorf("Failed to apply %s operation on table %s: %v", msg.Operation, msg.TableName, err)
+		// Mark this node as inconsistent
+		s.markNodeAsInconsistent(ctx, fmt.Sprintf("Failed to apply broadcast %s operation on %s: %v", msg.Operation, msg.TableName, err))
+		return err
+	}
+
+	s.logger.Debugf("Successfully applied %s operation on table %s", msg.Operation, msg.TableName)
+	return nil
+}
+
+// applyUserDataOperation applies a single INSERT/UPDATE/DELETE operation
+func (s *DatabaseSyncManager) applyUserDataOperation(ctx context.Context, tableName string, operation string, recordData map[string]interface{}, primaryKey map[string]interface{}) error {
+	switch operation {
+	case "INSERT":
+		return s.applyInsertOperation(ctx, tableName, recordData)
+	case "UPDATE":
+		return s.applyUpdateOperation(ctx, tableName, recordData, primaryKey)
+	case "DELETE":
+		return s.applyDeleteOperation(ctx, tableName, primaryKey)
+	default:
+		return fmt.Errorf("unknown operation: %s", operation)
+	}
+}
+
+// applyInsertOperation applies an INSERT operation
+func (s *DatabaseSyncManager) applyInsertOperation(ctx context.Context, tableName string, recordData map[string]interface{}) error {
+	// Get primary key columns for ON CONFLICT handling
+	pkColumns, err := s.getPrimaryKeyColumns(ctx, nil, tableName)
+	if err != nil {
+		s.logger.Warnf("Failed to get primary key for table %s, using simple insert: %v", tableName, err)
+		return s.simpleInsert(ctx, tableName, recordData)
+	}
+
+	// Build column lists
+	var columns []string
+	var placeholders []string
+	var values []interface{}
+	var updateClauses []string
+	idx := 1
+
+	for col, val := range recordData {
+		columns = append(columns, col)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+		values = append(values, val)
+
+		// Add to update clause if not a primary key
+		isPK := false
+		for _, pkCol := range pkColumns {
+			if col == pkCol {
+				isPK = true
+				break
+			}
+		}
+		if !isPK {
+			updateClauses = append(updateClauses, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
+		}
+		idx++
+	}
+
+	// Build query with ON CONFLICT DO UPDATE
+	var query string
+	if len(pkColumns) > 0 && len(updateClauses) > 0 {
+		query = fmt.Sprintf(
+			"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+			tableName,
+			strings.Join(columns, ", "),
+			strings.Join(placeholders, ", "),
+			strings.Join(pkColumns, ", "),
+			strings.Join(updateClauses, ", "),
+		)
+	} else if len(pkColumns) > 0 {
+		query = fmt.Sprintf(
+			"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO NOTHING",
+			tableName,
+			strings.Join(columns, ", "),
+			strings.Join(placeholders, ", "),
+			strings.Join(pkColumns, ", "),
+		)
+	} else {
+		query = fmt.Sprintf(
+			"INSERT INTO %s (%s) VALUES (%s)",
+			tableName,
+			strings.Join(columns, ", "),
+			strings.Join(placeholders, ", "),
+		)
+	}
+
+	_, err = s.db.Pool().Exec(ctx, query, values...)
+	return err
+}
+
+// simpleInsert performs a simple insert without ON CONFLICT
+func (s *DatabaseSyncManager) simpleInsert(ctx context.Context, tableName string, recordData map[string]interface{}) error {
+	var columns []string
+	var placeholders []string
+	var values []interface{}
+	idx := 1
+
+	for col, val := range recordData {
+		columns = append(columns, col)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+		values = append(values, val)
+		idx++
+	}
+
+	query := fmt.Sprintf(
+		"INSERT INTO %s (%s) VALUES (%s)",
+		tableName,
+		strings.Join(columns, ", "),
+		strings.Join(placeholders, ", "),
+	)
+
+	_, err := s.db.Pool().Exec(ctx, query, values...)
+	return err
+}
+
+// applyUpdateOperation applies an UPDATE operation
+func (s *DatabaseSyncManager) applyUpdateOperation(ctx context.Context, tableName string, recordData map[string]interface{}, primaryKey map[string]interface{}) error {
+	var setClauses []string
+	var whereClauses []string
+	var values []interface{}
+	idx := 1
+
+	// Build SET clauses from recordData
+	for col, val := range recordData {
+		// Skip primary key columns in SET clause
+		if _, isPK := primaryKey[col]; !isPK {
+			setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, idx))
+			values = append(values, val)
+			idx++
+		}
+	}
+
+	// Build WHERE clauses from primaryKey
+	for col, val := range primaryKey {
+		whereClauses = append(whereClauses, fmt.Sprintf("%s = $%d", col, idx))
+		values = append(values, val)
+		idx++
+	}
+
+	if len(setClauses) == 0 {
+		return fmt.Errorf("no columns to update")
+	}
+
+	if len(whereClauses) == 0 {
+		return fmt.Errorf("no primary key columns for WHERE clause")
+	}
+
+	query := fmt.Sprintf(
+		"UPDATE %s SET %s WHERE %s",
+		tableName,
+		strings.Join(setClauses, ", "),
+		strings.Join(whereClauses, " AND "),
+	)
+
+	_, err := s.db.Pool().Exec(ctx, query, values...)
+	return err
+}
+
+// applyDeleteOperation applies a DELETE operation
+func (s *DatabaseSyncManager) applyDeleteOperation(ctx context.Context, tableName string, primaryKey map[string]interface{}) error {
+	var whereClauses []string
+	var values []interface{}
+	idx := 1
+
+	for col, val := range primaryKey {
+		whereClauses = append(whereClauses, fmt.Sprintf("%s = $%d", col, idx))
+		values = append(values, val)
+		idx++
+	}
+
+	if len(whereClauses) == 0 {
+		return fmt.Errorf("no primary key columns for WHERE clause")
+	}
+
+	query := fmt.Sprintf(
+		"DELETE FROM %s WHERE %s",
+		tableName,
+		strings.Join(whereClauses, " AND "),
+	)
+
+	_, err := s.db.Pool().Exec(ctx, query, values...)
+	return err
+}
+
+// markNodeAsInconsistent marks this node as inconsistent and broadcasts the status
+func (s *DatabaseSyncManager) markNodeAsInconsistent(ctx context.Context, reason string) error {
+	s.logger.Errorf("⚠️  MARKING NODE AS INCONSISTENT: %s", reason)
+
+	// Update local node status
+	query := `UPDATE nodes SET status = 'STATUS_INCONSISTENT', updated = CURRENT_TIMESTAMP WHERE node_id = $1`
+	_, err := s.db.Pool().Exec(ctx, query, int64(s.nodeID))
+	if err != nil {
+		s.logger.Errorf("Failed to update node status to INCONSISTENT: %v", err)
+		return err
+	}
+
+	// Broadcast status change to other nodes (with flag to prevent re-broadcast)
+	return s.broadcastNodeStatus(ctx, "STATUS_INCONSISTENT", reason)
+}
+
+// broadcastNodeStatus broadcasts node status change to all other nodes
+func (s *DatabaseSyncManager) broadcastNodeStatus(ctx context.Context, status string, reason string) error {
+	s.logger.Infof("Broadcasting node status change: status=%s, reason=%s", status, reason)
+
+	// Create status change message
+	statusMsg := &NodeStatusChangeMessage{
+		NodeID:    s.nodeID,
+		Status:    status,
+		Reason:    reason,
+		Timestamp: time.Now().Unix(),
+	}
+
+	// Serialize message
+	payload, err := json.Marshal(statusMsg)
+	if err != nil {
+		return fmt.Errorf("failed to serialize status change message: %w", err)
+	}
+
+	// Create broadcast request
+	req := &meshv1.SendRequest{
+		DstNode:    0, // routing_id = 0 for broadcast
+		Payload:    payload,
+		CorrId:     uint64(time.Now().UnixNano()),
+		RequireAck: false,
+		Mode:       meshv1.SendMode_SEND_MODE_FIRE_AND_FORGET,
+		QosClass:   2, // High priority
+		Partition:  0, // Control partition
+	}
+
+	// Add headers
+	req.Headers = []*meshv1.Header{
+		{Key: "message_type", Value: []byte(MessageTypeNodeStatusChange)},
+		{Key: "source_node", Value: []byte(fmt.Sprintf("%d", s.nodeID))},
+		{Key: "no_rebroadcast", Value: []byte("true")}, // Prevent broadcast loops
+	}
+
+	// Send broadcast
+	resp, err := s.meshManager.meshDataClient.Send(ctx, req)
+	if err != nil {
+		s.logger.Errorf("Failed to broadcast status change: %v", err)
+		return err
+	}
+
+	s.logger.Infof("Successfully broadcasted status change (msg_id=%d)", resp.MsgId)
+	return nil
+}
+
+// cleanupOldBroadcastIDs removes broadcast IDs older than 5 minutes
+func (s *DatabaseSyncManager) cleanupOldBroadcastIDs() {
+	s.broadcastMu.Lock()
+	defer s.broadcastMu.Unlock()
+
+	cutoff := time.Now().Add(-5 * time.Minute)
+	for id, timestamp := range s.processedBroadcastIDs {
+		if timestamp.Before(cutoff) {
+			delete(s.processedBroadcastIDs, id)
+		}
 	}
 }

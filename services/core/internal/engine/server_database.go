@@ -2,11 +2,11 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
-
-	"encoding/json"
+	"time"
 
 	anchorv1 "github.com/redbco/redb-open/api/proto/anchor/v1"
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
@@ -231,6 +231,52 @@ func (s *Server) ConnectDatabase(ctx context.Context, req *corev1.ConnectDatabas
 
 	// Convert to protobuf format
 	protoDatabase := s.databaseToProto(databaseObj)
+
+	// Broadcast instance and database creation to other mesh nodes asynchronously
+	// Note: We MUST broadcast instance BEFORE database due to foreign key constraint
+	go func() {
+		s.engine.logger.Debugf("Starting broadcast goroutine for instance and database")
+		syncMgr := s.engine.GetSyncManager()
+		if syncMgr == nil {
+			s.engine.logger.Warnf("Sync manager is nil, cannot broadcast instance/database creation")
+			return
+		}
+
+		broadcastCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		shouldBroadcast, err := syncMgr.ShouldBroadcastUserData(broadcastCtx)
+		if err != nil {
+			s.engine.logger.Errorf("Error checking if should broadcast: %v", err)
+			return
+		}
+
+		s.engine.logger.Debugf("Should broadcast user data: %v", shouldBroadcast)
+		if shouldBroadcast {
+			// Broadcast instance creation FIRST (synchronously to ensure order)
+			s.engine.logger.Infof("Broadcasting instance creation: %s", instanceObj.ID)
+			instanceRecordData := s.instanceToRecordData(instanceObj)
+			instancePrimaryKey := map[string]interface{}{"instance_id": instanceObj.ID}
+			if err := syncMgr.BroadcastUserDataOperationSync(broadcastCtx, "instances", "INSERT", instanceRecordData, instancePrimaryKey); err != nil {
+				s.engine.logger.Errorf("Failed to broadcast instance creation: %v", err)
+				// Don't broadcast database if instance broadcast failed
+				return
+			}
+			s.engine.logger.Infof("Successfully broadcasted instance %s", instanceObj.ID)
+
+			// Now broadcast database creation (after instance is broadcasted)
+			s.engine.logger.Infof("Broadcasting database creation: %s", databaseObj.ID)
+			databaseRecordData := s.databaseToRecordData(databaseObj)
+			databasePrimaryKey := map[string]interface{}{"database_id": databaseObj.ID}
+			if err := syncMgr.BroadcastUserDataOperationSync(broadcastCtx, "databases", "INSERT", databaseRecordData, databasePrimaryKey); err != nil {
+				s.engine.logger.Errorf("Failed to broadcast database creation: %v", err)
+				return
+			}
+			s.engine.logger.Infof("Successfully broadcasted database %s", databaseObj.ID)
+		} else {
+			s.engine.logger.Debugf("Not broadcasting: either not in mesh or only one node")
+		}
+	}()
 
 	return &corev1.ConnectDatabaseResponse{
 		Message:  fmt.Sprintf("Database %s connected successfully", databaseObj.Name),
@@ -536,6 +582,22 @@ func (s *Server) ModifyDatabase(ctx context.Context, req *corev1.ModifyDatabaseR
 	// Convert to protobuf format
 	protoDatabase := s.databaseToProto(updatedDatabase)
 
+	// Broadcast database update to other mesh nodes asynchronously
+	go func() {
+		if syncMgr := s.engine.GetSyncManager(); syncMgr != nil {
+			broadcastCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if shouldBroadcast, _ := syncMgr.ShouldBroadcastUserData(broadcastCtx); shouldBroadcast {
+				recordData := s.databaseToRecordData(updatedDatabase)
+				primaryKey := map[string]interface{}{"database_id": updatedDatabase.ID}
+				if err := syncMgr.BroadcastUserDataOperation(broadcastCtx, "databases", "UPDATE", recordData, primaryKey); err != nil {
+					s.engine.logger.Errorf("Failed to broadcast database update: %v", err)
+				}
+			}
+		}
+	}()
+
 	return &corev1.ModifyDatabaseResponse{
 		Message:  fmt.Sprintf("Database %s updated successfully", updatedDatabase.Name),
 		Success:  true,
@@ -610,6 +672,21 @@ func (s *Server) DisconnectDatabase(ctx context.Context, req *corev1.DisconnectD
 			return nil, status.Errorf(codes.Internal, "failed to delete database: %v", err)
 		}
 		message = "Database disconnected and deleted successfully"
+
+		// Broadcast database deletion to other mesh nodes asynchronously
+		go func() {
+			if syncMgr := s.engine.GetSyncManager(); syncMgr != nil {
+				broadcastCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				if shouldBroadcast, _ := syncMgr.ShouldBroadcastUserData(broadcastCtx); shouldBroadcast {
+					primaryKey := map[string]interface{}{"database_id": db.ID}
+					if err := syncMgr.BroadcastUserDataOperation(broadcastCtx, "databases", "DELETE", nil, primaryKey); err != nil {
+						s.engine.logger.Errorf("Failed to broadcast database deletion: %v", err)
+					}
+				}
+			}
+		}()
 	} else {
 		// Disable the database if not deleted
 		err = databaseService.Disable(ctx, req.TenantId, workspaceID, req.DatabaseName)
@@ -618,6 +695,26 @@ func (s *Server) DisconnectDatabase(ctx context.Context, req *corev1.DisconnectD
 			return nil, status.Errorf(codes.Internal, "failed to disable database: %v", err)
 		}
 		message = "Database disconnected and disabled successfully"
+
+		// Get updated database and broadcast the status change
+		updatedDb, err := databaseService.Get(ctx, req.TenantId, workspaceID, req.DatabaseName)
+		if err == nil {
+			// Broadcast database update to other mesh nodes asynchronously
+			go func() {
+				if syncMgr := s.engine.GetSyncManager(); syncMgr != nil {
+					broadcastCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+
+					if shouldBroadcast, _ := syncMgr.ShouldBroadcastUserData(broadcastCtx); shouldBroadcast {
+						recordData := s.databaseToRecordData(updatedDb)
+						primaryKey := map[string]interface{}{"database_id": updatedDb.ID}
+						if err := syncMgr.BroadcastUserDataOperation(broadcastCtx, "databases", "UPDATE", recordData, primaryKey); err != nil {
+							s.engine.logger.Errorf("Failed to broadcast database disable: %v", err)
+						}
+					}
+				}
+			}()
+		}
 	}
 
 	return &corev1.DisconnectDatabaseResponse{

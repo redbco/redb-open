@@ -34,6 +34,12 @@ const (
 	// User-level synchronization (tenants, users, workspaces, etc.)
 	MessageTypeUserDataSyncRequest  = "user_data_sync_request"  // Request user-level data from peer
 	MessageTypeUserDataSyncResponse = "user_data_sync_response" // Response with user-level data
+
+	// User-level data broadcasting (real-time replication)
+	MessageTypeUserDataInsert   = "user_data_insert"   // Broadcast INSERT operation
+	MessageTypeUserDataUpdate   = "user_data_update"   // Broadcast UPDATE operation
+	MessageTypeUserDataDelete   = "user_data_delete"   // Broadcast DELETE operation
+	MessageTypeNodeStatusChange = "node_status_change" // Broadcast node status change
 )
 
 // CoreMessage represents a structured message between core services
@@ -43,6 +49,25 @@ type CoreMessage struct {
 	Data      map[string]interface{} `json:"data"`
 	RequestID string                 `json:"request_id,omitempty"`
 	Timestamp int64                  `json:"timestamp"`
+}
+
+// UserDataBroadcastMessage represents a user data operation broadcast
+type UserDataBroadcastMessage struct {
+	TableName    string                 `json:"table_name"`
+	Operation    string                 `json:"operation"` // INSERT, UPDATE, DELETE
+	RecordData   map[string]interface{} `json:"record_data"`
+	PrimaryKey   map[string]interface{} `json:"primary_key"`
+	SourceNodeID uint64                 `json:"source_node_id"`
+	Timestamp    int64                  `json:"timestamp"`
+	BroadcastID  string                 `json:"broadcast_id"` // UUID for deduplication
+}
+
+// NodeStatusChangeMessage represents a node status change notification
+type NodeStatusChangeMessage struct {
+	NodeID    uint64 `json:"node_id"`
+	Status    string `json:"status"`
+	Reason    string `json:"reason"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 // ResponseAck represents an application-level acknowledgment
@@ -662,36 +687,54 @@ func (m *MeshCommunicationManager) handleReceivedMessage(ctx context.Context, ms
 	m.logger.Debugf("Received message from node %d, msg_id: %d, corr_id: %d, payload size: %d",
 		msg.SrcNode, msg.MsgId, msg.CorrId, len(msg.Payload))
 
-	// Parse the core message
-	var coreMsg CoreMessage
-	if err := json.Unmarshal(msg.Payload, &coreMsg); err != nil {
-		m.logger.Errorf("Failed to unmarshal core message: %v", err)
-		return err
+	// First, try to get message type from headers (new protocol for user data broadcasts)
+	var messageType string
+	var operation string
+
+	for _, header := range msg.Headers {
+		if header.Key == "message_type" {
+			messageType = string(header.Value)
+		} else if header.Key == "operation" {
+			operation = string(header.Value)
+		}
 	}
 
-	m.logger.Debugf("Parsed message type: '%s', operation: '%s'", coreMsg.Type, coreMsg.Operation)
-
-	// Check if this is a response to a pending request
-	if coreMsg.RequestID != "" && coreMsg.Type == MessageTypeResponse {
-		m.mu.RLock()
-		if respCh, exists := m.pendingRequests[coreMsg.RequestID]; exists {
-			select {
-			case respCh <- msg:
-			default:
-				m.logger.Warnf("Response channel full for request %s", coreMsg.RequestID)
-			}
+	// If message type is not in headers, try to parse as CoreMessage (old protocol)
+	if messageType == "" {
+		var coreMsg CoreMessage
+		if err := json.Unmarshal(msg.Payload, &coreMsg); err != nil {
+			m.logger.Errorf("Failed to unmarshal message (no message_type header and invalid CoreMessage): %v", err)
+			return err
 		}
-		m.mu.RUnlock()
-		return nil
+		messageType = coreMsg.Type
+		operation = coreMsg.Operation
+
+		m.logger.Debugf("Parsed message type from payload: '%s', operation: '%s'", messageType, operation)
+
+		// Check if this is a response to a pending request
+		if coreMsg.RequestID != "" && coreMsg.Type == MessageTypeResponse {
+			m.mu.RLock()
+			if respCh, exists := m.pendingRequests[coreMsg.RequestID]; exists {
+				select {
+				case respCh <- msg:
+				default:
+					m.logger.Warnf("Response channel full for request %s", coreMsg.RequestID)
+				}
+			}
+			m.mu.RUnlock()
+			return nil
+		}
+	} else {
+		m.logger.Debugf("Parsed message type from headers: '%s', operation: '%s'", messageType, operation)
 	}
 
 	// Handle based on message type
 	m.mu.RLock()
-	handler, exists := m.messageHandlers[coreMsg.Type]
+	handler, exists := m.messageHandlers[messageType]
 	m.mu.RUnlock()
 
 	if !exists {
-		m.logger.Warnf("No handler registered for message type: '%s' (operation: '%s')", coreMsg.Type, coreMsg.Operation)
+		m.logger.Warnf("No handler registered for message type: '%s' (operation: '%s')", messageType, operation)
 		return nil
 	}
 
@@ -740,6 +783,12 @@ func (m *MeshCommunicationManager) registerDefaultHandlers() {
 	// User-level sync handlers
 	m.RegisterMessageHandler(MessageTypeUserDataSyncRequest, m.handleUserDataSyncRequest)
 	m.RegisterMessageHandler(MessageTypeUserDataSyncResponse, m.handleUserDataSyncResponse)
+
+	// User-level data broadcast handlers
+	m.RegisterMessageHandler(MessageTypeUserDataInsert, m.handleUserDataBroadcast)
+	m.RegisterMessageHandler(MessageTypeUserDataUpdate, m.handleUserDataBroadcast)
+	m.RegisterMessageHandler(MessageTypeUserDataDelete, m.handleUserDataBroadcast)
+	m.RegisterMessageHandler(MessageTypeNodeStatusChange, m.handleNodeStatusChange)
 
 	// Note: mesh_event handler is registered when SetEventManager is called
 }
@@ -1423,5 +1472,78 @@ func (m *MeshCommunicationManager) handleUserDataSyncResponse(ctx context.Contex
 	}
 
 	m.logger.Infof("Successfully applied user-level data from node %d", msg.SrcNode)
+	return nil
+}
+
+// === User-Level Data Broadcast Handlers ===
+
+// handleUserDataBroadcast handles real-time user data operation broadcasts
+func (m *MeshCommunicationManager) handleUserDataBroadcast(ctx context.Context, msg *meshv1.Received) error {
+	m.logger.Debugf("Handling user data broadcast from node %d", msg.SrcNode)
+
+	// Parse broadcast message
+	var broadcastMsg UserDataBroadcastMessage
+	if err := json.Unmarshal(msg.Payload, &broadcastMsg); err != nil {
+		m.logger.Errorf("Failed to unmarshal user data broadcast: %v", err)
+		return fmt.Errorf("failed to unmarshal broadcast: %w", err)
+	}
+
+	m.logger.Infof("User data broadcast: table=%s, operation=%s, broadcast_id=%s from node %d",
+		broadcastMsg.TableName, broadcastMsg.Operation, broadcastMsg.BroadcastID, msg.SrcNode)
+
+	// Get sync manager
+	var syncManager *DatabaseSyncManager
+	if m.eventManager != nil {
+		syncManager = m.eventManager.GetSyncManager()
+	}
+
+	if syncManager == nil {
+		m.logger.Warn("Database sync manager not available, cannot apply user data broadcast")
+		return fmt.Errorf("sync manager not available")
+	}
+
+	// Handle the broadcast
+	if err := syncManager.HandleUserDataBroadcast(ctx, &broadcastMsg); err != nil {
+		m.logger.Errorf("Failed to handle user data broadcast: %v", err)
+		return err
+	}
+
+	m.logger.Debugf("Successfully processed user data broadcast from node %d", msg.SrcNode)
+	return nil
+}
+
+// handleNodeStatusChange handles node status change notifications
+func (m *MeshCommunicationManager) handleNodeStatusChange(ctx context.Context, msg *meshv1.Received) error {
+	m.logger.Infof("Handling node status change notification from node %d", msg.SrcNode)
+
+	// Parse status change message
+	var statusMsg NodeStatusChangeMessage
+	if err := json.Unmarshal(msg.Payload, &statusMsg); err != nil {
+		m.logger.Errorf("Failed to unmarshal node status change: %v", err)
+		return fmt.Errorf("failed to unmarshal status change: %w", err)
+	}
+
+	m.logger.Warnf("Node %d status changed to %s: %s", statusMsg.NodeID, statusMsg.Status, statusMsg.Reason)
+
+	// Get sync manager
+	var syncManager *DatabaseSyncManager
+	if m.eventManager != nil {
+		syncManager = m.eventManager.GetSyncManager()
+	}
+
+	if syncManager == nil {
+		m.logger.Warn("Database sync manager not available, cannot update node status")
+		return nil // Don't fail - just log
+	}
+
+	// Update node status in local database (without re-broadcasting)
+	query := `UPDATE nodes SET status = $1, updated = CURRENT_TIMESTAMP WHERE node_id = $2`
+	_, err := syncManager.db.Pool().Exec(ctx, query, statusMsg.Status, int64(statusMsg.NodeID))
+	if err != nil {
+		m.logger.Errorf("Failed to update node status in database: %v", err)
+		return err
+	}
+
+	m.logger.Infof("Successfully updated status for node %d to %s (no re-broadcast)", statusMsg.NodeID, statusMsg.Status)
 	return nil
 }

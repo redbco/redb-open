@@ -43,6 +43,7 @@ const (
 	StatusReceived      Status = "received"
 	StatusActive        Status = "active"
 	StatusClean         Status = "clean"
+	StatusInconsistent  Status = "inconsistent"
 )
 
 // ErrorResponse represents an error response

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"time"
 
 	anchorv1 "github.com/redbco/redb-open/api/proto/anchor/v1"
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
@@ -118,6 +119,22 @@ func (s *Server) ConnectInstance(ctx context.Context, req *corev1.ConnectInstanc
 	// Convert to protobuf format
 	protoInstance := s.instanceToProto(createdInstance)
 
+	// Broadcast instance creation to other mesh nodes asynchronously
+	go func() {
+		if syncMgr := s.engine.GetSyncManager(); syncMgr != nil {
+			broadcastCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if shouldBroadcast, _ := syncMgr.ShouldBroadcastUserData(broadcastCtx); shouldBroadcast {
+				recordData := s.instanceToRecordData(createdInstance)
+				primaryKey := map[string]interface{}{"instance_id": createdInstance.ID}
+				if err := syncMgr.BroadcastUserDataOperation(broadcastCtx, "instances", "INSERT", recordData, primaryKey); err != nil {
+					s.engine.logger.Errorf("Failed to broadcast instance creation: %v", err)
+				}
+			}
+		}
+	}()
+
 	return &corev1.ConnectInstanceResponse{
 		Message:  fmt.Sprintf("Instance %s created and connected successfully", createdInstance.Name),
 		Success:  true,
@@ -220,6 +237,22 @@ func (s *Server) ModifyInstance(ctx context.Context, req *corev1.ModifyInstanceR
 	// Convert to protobuf format
 	protoInstance := s.instanceToProto(updatedInstance)
 
+	// Broadcast instance update to other mesh nodes asynchronously
+	go func() {
+		if syncMgr := s.engine.GetSyncManager(); syncMgr != nil {
+			broadcastCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if shouldBroadcast, _ := syncMgr.ShouldBroadcastUserData(broadcastCtx); shouldBroadcast {
+				recordData := s.instanceToRecordData(updatedInstance)
+				primaryKey := map[string]interface{}{"instance_id": updatedInstance.ID}
+				if err := syncMgr.BroadcastUserDataOperation(broadcastCtx, "instances", "UPDATE", recordData, primaryKey); err != nil {
+					s.engine.logger.Errorf("Failed to broadcast instance update: %v", err)
+				}
+			}
+		}
+	}()
+
 	return &corev1.ModifyInstanceResponse{
 		Message:  fmt.Sprintf("Instance %s updated successfully", updatedInstance.Name),
 		Success:  true,
@@ -276,6 +309,21 @@ func (s *Server) DisconnectInstance(ctx context.Context, req *corev1.DisconnectI
 			return nil, status.Errorf(codes.Internal, "failed to delete instance: %v", err)
 		}
 		message = "Instance disconnected and deleted successfully"
+
+		// Broadcast instance deletion to other mesh nodes asynchronously
+		go func() {
+			if syncMgr := s.engine.GetSyncManager(); syncMgr != nil {
+				broadcastCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				if shouldBroadcast, _ := syncMgr.ShouldBroadcastUserData(broadcastCtx); shouldBroadcast {
+					primaryKey := map[string]interface{}{"instance_id": inst.ID}
+					if err := syncMgr.BroadcastUserDataOperation(broadcastCtx, "instances", "DELETE", nil, primaryKey); err != nil {
+						s.engine.logger.Errorf("Failed to broadcast instance deletion: %v", err)
+					}
+				}
+			}
+		}()
 	} else {
 		// Disable the instance if not deleted
 		err := instanceService.Disable(ctx, req.TenantId, req.WorkspaceName, req.InstanceName)
@@ -284,6 +332,26 @@ func (s *Server) DisconnectInstance(ctx context.Context, req *corev1.DisconnectI
 			return nil, status.Errorf(codes.Internal, "failed to disable instance: %v", err)
 		}
 		message = "Instance disconnected and disabled successfully"
+
+		// Get updated instance and broadcast the status change
+		updatedInst, err := instanceService.Get(ctx, req.TenantId, req.WorkspaceName, req.InstanceName)
+		if err == nil {
+			// Broadcast instance update to other mesh nodes asynchronously
+			go func() {
+				if syncMgr := s.engine.GetSyncManager(); syncMgr != nil {
+					broadcastCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+
+					if shouldBroadcast, _ := syncMgr.ShouldBroadcastUserData(broadcastCtx); shouldBroadcast {
+						recordData := s.instanceToRecordData(updatedInst)
+						primaryKey := map[string]interface{}{"instance_id": updatedInst.ID}
+						if err := syncMgr.BroadcastUserDataOperation(broadcastCtx, "instances", "UPDATE", recordData, primaryKey); err != nil {
+							s.engine.logger.Errorf("Failed to broadcast instance disable: %v", err)
+						}
+					}
+				}
+			}()
+		}
 	}
 
 	return &corev1.DisconnectInstanceResponse{

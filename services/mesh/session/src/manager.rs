@@ -438,20 +438,32 @@ impl SessionManager {
         debug!("Handling broadcast message from node {} (broadcast_id: {:?})", 
                message.src_node, message.broadcast_id);
         
-        // Check broadcast cache for duplicates if broadcast_id is present
-        if let Some(broadcast_id) = message.broadcast_id {
-            // Only check cache for non-zero broadcast IDs to avoid issues with default values
-            if broadcast_id != 0 && self.broadcast_cache.contains(message.src_node, broadcast_id) {
-                debug!("Dropping duplicate broadcast message from node {} (ID: {})", 
-                       message.src_node, broadcast_id);
-                return Ok(());
+        // Determine effective broadcast ID for deduplication
+        let effective_broadcast_id = match message.broadcast_id {
+            Some(id) if id != 0 => id,
+            _ => {
+                // For messages with msg_id=0 or None, generate a hash from message content
+                // This ensures proper deduplication for all broadcasts
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                
+                let mut hasher = DefaultHasher::new();
+                message.src_node.hash(&mut hasher);
+                message.corr_id.hash(&mut hasher);
+                message.payload.hash(&mut hasher);
+                hasher.finish()
             }
-            
-            // Add to cache to prevent future duplicates (only for non-zero IDs)
-            if broadcast_id != 0 {
-                self.broadcast_cache.insert(message.src_node, broadcast_id);
-            }
+        };
+        
+        // Check broadcast cache for duplicates
+        if self.broadcast_cache.contains(message.src_node, effective_broadcast_id) {
+            debug!("Dropping duplicate broadcast message from node {} (ID: {})", 
+                   message.src_node, effective_broadcast_id);
+            return Ok(());
         }
+        
+        // Add to cache to prevent future duplicates
+        self.broadcast_cache.insert(message.src_node, effective_broadcast_id);
         
         // Check TTL if present
         if let Some(ttl) = message.broadcast_ttl {
@@ -491,10 +503,12 @@ impl SessionManager {
         
         let mut forwarded_count = 0;
         
-        for (node_id, message_tx) in session_targets {
+        for (_node_id, message_tx) in session_targets {
             // Create forwarded message with decremented TTL
             let mut forwarded_message = message.clone();
-            forwarded_message.dst_node = node_id; // Set specific destination for forwarding
+            // Keep dst_node = 0 for broadcasts so receiving nodes know to relay further
+            // The broadcast cache will prevent infinite loops via broadcast_id deduplication
+            forwarded_message.dst_node = 0;
             
             // Decrement TTL if present
             if let Some(ttl) = forwarded_message.broadcast_ttl {
@@ -503,10 +517,10 @@ impl SessionManager {
             
             // Send to session
             if let Err(e) = message_tx.send(forwarded_message) {
-                warn!("Failed to forward broadcast to node {}: {}", node_id, e);
+                warn!("Failed to forward broadcast to node {}: {}", _node_id, e);
             } else {
                 forwarded_count += 1;
-                debug!("Forwarded broadcast message to node {}", node_id);
+                debug!("Forwarded broadcast message to node {}", _node_id);
             }
         }
         
@@ -621,34 +635,52 @@ impl SessionManager {
                 debug!("Received pong from node {} (RTT: {:?})", remote_node_id, rtt);
             }
             SessionEvent::MessageReceived { message } => {
-                debug!("Received message from node {}", message.src_node);
+                debug!("Received message from node {} (dst_node: {})", message.src_node, message.dst_node);
                 
-                // Check if message is for local node
-                if message.dst_node == self.local_node_id {
-                    // Convert to InboundMessage with msg_id preserved if available
+                // Check if this is a broadcast message (dst_node == 0)
+                if message.dst_node == 0 {
+                    // This is a broadcast - handle it as such
+                    // Extract broadcast_id from msg_id if available (for deduplication)
+                    let broadcast_id = message.msg_id;
+                    
+                    let outbound = OutboundMessage {
+                        src_node: message.src_node,  // Preserve original sender
+                        dst_node: 0, // Keep as broadcast
+                        payload: message.payload,
+                        headers: message.headers,
+                        corr_id: message.corr_id,
+                        msg_id: message.msg_id,
+                        require_ack: message.require_ack,
+                        broadcast_id, // Preserve broadcast ID for deduplication
+                        broadcast_ttl: Some(64), // Reset TTL for forwarding
+                        is_broadcast: true, // Mark as broadcast
+                    };
+                    self.handle_broadcast_message(outbound).await?;
+                } else if message.dst_node == self.local_node_id {
+                    // Message is specifically for this node
                     let inbound_message = InboundMessage {
                         src_node: message.src_node,
                         dst_node: message.dst_node,
                         payload: message.payload,
                         headers: message.headers,
                         corr_id: message.corr_id,
-                        msg_id: message.msg_id, // Preserve message ID if available
-                        require_ack: message.require_ack, // Preserve acknowledgment requirement
+                        msg_id: message.msg_id,
+                        require_ack: message.require_ack,
                     };
                     self.deliver_locally(inbound_message).await?;
                 } else {
-                    // Forward the message (preserve original src_node)
+                    // Targeted message for another node - route it
                     let outbound = OutboundMessage {
-                        src_node: message.src_node,  // Preserve original sender
+                        src_node: message.src_node,
                         dst_node: message.dst_node,
                         payload: message.payload,
                         headers: message.headers,
                         corr_id: message.corr_id,
-                        msg_id: message.msg_id, // Preserve message ID for forwarded messages too
-                        require_ack: message.require_ack, // Preserve acknowledgment requirement
-                        broadcast_id: None, // Forwarded messages are not broadcasts
-                        broadcast_ttl: None, // Forwarded messages are not broadcasts
-                        is_broadcast: false, // Forwarded messages are not broadcasts
+                        msg_id: message.msg_id,
+                        require_ack: message.require_ack,
+                        broadcast_id: None,
+                        broadcast_ttl: None,
+                        is_broadcast: false,
                     };
                     self.handle_outbound_message(outbound).await?;
                 }
