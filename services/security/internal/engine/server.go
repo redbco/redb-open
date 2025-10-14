@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -1302,4 +1303,332 @@ func generateRandomString(length int) string {
 		b[i] = charset[mathrand.Intn(len(charset))]
 	}
 	return string(b)
+}
+
+// ValidateMCPSession validates an MCP session token (JWT or API token)
+func (s *SecurityServer) ValidateMCPSession(ctx context.Context, req *securityv1.ValidateMCPSessionRequest) (*securityv1.ValidateMCPSessionResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+	s.engine.IncrementAuthenticationRequests()
+	s.engine.IncrementRequestsProcessed()
+
+	// Validate input
+	if req.Token == "" {
+		s.engine.IncrementErrors()
+		return &securityv1.ValidateMCPSessionResponse{
+			Valid:   false,
+			Message: "token is required",
+			Status:  commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	// Get database connection
+	db := s.engine.GetDatabase()
+	if db == nil {
+		s.engine.IncrementErrors()
+		return &securityv1.ValidateMCPSessionResponse{
+			Valid:   false,
+			Message: "authentication service temporarily unavailable",
+			Status:  commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	// Handle JWT token validation
+	if req.TokenType == "jwt" || req.TokenType == "" {
+		// Parse token to extract tenant ID (without full validation)
+		token, _ := jwt.ParseWithClaims(req.Token, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+			return nil, errors.New("parsing for tenant ID only")
+		})
+
+		var tenantID string
+		if token != nil {
+			if claims, ok := token.Claims.(*JWTClaims); ok && claims.TenantID != "" {
+				tenantID = claims.TenantID
+			}
+		}
+
+		if tenantID == "" {
+			return &securityv1.ValidateMCPSessionResponse{
+				Valid:   false,
+				Message: "tenant information not found in token",
+				Status:  commonv1.Status_STATUS_ERROR,
+			}, nil
+		}
+
+		// Parse and validate the JWT token with proper signature verification
+		validatedToken, err := jwt.ParseWithClaims(req.Token, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, errors.New("invalid signing method")
+			}
+			tenantSecret, err := s.getTenantJWTSecret(tenantID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get tenant JWT secret: %w", err)
+			}
+			return tenantSecret, nil
+		})
+
+		if err != nil || !validatedToken.Valid {
+			return &securityv1.ValidateMCPSessionResponse{
+				Valid:   false,
+				Message: "invalid token",
+				Status:  commonv1.Status_STATUS_ERROR,
+			}, nil
+		}
+
+		// Extract claims
+		_, ok := validatedToken.Claims.(*JWTClaims)
+		if !ok {
+			return &securityv1.ValidateMCPSessionResponse{
+				Valid:   false,
+				Message: "invalid token claims",
+				Status:  commonv1.Status_STATUS_ERROR,
+			}, nil
+		}
+
+		// Validate token in database
+		user, err := s.validateTokenInDatabase(ctx, db, req.Token, "access")
+		if err != nil {
+			return &securityv1.ValidateMCPSessionResponse{
+				Valid:   false,
+				Message: "token not found or expired",
+				Status:  commonv1.Status_STATUS_ERROR,
+			}, nil
+		}
+
+		// Get default workspace for tenant
+		workspaceID := "default"
+		workspaces, err := s.getTenantWorkspaces(ctx, db, user.TenantID)
+		if err == nil && len(workspaces) > 0 {
+			workspaceID = workspaces[0].WorkspaceId
+		}
+
+		return &securityv1.ValidateMCPSessionResponse{
+			Valid:       true,
+			TenantId:    user.TenantID,
+			WorkspaceId: workspaceID,
+			UserId:      user.UserID,
+			Message:     "token validated successfully",
+			Status:      commonv1.Status_STATUS_SUCCESS,
+		}, nil
+	}
+
+	// Handle API token validation
+	if req.TokenType == "api_token" {
+		// Query API token from apitokens table
+		var tenantID, workspaceID, userID string
+		var enabled bool
+		var expires *time.Time
+
+		query := `
+			SELECT tenant_id, workspace_id, user_id, apitoken_enabled, apitoken_expires
+			FROM apitokens
+			WHERE apitoken_hash = $1
+		`
+
+		// Hash the provided token to compare with stored hash
+		tokenHash := hashAPIToken(req.Token)
+		err := db.Pool().QueryRow(ctx, query, tokenHash).Scan(&tenantID, &workspaceID, &userID, &enabled, &expires)
+		if err != nil {
+			return &securityv1.ValidateMCPSessionResponse{
+				Valid:   false,
+				Message: "invalid API token",
+				Status:  commonv1.Status_STATUS_ERROR,
+			}, nil
+		}
+
+		// Check if token is enabled
+		if !enabled {
+			return &securityv1.ValidateMCPSessionResponse{
+				Valid:   false,
+				Message: "API token is disabled",
+				Status:  commonv1.Status_STATUS_ERROR,
+			}, nil
+		}
+
+		// Check if token is expired
+		if expires != nil && expires.Before(time.Now()) {
+			return &securityv1.ValidateMCPSessionResponse{
+				Valid:   false,
+				Message: "API token has expired",
+				Status:  commonv1.Status_STATUS_ERROR,
+			}, nil
+		}
+
+		// Update last used timestamp
+		_, _ = db.Pool().Exec(ctx, `
+			UPDATE apitokens 
+			SET apitoken_last_used = CURRENT_TIMESTAMP 
+			WHERE apitoken_hash = $1
+		`, tokenHash)
+
+		return &securityv1.ValidateMCPSessionResponse{
+			Valid:       true,
+			TenantId:    tenantID,
+			WorkspaceId: workspaceID,
+			UserId:      userID,
+			Message:     "API token validated successfully",
+			Status:      commonv1.Status_STATUS_SUCCESS,
+		}, nil
+	}
+
+	return &securityv1.ValidateMCPSessionResponse{
+		Valid:   false,
+		Message: "unsupported token type",
+		Status:  commonv1.Status_STATUS_ERROR,
+	}, nil
+}
+
+// AuthorizeMCPOperation authorizes an MCP operation
+func (s *SecurityServer) AuthorizeMCPOperation(ctx context.Context, req *securityv1.AuthorizeMCPOperationRequest) (*securityv1.AuthorizeMCPOperationResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+	s.engine.IncrementRequestsProcessed()
+
+	// Get database connection
+	db := s.engine.GetDatabase()
+	if db == nil {
+		s.engine.IncrementErrors()
+		return &securityv1.AuthorizeMCPOperationResponse{
+			Authorized: false,
+			Message:    "authorization service temporarily unavailable",
+			Status:     commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	// Verify user exists and is enabled
+	var userEnabled bool
+	err := db.Pool().QueryRow(ctx, `
+		SELECT user_enabled 
+		FROM users 
+		WHERE user_id = $1 AND tenant_id = $2
+	`, req.UserId, req.TenantId).Scan(&userEnabled)
+
+	if err != nil {
+		return &securityv1.AuthorizeMCPOperationResponse{
+			Authorized: false,
+			Message:    "user not found",
+			Status:     commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	if !userEnabled {
+		return &securityv1.AuthorizeMCPOperationResponse{
+			Authorized: false,
+			Message:    "user is disabled",
+			Status:     commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	// Verify MCP server exists and is enabled
+	var mcpServerEnabled bool
+	var policyIDs []string
+	err = db.Pool().QueryRow(ctx, `
+		SELECT mcpserver_enabled, COALESCE(policy_ids, '{}')
+		FROM mcpservers 
+		WHERE mcpserver_id = $1 AND tenant_id = $2
+	`, req.McpServerId, req.TenantId).Scan(&mcpServerEnabled, &policyIDs)
+
+	if err != nil {
+		return &securityv1.AuthorizeMCPOperationResponse{
+			Authorized: false,
+			Message:    "MCP server not found",
+			Status:     commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	if !mcpServerEnabled {
+		return &securityv1.AuthorizeMCPOperationResponse{
+			Authorized: false,
+			Message:    "MCP server is disabled",
+			Status:     commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	// TODO: Implement policy evaluation
+	// For now, if the user exists and is enabled, and the MCP server exists and is enabled,
+	// we authorize the operation. In the future, this should check policies from the policies table.
+
+	appliedPolicies := []string{}
+	if len(policyIDs) > 0 {
+		// In future implementation, evaluate these policies
+		appliedPolicies = policyIDs
+	}
+
+	return &securityv1.AuthorizeMCPOperationResponse{
+		Authorized:      true,
+		Message:         "operation authorized",
+		AppliedPolicies: appliedPolicies,
+		Status:          commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+// GetMCPPolicies retrieves MCP policies
+func (s *SecurityServer) GetMCPPolicies(ctx context.Context, req *securityv1.GetMCPPoliciesRequest) (*securityv1.GetMCPPoliciesResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+	s.engine.IncrementRequestsProcessed()
+
+	// Get database connection
+	db := s.engine.GetDatabase()
+	if db == nil {
+		s.engine.IncrementErrors()
+		return &securityv1.GetMCPPoliciesResponse{
+			Policies: []*securityv1.MCPPolicy{},
+			Status:   commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	// If no policy IDs provided, return empty list
+	if len(req.PolicyIds) == 0 {
+		return &securityv1.GetMCPPoliciesResponse{
+			Policies: []*securityv1.MCPPolicy{},
+			Status:   commonv1.Status_STATUS_SUCCESS,
+		}, nil
+	}
+
+	// Query policies from database
+	query := `
+		SELECT policy_id, policy_name, policy_description, policy_object
+		FROM policies
+		WHERE policy_id = ANY($1) AND tenant_id = $2
+	`
+
+	rows, err := db.Pool().Query(ctx, query, req.PolicyIds, req.TenantId)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return &securityv1.GetMCPPoliciesResponse{
+			Policies: []*securityv1.MCPPolicy{},
+			Status:   commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+	defer rows.Close()
+
+	var policies []*securityv1.MCPPolicy
+	for rows.Next() {
+		var policyID, policyName, policyDescription string
+		var policyObject []byte
+
+		err := rows.Scan(&policyID, &policyName, &policyDescription, &policyObject)
+		if err != nil {
+			continue
+		}
+
+		policies = append(policies, &securityv1.MCPPolicy{
+			PolicyId:          policyID,
+			PolicyName:        policyName,
+			PolicyDescription: policyDescription,
+			PolicyObject:      policyObject,
+		})
+	}
+
+	return &securityv1.GetMCPPoliciesResponse{
+		Policies: policies,
+		Status:   commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+// hashAPIToken creates a hash of an API token for storage/comparison
+func hashAPIToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%x", hash)
 }

@@ -28,6 +28,7 @@ type Server struct {
 	relationshipHandler   *RelationshipHandlers
 	transformationHandler *TransformationHandlers
 	policyHandler         *PolicyHandlers
+	mcpHandler            *MCPHandlers
 	userHandler           *UserHandlers
 	tenantHandler         *TenantHandlers
 	middleware            *Middleware
@@ -53,6 +54,7 @@ func NewServer(engine *Engine) *Server {
 		relationshipHandler:   NewRelationshipHandlers(engine),
 		transformationHandler: NewTransformationHandlers(engine),
 		policyHandler:         NewPolicyHandlers(engine),
+		mcpHandler:            NewMCPHandlers(engine),
 		userHandler:           NewUserHandlers(engine),
 		tenantHandler:         NewTenantHandlers(engine),
 		middleware:            NewMiddleware(engine),
@@ -318,6 +320,32 @@ func (s *Server) setupRoutes() {
 	mappingRules.HandleFunc("/{mapping_rule_name}", s.mappingHandler.ShowMappingRule).Methods(http.MethodGet)
 	mappingRules.HandleFunc("/{mapping_rule_name}", s.mappingHandler.ModifyMappingRule).Methods(http.MethodPut)
 	mappingRules.HandleFunc("/{mapping_rule_name}", s.mappingHandler.DeleteMappingRule).Methods(http.MethodDelete)
+
+	// MCP Server endpoints (workspace-level)
+	mcpservers := workspaces.PathPrefix("/{workspace_name}/mcpservers").Subrouter()
+	mcpservers.HandleFunc("", s.mcpHandler.ListMCPServers).Methods(http.MethodGet)
+	mcpservers.HandleFunc("", s.mcpHandler.AddMCPServer).Methods(http.MethodPost)
+	mcpservers.HandleFunc("/{mcpserver_name}", s.mcpHandler.ShowMCPServer).Methods(http.MethodGet)
+	mcpservers.HandleFunc("/{mcpserver_name}", s.mcpHandler.ModifyMCPServer).Methods(http.MethodPut)
+	mcpservers.HandleFunc("/{mcpserver_name}", s.mcpHandler.DeleteMCPServer).Methods(http.MethodDelete)
+
+	// MCP Resource endpoints (workspace-level)
+	mcpresources := workspaces.PathPrefix("/{workspace_name}/mcpresources").Subrouter()
+	mcpresources.HandleFunc("", s.mcpHandler.ListMCPResources).Methods(http.MethodGet)
+	mcpresources.HandleFunc("", s.mcpHandler.AddMCPResource).Methods(http.MethodPost)
+	mcpresources.HandleFunc("/attach", s.mcpHandler.AttachMCPResource).Methods(http.MethodPost)
+	mcpresources.HandleFunc("/detach", s.mcpHandler.DetachMCPResource).Methods(http.MethodPost)
+	mcpresources.HandleFunc("/{mcpresource_name}", s.mcpHandler.ShowMCPResource).Methods(http.MethodGet)
+	mcpresources.HandleFunc("/{mcpresource_name}", s.mcpHandler.DeleteMCPResource).Methods(http.MethodDelete)
+
+	// MCP Tool endpoints (workspace-level)
+	mcptools := workspaces.PathPrefix("/{workspace_name}/mcptools").Subrouter()
+	mcptools.HandleFunc("", s.mcpHandler.ListMCPTools).Methods(http.MethodGet)
+	mcptools.HandleFunc("", s.mcpHandler.AddMCPTool).Methods(http.MethodPost)
+	mcptools.HandleFunc("/attach", s.mcpHandler.AttachMCPTool).Methods(http.MethodPost)
+	mcptools.HandleFunc("/detach", s.mcpHandler.DetachMCPTool).Methods(http.MethodPost)
+	mcptools.HandleFunc("/{mcptool_name}", s.mcpHandler.ShowMCPTool).Methods(http.MethodGet)
+	mcptools.HandleFunc("/{mcptool_name}", s.mcpHandler.DeleteMCPTool).Methods(http.MethodDelete)
 
 	// Relationship endpoints (workspace-level)
 	relationships := workspaces.PathPrefix("/{workspace_name}/relationships").Subrouter()

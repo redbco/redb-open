@@ -42,6 +42,11 @@ func setupCommands() {
 	// Add mappings commands
 	rootCmd.AddCommand(mappingsCmd)
 
+	// Add MCP commands
+	rootCmd.AddCommand(mcpserversCmd)
+	rootCmd.AddCommand(mcpresourcesCmd)
+	rootCmd.AddCommand(mcptoolsCmd)
+
 	// Add repos commands
 	rootCmd.AddCommand(reposCmd)
 

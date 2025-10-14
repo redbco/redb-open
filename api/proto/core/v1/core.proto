@@ -2675,10 +2675,10 @@ message MCPServer {
     string mcp_server_id = 3;
     string mcp_server_name = 4;
     string mcp_server_description = 5;
-    string host_type = 6;
-    string host = 7;
-    int32 port = 8;
-    bool enabled = 9;
+    repeated string mcp_server_host_ids = 6;
+    int32 mcp_server_port = 7;
+    bool mcp_server_enabled = 8;
+    repeated string policy_ids = 9;
     repeated MCPResource mcp_resources = 10;
     repeated MCPTool mcp_tools = 11;
     repeated MCPPrompt mcp_prompts = 12;
@@ -2690,7 +2690,7 @@ message MCPServer {
 // Show all MCP servers request
 message ListMCPServersRequest {
     string tenant_id = 1;
-    string workspace_id = 2;
+    string workspace_name = 2;
 }
 
 // Show all MCP servers response
@@ -2701,7 +2701,8 @@ message ListMCPServersResponse {
 // Show a MCP server request
 message ShowMCPServerRequest {
     string tenant_id = 1;
-    string mcp_server_id = 2;
+    string workspace_name = 2;
+    string mcp_server_name = 3;
 }
 
 // Show a MCP server response
@@ -2712,12 +2713,14 @@ message ShowMCPServerResponse {
 // Add a MCP server request
 message AddMCPServerRequest {
     string tenant_id = 1;
-    string mcp_server_name = 2;
-    string mcp_server_description = 3;
-    string host_type = 4;
-    string host = 5;
-    int32 port = 6;
-    string owner_id = 7;
+    string workspace_name = 2;
+    string mcp_server_name = 3;
+    string mcp_server_description = 4;
+    repeated string mcp_server_host_ids = 5;
+    int32 mcp_server_port = 6;
+    bool mcp_server_enabled = 7;
+    repeated string policy_ids = 8;
+    string owner_id = 9;
 }
 
 // Add a MCP server response
@@ -2731,12 +2734,13 @@ message AddMCPServerResponse {
 // Modify a MCP server request
 message ModifyMCPServerRequest {
     string tenant_id = 1;
-    string mcp_server_id = 2;
-    optional string mcp_server_name = 3;
+    string workspace_name = 2;
+    string mcp_server_name = 3;
     optional string mcp_server_description = 4;
-    optional string host_type = 5;
-    optional string host = 6;
-    optional int32 port = 7;
+    repeated string mcp_server_host_ids = 5;
+    optional int32 mcp_server_port = 6;
+    optional bool mcp_server_enabled = 7;
+    repeated string policy_ids = 8;
 }
 
 // Modify a MCP server response
@@ -2750,7 +2754,8 @@ message ModifyMCPServerResponse {
 // Delete a MCP server request
 message DeleteMCPServerRequest {
     string tenant_id = 1;
-    string mcp_server_id = 2;
+    string workspace_name = 2;
+    string mcp_server_name = 3;
 }
 
 // Delete a MCP server response
@@ -2769,19 +2774,16 @@ message MCPResource {
     string mcp_resource_id = 3;
     string mcp_resource_name = 4;
     string mcp_resource_description = 5;
-    string mcp_resource_uri = 6;
-    string mcp_resource_mime_type = 7;
-    bool require_authentication = 8;
-    google.protobuf.Struct mcp_resource_annotations = 9;
-    string cache_ttl = 10;
-    string visibility = 11;
-    string mapping_id = 12;
-    string owner_id = 13;
+    google.protobuf.Struct mcp_resource_config = 6;
+    string mapping_id = 7;
+    repeated string policy_ids = 8;
+    string owner_id = 9;
 }
 
 // Show all MCP resources request
 message ListMCPResourcesRequest {
     string tenant_id = 1;
+    string workspace_name = 2;
 }
 
 // Show all MCP resources response
@@ -2792,7 +2794,8 @@ message ListMCPResourcesResponse {
 // Show a MCP resource request
 message ShowMCPResourceRequest {
     string tenant_id = 1;
-    string mcp_resource_id = 2;
+    string workspace_name = 2;
+    string mcp_resource_name = 3;
 }
 
 // Show a MCP resource response
@@ -2803,16 +2806,13 @@ message ShowMCPResourceResponse {
 // Add a MCP resource request
 message AddMCPResourceRequest {
     string tenant_id = 1;
-    string mcp_resource_name = 2;
-    string mcp_resource_description = 3;
-    string mcp_resource_uri = 4;
-    string mcp_resource_mime_type = 5;
-    bool require_authentication = 6;
-    google.protobuf.Struct mcp_resource_annotations = 7;
-    string cache_ttl = 8;
-    string visibility = 9;
-    string mapping_id = 10;
-    string owner_id = 11;
+    string workspace_name = 2;
+    string mcp_resource_name = 3;
+    string mcp_resource_description = 4;
+    google.protobuf.Struct mcp_resource_config = 5;
+    string mapping_name = 6;
+    repeated string policy_ids = 7;
+    string owner_id = 8;
 }
 
 // Add a MCP resource response
@@ -2826,16 +2826,12 @@ message AddMCPResourceResponse {
 // Modify a MCP resource request
 message ModifyMCPResourceRequest {
     string tenant_id = 1;
-    string mcp_resource_id = 2;
-    optional string mcp_resource_name = 3;
+    string workspace_name = 2;
+    string mcp_resource_name = 3;
     optional string mcp_resource_description = 4;
-    optional string mcp_resource_uri = 5;
-    optional string mcp_resource_mime_type = 6;
-    optional bool require_authentication = 7;
-    optional google.protobuf.Struct mcp_resource_annotations = 8;
-    optional string cache_ttl = 9;
-    optional string visibility = 10;
-    optional string mapping_id = 11;
+    optional google.protobuf.Struct mcp_resource_config = 5;
+    optional string mapping_name = 6;
+    repeated string policy_ids = 7;
 }
 
 // Modify a MCP resource response
@@ -2849,7 +2845,8 @@ message ModifyMCPResourceResponse {
 // Delete a MCP resource request
 message DeleteMCPResourceRequest {
     string tenant_id = 1;
-    string mcp_resource_id = 2;
+    string workspace_name = 2;
+    string mcp_resource_name = 3;
 }
 
 // Delete a MCP resource response
@@ -2862,8 +2859,9 @@ message DeleteMCPResourceResponse {
 // Attach a MCP resource to a MCP server
 message AttachMCPResourceRequest {
     string tenant_id = 1;
-    string mcp_resource_id = 2;
-    string mcp_server_id = 3;
+    string workspace_name = 2;
+    string mcp_resource_name = 3;
+    string mcp_server_name = 4;
 }
 
 // Attach a MCP resource to a MCP server response
@@ -2878,8 +2876,9 @@ message AttachMCPResourceResponse {
 // Detach a MCP resource from a MCP server
 message DetachMCPResourceRequest {
     string tenant_id = 1;
-    string mcp_resource_id = 2;
-    string mcp_server_id = 3;
+    string workspace_name = 2;
+    string mcp_resource_name = 3;
+    string mcp_server_name = 4;
 }
 
 // Detach a MCP resource from a MCP server response
@@ -2900,19 +2899,16 @@ message MCPTool {
     string mcp_tool_id = 3;
     string mcp_tool_name = 4;
     string mcp_tool_description = 5;
-    string mcp_tool_mime_type = 7;
-    string mcp_tool_category = 8;
-    string mcp_tool_operation = 9;
-    bool require_authentication = 10;
-    google.protobuf.Struct mcp_tool_annotations = 11;
-    string visibility = 12;
-    string mapping_id = 13;
-    string owner_id = 14;
+    google.protobuf.Struct mcp_tool_config = 6;
+    string mapping_id = 7;
+    repeated string policy_ids = 8;
+    string owner_id = 9;
 }
 
 // Show all MCP tools request
 message ListMCPToolsRequest {
     string tenant_id = 1;
+    string workspace_name = 2;
 }
 
 // Show all MCP tools response
@@ -2923,7 +2919,8 @@ message ListMCPToolsResponse {
 // Show a MCP tool request
 message ShowMCPToolRequest {
     string tenant_id = 1;
-    string mcp_tool_id = 2;
+    string workspace_name = 2;
+    string mcp_tool_name = 3;
 }
 
 // Show a MCP tool response
@@ -2934,16 +2931,13 @@ message ShowMCPToolResponse {
 // Add a MCP tool request
 message AddMCPToolRequest {
     string tenant_id = 1;
-    string mcp_tool_name = 2;
-    string mcp_tool_description = 3;
-    string mcp_tool_mime_type = 4;
-    string mcp_tool_category = 5;
-    string mcp_tool_operation = 6;
-    bool require_authentication = 7;
-    google.protobuf.Struct mcp_tool_annotations = 8;
-    string visibility = 9;
-    string mapping_id = 10;
-    string owner_id = 11;
+    string workspace_name = 2;
+    string mcp_tool_name = 3;
+    string mcp_tool_description = 4;
+    google.protobuf.Struct mcp_tool_config = 5;
+    string mapping_name = 6;
+    repeated string policy_ids = 7;
+    string owner_id = 8;
 }
 
 // Add a MCP tool response
@@ -2957,16 +2951,12 @@ message AddMCPToolResponse {
 // Modify a MCP tool request
 message ModifyMCPToolRequest {
     string tenant_id = 1;
-    string mcp_tool_id = 2;
-    optional string mcp_tool_name = 3;
+    string workspace_name = 2;
+    string mcp_tool_name = 3;
     optional string mcp_tool_description = 4;
-    optional string mcp_tool_mime_type = 5;
-    optional string mcp_tool_category = 6;
-    optional string mcp_tool_operation = 7;
-    optional bool require_authentication = 8;
-    optional google.protobuf.Struct mcp_tool_annotations = 9;
-    optional string visibility = 10;
-    optional string mapping_id = 11;
+    optional google.protobuf.Struct mcp_tool_config = 5;
+    optional string mapping_name = 6;
+    repeated string policy_ids = 7;
 }
 
 // Modify a MCP tool response
@@ -2980,7 +2970,8 @@ message ModifyMCPToolResponse {
 // Delete a MCP tool request
 message DeleteMCPToolRequest {
     string tenant_id = 1;
-    string mcp_tool_id = 2;
+    string workspace_name = 2;
+    string mcp_tool_name = 3;
 }
 
 // Delete a MCP tool response
@@ -2994,8 +2985,9 @@ message DeleteMCPToolResponse {
 // Attach a MCP tool to a MCP server
 message AttachMCPToolRequest {
     string tenant_id = 1;
-    string mcp_tool_id = 2;
-    string mcp_server_id = 3;
+    string workspace_name = 2;
+    string mcp_tool_name = 3;
+    string mcp_server_name = 4;
 }
 
 // Attach a MCP tool to a MCP server response
@@ -3010,8 +3002,9 @@ message AttachMCPToolResponse {
 // Detach a MCP tool from a MCP server
 message DetachMCPToolRequest {
     string tenant_id = 1;
-    string mcp_tool_id = 2;
-    string mcp_server_id = 3;
+    string workspace_name = 2;
+    string mcp_tool_name = 3;
+    string mcp_server_name = 4;
 }
 
 // Detach a MCP tool from a MCP server response

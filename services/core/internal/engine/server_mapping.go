@@ -125,13 +125,27 @@ func (s *Server) AddMapping(ctx context.Context, req *corev1.AddMappingRequest) 
 		return nil, status.Errorf(codes.InvalidArgument, "invalid scope '%s': must be 'database' or 'table'", req.Scope)
 	}
 
-	// Parse source and target
+	// Check if target is MCP resource
+	isMCPTarget := strings.HasPrefix(req.Target, "mcp://")
+
+	// Parse source
 	sourceDB, sourceTable, err := s.parseSourceTarget(req.Source)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.InvalidArgument, "invalid source format: %v", err)
 	}
 
+	// If MCP target, handle differently
+	if isMCPTarget {
+		mcpResourceName := strings.TrimPrefix(req.Target, "mcp://")
+		if mcpResourceName == "" {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.InvalidArgument, "invalid MCP target format: expected 'mcp://resource_name'")
+		}
+		return s.addMCPMapping(ctx, req, sourceDB, sourceTable, mcpResourceName)
+	}
+
+	// Parse database target
 	targetDB, targetTable, err := s.parseSourceTarget(req.Target)
 	if err != nil {
 		s.engine.IncrementErrors()
@@ -1498,6 +1512,124 @@ func (s *Server) addDatabaseMappingUnified(ctx context.Context, req *corev1.AddM
 
 	return &corev1.AddMappingResponse{
 		Message: "Database mapping created successfully",
+		Success: true,
+		Mapping: protoMapping,
+		Status:  commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+// addMCPMapping creates a mapping from a database/table to an MCP resource
+func (s *Server) addMCPMapping(ctx context.Context, req *corev1.AddMappingRequest, sourceDB, sourceTable, mcpResourceName string) (*corev1.AddMappingResponse, error) {
+	// Get workspace service
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID from workspace name
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "workspace not found: %v", err)
+	}
+
+	// Get database service to validate source database
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+
+	// Validate source database exists and belongs to the tenant/workspace
+	_, err = databaseService.Get(ctx, req.TenantId, workspaceID, sourceDB)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "source database not found: %v", err)
+	}
+
+	// Get mapping service
+	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
+
+	// Build source identifier
+	var sourceIdentifier string
+	if req.Scope == "table" && sourceTable != "" {
+		sourceIdentifier = fmt.Sprintf("%s.%s", sourceDB, sourceTable)
+	} else {
+		sourceIdentifier = sourceDB
+	}
+
+	// Create the mapping with MCP target type
+	// Store mapping with source and target identifiers
+	var query string
+	var args []interface{}
+
+	if req.PolicyId != nil && *req.PolicyId != "" {
+		query = `
+			INSERT INTO mappings (
+				tenant_id, workspace_id, mapping_name, mapping_description,
+				mapping_source_type, mapping_target_type,
+				mapping_source_identifier, mapping_target_identifier,
+				mapping_type, policy_ids, owner_id
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			RETURNING mapping_id, created, updated
+		`
+		args = []interface{}{
+			req.TenantId,
+			workspaceID,
+			req.MappingName,
+			req.MappingDescription,
+			req.Scope,               // mapping_source_type
+			"mcp",                   // mapping_target_type
+			sourceIdentifier,        // mapping_source_identifier
+			mcpResourceName,         // mapping_target_identifier
+			req.Scope,               // mapping_type
+			[]string{*req.PolicyId}, // policy_ids as array
+			req.OwnerId,
+		}
+	} else {
+		query = `
+			INSERT INTO mappings (
+				tenant_id, workspace_id, mapping_name, mapping_description,
+				mapping_source_type, mapping_target_type,
+				mapping_source_identifier, mapping_target_identifier,
+				mapping_type, owner_id
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			RETURNING mapping_id, created, updated
+		`
+		args = []interface{}{
+			req.TenantId,
+			workspaceID,
+			req.MappingName,
+			req.MappingDescription,
+			req.Scope,        // mapping_source_type
+			"mcp",            // mapping_target_type
+			sourceIdentifier, // mapping_source_identifier
+			mcpResourceName,  // mapping_target_identifier
+			req.Scope,        // mapping_type
+			req.OwnerId,
+		}
+	}
+
+	var mappingID string
+	var created, updated time.Time
+	err = s.engine.db.Pool().QueryRow(ctx, query, args...).Scan(&mappingID, &created, &updated)
+	if err != nil {
+		s.engine.IncrementErrors()
+		s.engine.logger.Errorf("Failed to create MCP mapping: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to create MCP mapping: %v", err)
+	}
+
+	s.engine.logger.Infof("Created MCP mapping %s (ID: %s) from %s to mcp://%s", req.MappingName, mappingID, sourceIdentifier, mcpResourceName)
+
+	// Get the created mapping
+	createdMapping, err := mappingService.Get(ctx, req.TenantId, workspaceID, req.MappingName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to retrieve created mapping: %v", err)
+	}
+
+	// Convert to protobuf format
+	protoMapping, err := s.mappingToProto(createdMapping)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to convert mapping: %v", err)
+	}
+
+	return &corev1.AddMappingResponse{
+		Message: fmt.Sprintf("MCP mapping created successfully from %s to mcp://%s", sourceIdentifier, mcpResourceName),
 		Success: true,
 		Mapping: protoMapping,
 		Status:  commonv1.Status_STATUS_SUCCESS,

@@ -53,31 +53,54 @@ func AddMapping(scope, source, target, name, description, policyID string) error
 		return fmt.Errorf("invalid scope '%s': must be 'database' or 'table'", scope)
 	}
 
-	// Parse source and target
+	// Check if target is MCP resource
+	isMCPTarget := strings.HasPrefix(target, "mcp://")
+	var targetDB, targetTable string
+	var err error
+
+	// Parse source
 	sourceDB, sourceTable, err := parseSourceTarget(source)
 	if err != nil {
 		return fmt.Errorf("invalid source format: %v", err)
 	}
 
-	targetDB, targetTable, err := parseSourceTarget(target)
-	if err != nil {
-		return fmt.Errorf("invalid target format: %v", err)
-	}
+	if isMCPTarget {
+		// Extract MCP resource name from mcp://resource_name
+		targetDB = strings.TrimPrefix(target, "mcp://")
+		if targetDB == "" {
+			return fmt.Errorf("invalid MCP target format: expected 'mcp://resource_name'")
+		}
+		targetTable = "" // MCP targets don't have table names
+	} else {
+		// Parse database target
+		targetDB, targetTable, err = parseSourceTarget(target)
+		if err != nil {
+			return fmt.Errorf("invalid target format: %v", err)
+		}
 
-	// Validate scope-specific requirements
-	if scope == "table" {
-		if sourceTable == "" || targetTable == "" {
-			return fmt.Errorf("table scope requires both source and target to include table names (format: database.table)")
+		// Validate scope-specific requirements for database-to-database mappings
+		if scope == "table" {
+			if sourceTable == "" || targetTable == "" {
+				return fmt.Errorf("table scope requires both source and target to include table names (format: database.table)")
+			}
 		}
 	}
 
 	// Generate name and description if not provided
 	if name == "" {
-		name = generateMappingName(scope, sourceDB, sourceTable, targetDB, targetTable)
+		if isMCPTarget {
+			name = generateMCPMappingName(scope, sourceDB, sourceTable, targetDB)
+		} else {
+			name = generateMappingName(scope, sourceDB, sourceTable, targetDB, targetTable)
+		}
 	}
 
 	if description == "" {
-		description = generateMappingDescription(scope, sourceDB, sourceTable, targetDB, targetTable)
+		if isMCPTarget {
+			description = generateMCPMappingDescription(scope, sourceDB, sourceTable, targetDB)
+		} else {
+			description = generateMappingDescription(scope, sourceDB, sourceTable, targetDB, targetTable)
+		}
 	}
 
 	// Create the mapping request
@@ -453,6 +476,35 @@ func generateMappingDescription(scope, sourceDB, sourceTable, targetDB, targetTa
 	default:
 		return fmt.Sprintf("Auto-generated mapping from '%s' to '%s' created on %s",
 			sourceDB, targetDB, timestamp)
+	}
+}
+
+// generateMCPMappingName creates a concise name for MCP resource mappings
+func generateMCPMappingName(scope, sourceDB, sourceTable, mcpResourceName string) string {
+	switch scope {
+	case "database":
+		return fmt.Sprintf("%s_to_mcp_%s", sourceDB, mcpResourceName)
+	case "table":
+		return fmt.Sprintf("%s_%s_to_mcp_%s", sourceDB, sourceTable, mcpResourceName)
+	default:
+		return fmt.Sprintf("%s_to_mcp_%s", sourceDB, mcpResourceName)
+	}
+}
+
+// generateMCPMappingDescription creates a verbose description for MCP resource mappings
+func generateMCPMappingDescription(scope, sourceDB, sourceTable, mcpResourceName string) string {
+	timestamp := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
+
+	switch scope {
+	case "database":
+		return fmt.Sprintf("Auto-generated MCP mapping from database '%s' to MCP resource '%s' created on %s",
+			sourceDB, mcpResourceName, timestamp)
+	case "table":
+		return fmt.Sprintf("Auto-generated MCP mapping from table '%s.%s' to MCP resource '%s' created on %s",
+			sourceDB, sourceTable, mcpResourceName, timestamp)
+	default:
+		return fmt.Sprintf("Auto-generated MCP mapping from '%s' to MCP resource '%s' created on %s",
+			sourceDB, mcpResourceName, timestamp)
 	}
 }
 

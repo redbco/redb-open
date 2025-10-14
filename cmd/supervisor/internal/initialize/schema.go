@@ -531,6 +531,11 @@ CREATE TABLE mappings (
     mapping_name VARCHAR(255) NOT NULL,
     mapping_description TEXT DEFAULT '',
     mapping_type VARCHAR(255) NOT NULL DEFAULT 'table',
+    mapping_source_type VARCHAR(255),
+    mapping_target_type VARCHAR(255),
+    mapping_source_identifier VARCHAR(255),
+    mapping_target_identifier VARCHAR(255),
+    mapping_object JSONB DEFAULT '{}',
     policy_ids ulid[] DEFAULT '{}',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -688,7 +693,7 @@ CREATE TABLE mcpservers (
     workspace_id ulid NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE ON UPDATE CASCADE,
     mcpserver_name VARCHAR(255) NOT NULL,
     mcpserver_description TEXT DEFAULT '',
-    mcpserver_host_ids ulid[] DEFAULT '{}',
+    mcpserver_host_ids BIGINT[] DEFAULT '{}',
     mcpserver_port INTEGER DEFAULT 9000,
     mcpserver_enabled BOOLEAN DEFAULT false,
     policy_ids ulid[] DEFAULT '{}',
@@ -702,7 +707,7 @@ CREATE TABLE mcpservers (
 
 -- MCP resources
 CREATE TABLE mcpresources (
-    mcpresource_id ulid PRIMARY KEY DEFAULT generate_ulid('mcpresource'),
+    mcpresource_id ulid PRIMARY KEY DEFAULT generate_ulid('mcpres'),
     tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE ON UPDATE CASCADE,
     workspace_id ulid NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE ON UPDATE CASCADE,
     mcpresource_name VARCHAR(255) NOT NULL,

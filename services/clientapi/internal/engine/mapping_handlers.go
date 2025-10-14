@@ -231,23 +231,37 @@ func (mh *MappingHandlers) AddMapping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse source and target
+	// Check if target is MCP resource
+	isMCPTarget := strings.HasPrefix(req.Target, "mcp://")
+
+	// Parse source
 	_, sourceTable, err := mh.parseSourceTarget(req.Source)
 	if err != nil {
 		mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid source format", err.Error())
 		return
 	}
 
-	_, targetTable, err := mh.parseSourceTarget(req.Target)
-	if err != nil {
-		mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid target format", err.Error())
-		return
-	}
+	// Parse target (skip if MCP resource)
+	var targetTable string
+	if !isMCPTarget {
+		_, targetTable, err = mh.parseSourceTarget(req.Target)
+		if err != nil {
+			mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid target format", err.Error())
+			return
+		}
 
-	// Validate scope-specific requirements
-	if req.Scope == "table" {
-		if sourceTable == "" || targetTable == "" {
-			mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid table scope", "table scope requires both source and target to include table names (format: database.table)")
+		// Validate scope-specific requirements for database-to-database mappings
+		if req.Scope == "table" {
+			if sourceTable == "" || targetTable == "" {
+				mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid table scope", "table scope requires both source and target to include table names (format: database.table)")
+				return
+			}
+		}
+	} else {
+		// Validate MCP target format
+		mcpResourceName := strings.TrimPrefix(req.Target, "mcp://")
+		if mcpResourceName == "" {
+			mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid MCP target", "expected format: mcp://resource_name")
 			return
 		}
 	}

@@ -999,7 +999,7 @@ CHECK (
     AND
     -- Ensure prefix is from allowed list
     substring(VALUE from '^([a-z]+)_') IN (
-        'mesh', 'node', 'route', 'region', 'tenant', 'user', 'group', 'role', 'perm', 'pol', 'ws', 'env', 'instance', 'db', 'repo', 'branch', 'commit', 'map', 'maprule','rel', 'transform', 'mcpserver', 'mcpresource', 'mcptool', 'mcpprompt', 'audit', 'satellite', 'anchor', 'template', 'apitoken', 'cdcs', 'integration', 'intjob'
+        'mesh', 'node', 'route', 'region', 'tenant', 'user', 'group', 'role', 'perm', 'pol', 'ws', 'env', 'instance', 'db', 'repo', 'branch', 'commit', 'map', 'maprule','rel', 'transform', 'mcpserver', 'mcpres', 'mcptool', 'mcpprompt', 'audit', 'satellite', 'anchor', 'template', 'apitoken', 'cdcs', 'integration', 'intjob'
     )
 );`
 

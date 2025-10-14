@@ -24,6 +24,11 @@ service SecurityService {
     rpc LogoutSession(LogoutSessionRequest) returns (LogoutSessionResponse);
     rpc LogoutAllSessions(LogoutAllSessionsRequest) returns (LogoutAllSessionsResponse);
     rpc UpdateSessionName(UpdateSessionNameRequest) returns (UpdateSessionNameResponse);
+
+    // MCP authorization endpoints
+    rpc AuthorizeMCPOperation(AuthorizeMCPOperationRequest) returns (AuthorizeMCPOperationResponse);
+    rpc ValidateMCPSession(ValidateMCPSessionRequest) returns (ValidateMCPSessionResponse);
+    rpc GetMCPPolicies(GetMCPPoliciesRequest) returns (GetMCPPoliciesResponse);
 }
 
 message Profile {
@@ -210,4 +215,54 @@ message UpdateSessionNameRequest {
 message UpdateSessionNameResponse {
     redbco.redbopen.common.v1.Status status = 1;
     string message = 2;
+}
+
+// MCP authorization messages
+message AuthorizeMCPOperationRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string user_id = 3;
+    string mcp_server_id = 4;
+    string operation_type = 5; // "resource_read", "tool_call", "prompt_get", etc.
+    string resource_id = 6; // mcpresource_id, mcptool_id, or mcpprompt_id
+    map<string, string> operation_context = 7; // Additional context (database_id, table_name, etc.)
+}
+
+message AuthorizeMCPOperationResponse {
+    bool authorized = 1;
+    string message = 2;
+    repeated string applied_policies = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message ValidateMCPSessionRequest {
+    string token = 1; // JWT or API token
+    string token_type = 2; // "jwt" or "api_token"
+}
+
+message ValidateMCPSessionResponse {
+    bool valid = 1;
+    string tenant_id = 2;
+    string workspace_id = 3;
+    string user_id = 4;
+    string message = 5;
+    redbco.redbopen.common.v1.Status status = 6;
+}
+
+message GetMCPPoliciesRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    repeated string policy_ids = 3;
+}
+
+message GetMCPPoliciesResponse {
+    repeated MCPPolicy policies = 1;
+    redbco.redbopen.common.v1.Status status = 2;
+}
+
+message MCPPolicy {
+    string policy_id = 1;
+    string policy_name = 2;
+    string policy_description = 3;
+    bytes policy_object = 4; // JSON policy definition
 }

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -10,21 +9,29 @@ import (
 	"time"
 
 	anchorv1 "github.com/redbco/redb-open/api/proto/anchor/v1"
+	securityv1 "github.com/redbco/redb-open/api/proto/security/v1"
 	"github.com/redbco/redb-open/pkg/config"
 	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/grpcconfig"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/pkg/models"
+	"github.com/redbco/redb-open/services/mcpserver/internal/audit"
+	"github.com/redbco/redb-open/services/mcpserver/internal/auth"
+	"github.com/redbco/redb-open/services/mcpserver/internal/prompts"
+	"github.com/redbco/redb-open/services/mcpserver/internal/protocol"
+	"github.com/redbco/redb-open/services/mcpserver/internal/resources"
+	"github.com/redbco/redb-open/services/mcpserver/internal/tools"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Engine handles MCP server core functionality
 type Engine struct {
-	config *config.Config
-	logger *logger.Logger
-	db     *database.PostgreSQL
-	anchor anchorv1.AnchorServiceClient
+	config   *config.Config
+	logger   *logger.Logger
+	db       *database.PostgreSQL
+	anchor   anchorv1.AnchorServiceClient
+	security securityv1.SecurityServiceClient
 
 	// Metrics
 	requestCount   int64
@@ -72,10 +79,16 @@ func (e *Engine) Start(ctx context.Context) error {
 	// Start background tasks
 	go e.cleanupStaleSessions(ctx)
 
-	// Initialize gRPC client to anchor
+	// Initialize gRPC clients
 	if err := e.initAnchorClient(); err != nil {
 		if e.logger != nil {
 			e.logger.Warnf("Anchor client not initialized: %v", err)
+		}
+	}
+
+	if err := e.initSecurityClient(); err != nil {
+		if e.logger != nil {
+			e.logger.Warnf("Security client not initialized: %v", err)
 		}
 	}
 
@@ -334,23 +347,37 @@ func (e *Engine) reconcileServers(ctx context.Context) {
 	}
 }
 
-// runMCPServer starts a JSON-RPC MCP server serving tools/resources/prompts per config
+// runMCPServer starts an MCP protocol server serving tools/resources/prompts per config
 func (e *Engine) runMCPServer(ctx context.Context, server models.MCPServer) {
 	if e.logger != nil {
 		e.logger.Infof("Starting MCP server '%s' (tenant=%s ws=%s) on port %d", server.MCPServerName, server.TenantID, server.WorkspaceID, server.MCPServerPort)
 	}
 
-	// Load resources, tools, prompts bound to this server
-	resources, tools, prompts, err := e.loadServerBindings(ctx, server.MCPServerID)
-	if err != nil {
-		if e.logger != nil {
-			e.logger.Errorf("Failed to load bindings for MCP server %s: %v", server.MCPServerID, err)
-		}
-		return
-	}
+	// Create authentication middleware
+	authMiddleware := auth.NewMiddleware(e.logger, e.security)
 
-	// Build JSON-RPC handler for MCP
-	handler := e.mcpHTTPHandler(server, resources, tools, prompts)
+	// Create audit logger
+	auditLogger := audit.NewLogger(e.db, e.logger)
+
+	// Create protocol handler
+	protocolHandler := protocol.NewHandler(e.logger)
+	protocolHandler.SetAuditLogger(auditLogger)
+
+	// Create resource handler
+	resourceHandler := resources.NewHandler(e.logger, e.db, e.anchor, authMiddleware, server.MCPServerID)
+	protocolHandler.SetResourceHandler(resourceHandler)
+
+	// Create tool handler
+	toolHandler := tools.NewHandler(e.logger, e.db, e.anchor, authMiddleware, server.MCPServerID)
+	protocolHandler.SetToolHandler(toolHandler)
+
+	// Create prompt handler
+	promptHandler := prompts.NewHandler(e.logger, e.db, authMiddleware, server.MCPServerID)
+	protocolHandler.SetPromptHandler(promptHandler)
+
+	// Wrap with authentication middleware
+	handler := authMiddleware.Authenticate(protocolHandler)
+
 	addr := fmt.Sprintf(":%d", server.MCPServerPort)
 	httpSrv := &http.Server{Addr: addr, Handler: handler}
 
@@ -375,90 +402,6 @@ func (e *Engine) runMCPServer(ctx context.Context, server models.MCPServer) {
 	}()
 }
 
-// loadServerBindings fetches resources/tools/prompts linked to a server
-func (e *Engine) loadServerBindings(ctx context.Context, mcpServerID string) ([]models.MCPResource, []models.MCPTool, []models.MCPPrompt, error) {
-	resources := make([]models.MCPResource, 0)
-	tools := make([]models.MCPTool, 0)
-	prompts := make([]models.MCPPrompt, 0)
-
-	// Resources
-	resRows, err := e.db.Pool().Query(ctx, `
-        SELECT r.mcpresource_id, r.tenant_id, r.workspace_id, r.mcpresource_name, r.mcpresource_description,
-               r.mcpresource_config, r.mapping_id, COALESCE(r.policy_ids, '{}') AS policy_ids,
-               r.owner_id, r.created, r.updated
-        FROM mcpresources r
-        JOIN mcp_server_resources sr ON sr.mcpresource_id = r.mcpresource_id
-        WHERE sr.mcpserver_id = $1
-        ORDER BY r.mcpresource_name
-    `, mcpServerID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	defer resRows.Close()
-	for resRows.Next() {
-		var r models.MCPResource
-		if err := resRows.Scan(
-			&r.MCPResourceID, &r.TenantID, &r.WorkspaceID, &r.MCPResourceName, &r.MCPResourceDescription,
-			&r.MCPResourceConfig, &r.MappingID, &r.PolicyIDs, &r.OwnerID, &r.Created, &r.Updated,
-		); err != nil {
-			return nil, nil, nil, err
-		}
-		resources = append(resources, r)
-	}
-
-	// Tools
-	toolRows, err := e.db.Pool().Query(ctx, `
-        SELECT t.mcptool_id, t.tenant_id, t.workspace_id, t.mcptool_name, t.mcptool_description,
-               t.mcptool_config, t.mapping_id, COALESCE(t.policy_ids, '{}') AS policy_ids,
-               t.owner_id, t.created, t.updated
-        FROM mcptools t
-        JOIN mcp_server_tools st ON st.mcptool_id = t.mcptool_id
-        WHERE st.mcpserver_id = $1
-        ORDER BY t.mcptool_name
-    `, mcpServerID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	defer toolRows.Close()
-	for toolRows.Next() {
-		var t models.MCPTool
-		if err := toolRows.Scan(
-			&t.MCPToolID, &t.TenantID, &t.WorkspaceID, &t.MCPToolName, &t.MCPToolDescription,
-			&t.MCPToolConfig, &t.MappingID, &t.PolicyIDs, &t.OwnerID, &t.Created, &t.Updated,
-		); err != nil {
-			return nil, nil, nil, err
-		}
-		tools = append(tools, t)
-	}
-
-	// Prompts
-	promptRows, err := e.db.Pool().Query(ctx, `
-        SELECT p.mcpprompt_id, p.tenant_id, p.workspace_id, p.mcpprompt_name, p.mcpprompt_description,
-               p.mcpprompt_config, p.mapping_id, COALESCE(p.policy_ids, '{}') AS policy_ids,
-               p.owner_id, p.created, p.updated
-        FROM mcpprompts p
-        JOIN mcp_server_prompts sp ON sp.mcpprompt_id = p.mcpprompt_id
-        WHERE sp.mcpserver_id = $1
-        ORDER BY p.mcpprompt_name
-    `, mcpServerID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	defer promptRows.Close()
-	for promptRows.Next() {
-		var p models.MCPPrompt
-		if err := promptRows.Scan(
-			&p.MCPPromptID, &p.TenantID, &p.WorkspaceID, &p.MCPPromptName, &p.MCPPromptDescription,
-			&p.MCPPromptConfig, &p.MappingID, &p.PolicyIDs, &p.OwnerID, &p.Created, &p.Updated,
-		); err != nil {
-			return nil, nil, nil, err
-		}
-		prompts = append(prompts, p)
-	}
-
-	return resources, tools, prompts, nil
-}
-
 // initAnchorClient connects to the Anchor gRPC service
 func (e *Engine) initAnchorClient() error {
 	addr := e.config.Get("services.anchor.grpc_address")
@@ -473,132 +416,16 @@ func (e *Engine) initAnchorClient() error {
 	return nil
 }
 
-// --- Minimal JSON-RPC over HTTP for MCP ---
-type jsonRPCRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
-	ID      any             `json:"id"`
-}
-
-type jsonRPCResponse struct {
-	JSONRPC string    `json:"jsonrpc"`
-	Result  any       `json:"result,omitempty"`
-	Error   *rpcError `json:"error,omitempty"`
-	ID      any       `json:"id"`
-}
-
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-func (e *Engine) mcpHTTPHandler(server models.MCPServer, resources []models.MCPResource, tools []models.MCPTool, prompts []models.MCPPrompt) http.Handler {
-	// Build lookup maps
-	resByName := map[string]models.MCPResource{}
-	for _, r := range resources {
-		resByName[r.MCPResourceName] = r
+// initSecurityClient connects to the Security gRPC service
+func (e *Engine) initSecurityClient() error {
+	addr := e.config.Get("services.security.grpc_address")
+	if addr == "" {
+		addr = grpcconfig.GetServiceAddress(e.config, "security")
 	}
-	toolByName := map[string]models.MCPTool{}
-	for _, t := range tools {
-		toolByName[t.MCPToolName] = t
+	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return err
 	}
-	promptByName := map[string]models.MCPPrompt{}
-	for _, p := range prompts {
-		promptByName[p.MCPPromptName] = p
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		defer r.Body.Close()
-		var req jsonRPCRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeRPCError(w, req.ID, -32700, "parse error")
-			return
-		}
-		switch req.Method {
-		case "mcp.list_tools":
-			list := make([]map[string]any, 0, len(tools))
-			for _, t := range tools {
-				list = append(list, map[string]any{
-					"name":         t.MCPToolName,
-					"description":  t.MCPToolDescription,
-					"input_schema": t.MCPToolConfig, // loosely store schema in config
-				})
-			}
-			writeRPCResult(w, req.ID, map[string]any{"tools": list})
-		case "mcp.list_resources":
-			list := make([]map[string]any, 0, len(resources))
-			for _, rsrc := range resources {
-				list = append(list, map[string]any{
-					"name":        rsrc.MCPResourceName,
-					"description": rsrc.MCPResourceDescription,
-					"config":      rsrc.MCPResourceConfig,
-				})
-			}
-			writeRPCResult(w, req.ID, map[string]any{"resources": list})
-		case "mcp.list_prompts":
-			list := make([]map[string]any, 0, len(prompts))
-			for _, p := range prompts {
-				list = append(list, map[string]any{
-					"name":        p.MCPPromptName,
-					"description": p.MCPPromptDescription,
-					"config":      p.MCPPromptConfig,
-				})
-			}
-			writeRPCResult(w, req.ID, map[string]any{"prompts": list})
-		case "mcp.get_resource":
-			var params struct {
-				Name string `json:"name"`
-			}
-			_ = json.Unmarshal(req.Params, &params)
-			rsrc, ok := resByName[params.Name]
-			if !ok {
-				writeRPCError(w, req.ID, -32602, "unknown resource")
-				return
-			}
-			// Return mapping object as content placeholder
-			writeRPCResult(w, req.ID, map[string]any{"name": rsrc.MCPResourceName, "content": rsrc.MCPResourceConfig})
-		case "mcp.get_prompt":
-			var params struct {
-				Name string `json:"name"`
-			}
-			_ = json.Unmarshal(req.Params, &params)
-			p, ok := promptByName[params.Name]
-			if !ok {
-				writeRPCError(w, req.ID, -32602, "unknown prompt")
-				return
-			}
-			writeRPCResult(w, req.ID, map[string]any{"name": p.MCPPromptName, "content": p.MCPPromptConfig})
-		case "mcp.call_tool":
-			var params struct {
-				Name  string          `json:"name"`
-				Input json.RawMessage `json:"input"`
-			}
-			_ = json.Unmarshal(req.Params, &params)
-			if _, ok := toolByName[params.Name]; !ok {
-				writeRPCError(w, req.ID, -32602, "unknown tool")
-				return
-			}
-			// Placeholder: not yet implemented tool execution
-			writeRPCError(w, req.ID, -32000, "tool execution not implemented")
-		default:
-			writeRPCError(w, req.ID, -32601, "method not found")
-		}
-	})
-}
-
-func writeRPCError(w http.ResponseWriter, id any, code int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	resp := jsonRPCResponse{JSONRPC: "2.0", Error: &rpcError{Code: code, Message: msg}, ID: id}
-	_ = json.NewEncoder(w).Encode(resp)
-}
-
-func writeRPCResult(w http.ResponseWriter, id any, result any) {
-	w.Header().Set("Content-Type", "application/json")
-	resp := jsonRPCResponse{JSONRPC: "2.0", Result: result, ID: id}
-	_ = json.NewEncoder(w).Encode(resp)
+	e.security = securityv1.NewSecurityServiceClient(conn)
+	return nil
 }

@@ -47,7 +47,13 @@ Examples:
   redb mappings add --scope database --source sourcedb --target targetdb --name db-migration --description "Migrate entire database"
   
   # Add table mapping with custom name only (description auto-generated)
-  redb mappings add --scope table --source mydb.users --target targetdb.profiles --name user-profile-mapping`,
+  redb mappings add --scope table --source mydb.users --target targetdb.profiles --name user-profile-mapping
+  
+  # Add table-to-MCP resource mapping
+  redb mappings add --scope table --source mydb.users --target mcp://users_resource
+  
+  # Add database-to-MCP resource mapping
+  redb mappings add --scope database --source mydb --target mcp://db_resource`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		scope, _ := cmd.Flags().GetString("scope")
 		source, _ := cmd.Flags().GetString("source")

@@ -46,10 +46,13 @@ reDB CLI uses profiles to manage connections to multiple reDB instances:
 - Satellites & Anchors: specialized node management
 - Routes: network topology and routing
 
-### AI Integration
-- MCP Servers: manage MCP servers
-- MCP Resources: configure AI-accessible resources
-- MCP Tools: define AI tools and functions
+### AI Integration (Model Context Protocol)
+- MCP Servers: `mcpservers list|show|add|modify|delete` - Manage virtual MCP server instances
+- MCP Resources: `mcpresources list|show|add|attach|detach|delete` - Expose database tables to AI assistants
+- MCP Tools: `mcptools list|show|add|attach|detach|delete` - Define AI-callable database operations
+- Mappings: `mappings add --target mcp://resource_name` - Create mappings to MCP resources
+
+See [MCP Server Management Guide](MCP_SERVER_MANAGEMENT.md) for complete documentation.
 
 ## Getting Started Examples
 
@@ -126,5 +129,50 @@ reDB CLI uses profiles to manage connections to multiple reDB instances:
 # Clone the data from the PostgreSQL database table to the deployed MySQL database table
 ./bin/redb-cli mappings copy-data pg_test_to_deployed1_test
 ```
+
+### AI Integration with MCP Servers
+```bash
+# Step 1: Create mappings to MCP resources
+./bin/redb-cli mappings add --scope table --source mydb.users --target mcp://users_resource \
+  --name "Users MCP Mapping" --description "Map users table to MCP"
+
+./bin/redb-cli mappings add --scope database --source mydb --target mcp://db_access \
+  --name "Database MCP Mapping" --description "Database access for MCP tools"
+
+# Step 2: Create MCP server
+./bin/redb-cli mcpservers add \
+  --name production-mcp \
+  --description "Production MCP server for AI assistants" \
+  --port 8080 \
+  --nodes node1,node2 \
+  --enabled
+
+# Step 3: Create MCP resources
+./bin/redb-cli mcpresources add \
+  --name users_resource \
+  --description "Users table resource" \
+  --mapping "Users MCP Mapping" \
+  --config '{"type":"direct_table","database_id":"mydb","table_name":"users"}'
+
+# Step 4: Attach resource to server
+./bin/redb-cli mcpresources attach --resource users_resource --server production-mcp
+
+# Step 5: Create MCP tools
+./bin/redb-cli mcptools add \
+  --name query_database \
+  --description "Query database tables" \
+  --mapping "Database MCP Mapping" \
+  --config '{"operation":"query_database","input_schema":{"type":"object","properties":{"database_id":{"type":"string"},"table_name":{"type":"string"},"query":{"type":"string"}},"required":["database_id","table_name","query"]}}'
+
+# Step 6: Attach tool to server
+./bin/redb-cli mcptools attach --tool query_database --server production-mcp
+
+# View the complete setup
+./bin/redb-cli mcpservers show production-mcp
+./bin/redb-cli mcpresources list
+./bin/redb-cli mcptools list
+```
+
+For complete MCP server management documentation, see [MCP Server Management Guide](MCP_SERVER_MANAGEMENT.md).
 
 
