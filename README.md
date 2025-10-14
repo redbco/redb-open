@@ -44,13 +44,21 @@ Full install docs: see `docs/INSTALL.md`.
 
 ## Getting started with the application
 
+### Initial Setup
+
 After starting, create a profile and authenticate with the CLI:
 
 ```bash
 # Create your user profile and login
 ./redb-cli profiles create default
 ./redb-cli auth login --profile default
+```
 
+### Database Connectivity
+
+Connect your databases and explore their structure:
+
+```bash
 # Connect your databases
 ./redb-cli databases connect --string "postgresql://user:password@localhost:5432/testdb1" --name "pg"
 ./redb-cli databases connect --string "mysql://user:password@localhost:3307/testdb2" --name "my"
@@ -61,14 +69,26 @@ After starting, create a profile and authenticate with the CLI:
 
 # Show the discovered tables and their metadata
 ./redb-cli databases show pg --tables
+```
 
+### Schema Management
+
+Deploy and manage database schemas across different systems:
+
+```bash
 # Show the repositories and commits
 ./redb-cli repos list
 ./redb-cli branches show pg/main
 
 # Deploy the PostgreSQL testdb1 to a new database in MySQL
 ./redb-cli commits deploy-schema pg/main/12345abc --instance my_instance --db-name deployed1
+```
 
+### Data Replication
+
+Set up data synchronization between databases using mappings and CDC:
+
+```bash
 # Create a mapping between tables
 ./redb-cli mappings add --scope table --source pg.users --target deployed1.users
 ./redb-cli mappings show pg_users_to_deployed1_users
@@ -89,8 +109,40 @@ After starting, create a profile and authenticate with the CLI:
 ./redb-cli relationships stop pg_to_deployed1    # Pause synchronization
 ./redb-cli relationships start pg_to_deployed1   # Resume synchronization
 ./redb-cli relationships remove pg_to_deployed1  # Remove completely
+```
 
-## Seed a mesh (Node 1)
+### MCP Server (AI Integration)
+
+Expose your data as resources and tools to AI agents using the Model Context Protocol:
+
+```bash
+# First, create a mapping for the data you want to expose
+./redb-cli mappings add --scope table --source pg.users --target mcp://users_resource
+
+# Create an MCP server on a specific port
+./redb-cli mcpservers add --name my-server --port 9000
+
+# Create a resource that exposes data through the mapping
+./redb-cli mcpresources add --name users_resource --mapping pg_users_to_mcp_users_resource
+
+# Attach the resource to your MCP server
+./redb-cli mcpresources attach --resource users_resource --server my-server
+
+# Create a tool that allows querying the data
+./redb-cli mcptools add --name query_users --mapping pg_users_to_mcp_users_resource
+
+# Attach the tool to your MCP server
+./redb-cli mcptools attach --tool query_users --server my-server
+```
+
+Now your MCP server is running and can be used by AI agents like Claude Desktop, Cline, or any MCP-compatible client. For detailed MCP server management, see `docs/MCP_SERVER_MANAGEMENT.md`.
+
+### Mesh Networking
+
+Create or join a distributed mesh for multi-node deployments:
+
+```bash
+# Seed a mesh (Node 1)
 ./redb-cli mesh seed
 
 # Join a mesh (Node 2)
@@ -164,7 +216,8 @@ redb-open/
 - Database support: `docs/DATABASE_SUPPORT.md`
 - CLI reference: `docs/CLI_REFERENCE.md`
 - Dashboard: `docs/DASHBOARD.md`
- - Anchor service: `docs/ANCHOR.md`
+- Anchor service: `docs/ANCHOR.md`
+- MCP Server Management: `docs/MCP_SERVER_MANAGEMENT.md`
 
 ## Contributing
 
