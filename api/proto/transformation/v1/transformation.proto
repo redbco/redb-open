@@ -9,6 +9,8 @@ import "api/proto/common/v1/common.proto";
 
 service TransformationService {
     rpc Transform(TransformRequest) returns (TransformResponse);
+    rpc GetTransformationMetadata(GetTransformationMetadataRequest) returns (GetTransformationMetadataResponse);
+    rpc ListTransformations(ListTransformationsRequest) returns (ListTransformationsResponse);
 }
 
 message TransformRequest {
@@ -22,4 +24,30 @@ message TransformResponse {
     string output = 1;
     string status_message = 2;
     redbco.redbopen.common.v1.Status status = 3;
+}
+
+message GetTransformationMetadataRequest {
+    string transformation_name = 1;
+}
+
+message GetTransformationMetadataResponse {
+    TransformationMetadata metadata = 1;
+    string status_message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+message ListTransformationsRequest {
+}
+
+message ListTransformationsResponse {
+    repeated TransformationMetadata transformations = 1;
+}
+
+message TransformationMetadata {
+    string name = 1;
+    string description = 2;
+    string type = 3;  // "passthrough", "generator", "null_returning"
+    bool requires_source = 4;
+    bool requires_target = 5;
+    bool allows_multiple_targets = 6;
 }

@@ -441,16 +441,23 @@ func (s *Service) AttachMappingRule(ctx context.Context, tenantID, workspaceID, 
 		return errors.New("mapping rule is already attached to the mapping")
 	}
 
+	// Determine the order value
+	orderValue := int64(0)
+	if order != nil {
+		orderValue = *order
+	} else {
+		// Auto-assign order as MAX(order) + 1
+		err = s.db.Pool().QueryRow(ctx, "SELECT COALESCE(MAX(mapping_rule_order), -1) + 1 FROM mapping_rule_mappings WHERE mapping_id = $1", mapping.ID).Scan(&orderValue)
+		if err != nil {
+			return fmt.Errorf("failed to get next order value: %w", err)
+		}
+	}
+
 	// Insert the mapping rule into the mapping_rule_mappings table
 	query := `
 		INSERT INTO mapping_rule_mappings (mapping_rule_id, mapping_id, mapping_rule_order)
 		VALUES ($1, $2, $3)
 	`
-
-	orderValue := int64(0)
-	if order != nil {
-		orderValue = *order
-	}
 
 	_, err = s.db.Pool().Exec(ctx, query, rule.ID, mapping.ID, orderValue)
 	if err != nil {
@@ -813,6 +820,78 @@ func (s *Service) DeleteMappingRule(ctx context.Context, tenantID, workspaceID, 
 		return errors.New("mapping rule not found")
 	}
 
+	return nil
+}
+
+// UpdateMappingRuleOrder updates the order of a mapping rule within a mapping
+func (s *Service) UpdateMappingRuleOrder(ctx context.Context, mappingID, ruleID string, newOrder int) error {
+	s.logger.Infof("Updating order for mapping rule %s in mapping %s to %d", ruleID, mappingID, newOrder)
+
+	// Check if the mapping rule is attached to the mapping
+	var exists bool
+	err := s.db.Pool().QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM mapping_rule_mappings WHERE mapping_id = $1 AND mapping_rule_id = $2)", mappingID, ruleID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("failed to check if mapping rule is attached: %w", err)
+	}
+	if !exists {
+		return errors.New("mapping rule is not attached to this mapping")
+	}
+
+	// Get the current order
+	var currentOrder int
+	err = s.db.Pool().QueryRow(ctx, "SELECT mapping_rule_order FROM mapping_rule_mappings WHERE mapping_id = $1 AND mapping_rule_id = $2", mappingID, ruleID).Scan(&currentOrder)
+	if err != nil {
+		return fmt.Errorf("failed to get current order: %w", err)
+	}
+
+	if currentOrder == newOrder {
+		// No change needed
+		return nil
+	}
+
+	// Begin transaction for reordering
+	tx, err := s.db.Pool().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Shift other rules to make room
+	if newOrder < currentOrder {
+		// Moving up, shift rules down
+		_, err = tx.Exec(ctx, `
+			UPDATE mapping_rule_mappings 
+			SET mapping_rule_order = mapping_rule_order + 1
+			WHERE mapping_id = $1 AND mapping_rule_order >= $2 AND mapping_rule_order < $3
+		`, mappingID, newOrder, currentOrder)
+	} else {
+		// Moving down, shift rules up
+		_, err = tx.Exec(ctx, `
+			UPDATE mapping_rule_mappings 
+			SET mapping_rule_order = mapping_rule_order - 1
+			WHERE mapping_id = $1 AND mapping_rule_order > $2 AND mapping_rule_order <= $3
+		`, mappingID, currentOrder, newOrder)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to shift rules: %w", err)
+	}
+
+	// Update the target rule's order
+	_, err = tx.Exec(ctx, `
+		UPDATE mapping_rule_mappings 
+		SET mapping_rule_order = $1
+		WHERE mapping_id = $2 AND mapping_rule_id = $3
+	`, newOrder, mappingID, ruleID)
+	if err != nil {
+		return fmt.Errorf("failed to update rule order: %w", err)
+	}
+
+	// Commit transaction
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	s.logger.Infof("Successfully updated mapping rule order")
 	return nil
 }
 

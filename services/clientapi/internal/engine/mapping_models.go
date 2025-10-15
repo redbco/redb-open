@@ -197,3 +197,44 @@ type DetachMappingRuleResponse struct {
 	Success bool   `json:"success"`
 	Status  Status `json:"status"`
 }
+
+// New models for mapping rule operations within mappings
+
+type AddRuleToMappingRequest struct {
+	RuleName       string `json:"rule_name" validate:"required"`
+	Source         string `json:"source" validate:"required"`
+	Target         string `json:"target" validate:"required"`
+	Transformation string `json:"transformation" validate:"required"`
+	Order          *int32 `json:"order,omitempty"`
+}
+
+type AddRuleToMappingResponse struct {
+	Message string      `json:"message"`
+	Success bool        `json:"success"`
+	Rule    MappingRule `json:"rule"`
+	Status  Status      `json:"status"`
+}
+
+type ModifyRuleInMappingRequest struct {
+	Source         *string `json:"source,omitempty"`
+	Target         *string `json:"target,omitempty"`
+	Transformation *string `json:"transformation,omitempty"`
+	Order          *int32  `json:"order,omitempty"`
+}
+
+type ModifyRuleInMappingResponse struct {
+	Message string      `json:"message"`
+	Success bool        `json:"success"`
+	Rule    MappingRule `json:"rule"`
+	Status  Status      `json:"status"`
+}
+
+type RemoveRuleFromMappingResponse struct {
+	Message string `json:"message"`
+	Success bool   `json:"success"`
+	Status  Status `json:"status"`
+}
+
+type ListRulesInMappingResponse struct {
+	Rules []MappingRuleInMapping `json:"rules"`
+}

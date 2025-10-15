@@ -604,3 +604,252 @@ func CopyMappingData(mappingName string, batchSize, parallelWorkers int32, dryRu
 
 	return nil
 }
+
+// ModifyMappingRule modifies an existing mapping rule
+func ModifyMappingRule(mappingName, ruleName, source, target, transformation string, order int32) error {
+	if mappingName == "" {
+		return fmt.Errorf("mapping name is required")
+	}
+	if ruleName == "" {
+		return fmt.Errorf("rule name is required")
+	}
+
+	// At least one modification parameter must be provided
+	if source == "" && target == "" && transformation == "" && order == -1 {
+		return fmt.Errorf("at least one modification parameter must be provided (source, target, transformation, or order)")
+	}
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/mappings/%s/rules/%s", mappingName, ruleName))
+	if err != nil {
+		return err
+	}
+
+	// Build the request
+	modifyReq := struct {
+		Source         *string `json:"source,omitempty"`
+		Target         *string `json:"target,omitempty"`
+		Transformation *string `json:"transformation,omitempty"`
+		Order          *int32  `json:"order,omitempty"`
+	}{}
+
+	if source != "" {
+		modifyReq.Source = &source
+	}
+	if target != "" {
+		modifyReq.Target = &target
+	}
+	if transformation != "" {
+		modifyReq.Transformation = &transformation
+	}
+	if order >= 0 {
+		modifyReq.Order = &order
+	}
+
+	var response struct {
+		Message string      `json:"message"`
+		Success bool        `json:"success"`
+		Rule    MappingRule `json:"rule"`
+		Status  string      `json:"status"`
+	}
+
+	if err := client.Put(url, modifyReq, &response); err != nil {
+		return fmt.Errorf("failed to modify mapping rule: %v", err)
+	}
+
+	if !response.Success {
+		return fmt.Errorf("failed to modify mapping rule: %s", response.Message)
+	}
+
+	fmt.Printf("Successfully modified mapping rule '%s' in mapping '%s'\n", ruleName, mappingName)
+	return nil
+}
+
+// AddMappingRule creates a new mapping rule and attaches it to a mapping
+func AddMappingRule(mappingName, ruleName, source, target, transformation string, order int32) error {
+	if mappingName == "" {
+		return fmt.Errorf("mapping name is required")
+	}
+	if ruleName == "" {
+		return fmt.Errorf("rule name is required")
+	}
+	if source == "" {
+		return fmt.Errorf("source column is required")
+	}
+	if target == "" {
+		return fmt.Errorf("target column is required")
+	}
+	if transformation == "" {
+		transformation = "direct_mapping"
+	}
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/mappings/%s/rules", mappingName))
+	if err != nil {
+		return err
+	}
+
+	// Build the request
+	addReq := struct {
+		RuleName       string `json:"rule_name"`
+		Source         string `json:"source"`
+		Target         string `json:"target"`
+		Transformation string `json:"transformation"`
+		Order          *int32 `json:"order,omitempty"`
+	}{
+		RuleName:       ruleName,
+		Source:         source,
+		Target:         target,
+		Transformation: transformation,
+	}
+
+	if order >= 0 {
+		addReq.Order = &order
+	}
+
+	var response struct {
+		Message string      `json:"message"`
+		Success bool        `json:"success"`
+		Rule    MappingRule `json:"rule"`
+		Status  string      `json:"status"`
+	}
+
+	if err := client.Post(url, addReq, &response); err != nil {
+		return fmt.Errorf("failed to add mapping rule: %v", err)
+	}
+
+	if !response.Success {
+		return fmt.Errorf("failed to add mapping rule: %s", response.Message)
+	}
+
+	fmt.Printf("Successfully added mapping rule '%s' to mapping '%s'\n", ruleName, mappingName)
+	return nil
+}
+
+// RemoveMappingRule removes a mapping rule from a mapping
+func RemoveMappingRule(mappingName, ruleName string, deleteRule bool) error {
+	if mappingName == "" {
+		return fmt.Errorf("mapping name is required")
+	}
+	if ruleName == "" {
+		return fmt.Errorf("rule name is required")
+	}
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/mappings/%s/rules/%s", mappingName, ruleName))
+	if err != nil {
+		return err
+	}
+
+	// Add delete query parameter if requested
+	if deleteRule {
+		url += "?delete=true"
+	}
+
+	if err := client.Delete(url); err != nil {
+		return fmt.Errorf("failed to remove mapping rule: %v", err)
+	}
+
+	if deleteRule {
+		fmt.Printf("Successfully removed and deleted mapping rule '%s' from mapping '%s'\n", ruleName, mappingName)
+	} else {
+		fmt.Printf("Successfully removed mapping rule '%s' from mapping '%s'\n", ruleName, mappingName)
+	}
+	return nil
+}
+
+// ListMappingRules lists all mapping rules in a mapping
+func ListMappingRules(mappingName string) error {
+	if mappingName == "" {
+		return fmt.Errorf("mapping name is required")
+	}
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/mappings/%s/rules", mappingName))
+	if err != nil {
+		return err
+	}
+
+	var response struct {
+		Rules []MappingRule `json:"rules"`
+	}
+
+	if err := client.Get(url, &response); err != nil {
+		return fmt.Errorf("failed to list mapping rules: %v", err)
+	}
+
+	if len(response.Rules) == 0 {
+		fmt.Printf("No mapping rules found for mapping '%s'\n", mappingName)
+		return nil
+	}
+
+	fmt.Println()
+	fmt.Printf("Mapping Rules for '%s':\n", mappingName)
+	fmt.Println(strings.Repeat("=", 120))
+	fmt.Printf("%-30s %-30s %-30s %-20s\n", "Rule Name", "Source", "Target", "Transformation")
+	fmt.Println(strings.Repeat("-", 120))
+
+	for _, rule := range response.Rules {
+		// Truncate fields if too long
+		ruleName := rule.MappingRuleName
+		if len(ruleName) > 29 {
+			ruleName = ruleName[:26] + "..."
+		}
+
+		source := rule.MappingRuleSource
+		if len(source) > 29 {
+			source = source[:26] + "..."
+		}
+
+		target := rule.MappingRuleTarget
+		if len(target) > 29 {
+			target = target[:26] + "..."
+		}
+
+		transformation := rule.MappingRuleTransformationName
+		if len(transformation) > 19 {
+			transformation = transformation[:16] + "..."
+		}
+
+		fmt.Printf("%-30s %-30s %-30s %-20s\n", ruleName, source, target, transformation)
+	}
+	fmt.Println()
+
+	return nil
+}

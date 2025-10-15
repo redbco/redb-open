@@ -1529,3 +1529,350 @@ func (mh *MappingHandlers) CopyMappingData(w http.ResponseWriter, r *http.Reques
 
 	mh.writeJSONResponse(w, statusCode, response)
 }
+
+// AddRuleToMapping handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/mappings/{mapping_name}/rules
+func (mh *MappingHandlers) AddRuleToMapping(w http.ResponseWriter, r *http.Request) {
+	mh.engine.TrackOperation()
+	defer mh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+	mappingName := vars["mapping_name"]
+
+	if tenantURL == "" || workspaceName == "" || mappingName == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "tenant_url, workspace_name, and mapping_name are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		mh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Parse request body
+	var req AddRuleToMappingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if mh.engine.logger != nil {
+			mh.engine.logger.Errorf("Failed to parse request body: %v", err)
+		}
+		mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", "")
+		return
+	}
+
+	// Validate required fields
+	if req.RuleName == "" || req.Source == "" || req.Target == "" || req.Transformation == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "rule_name, source, target, and transformation are required", "")
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Step 1: Create the mapping rule
+	addRuleReq := &corev1.AddMappingRuleRequest{
+		TenantId:                         profile.TenantId,
+		WorkspaceName:                    workspaceName,
+		MappingRuleName:                  req.RuleName,
+		MappingRuleDescription:           fmt.Sprintf("Rule for %s mapping", mappingName),
+		MappingRuleSource:                req.Source,
+		MappingRuleTarget:                req.Target,
+		MappingRuleTransformationName:    req.Transformation,
+		MappingRuleTransformationOptions: "",
+		OwnerId:                          profile.UserId,
+	}
+
+	ruleResp, err := mh.engine.mappingClient.AddMappingRule(ctx, addRuleReq)
+	if err != nil {
+		mh.handleGRPCError(w, err, "Failed to create mapping rule")
+		return
+	}
+
+	// Step 2: Attach the rule to the mapping
+	var order *int64
+	if req.Order != nil {
+		orderVal := int64(*req.Order)
+		order = &orderVal
+	}
+
+	attachReq := &corev1.AttachMappingRuleRequest{
+		TenantId:         profile.TenantId,
+		WorkspaceName:    workspaceName,
+		MappingName:      mappingName,
+		MappingRuleName:  req.RuleName,
+		MappingRuleOrder: order,
+	}
+
+	_, err = mh.engine.mappingClient.AttachMappingRule(ctx, attachReq)
+	if err != nil {
+		mh.handleGRPCError(w, err, "Failed to attach mapping rule to mapping")
+		return
+	}
+
+	// Convert to REST response
+	rule := mh.protoToMappingRule(ruleResp.MappingRule)
+
+	response := AddRuleToMappingResponse{
+		Message: "Rule added to mapping successfully",
+		Success: true,
+		Rule:    rule,
+		Status:  convertStatus(ruleResp.Status),
+	}
+
+	mh.writeJSONResponse(w, http.StatusCreated, response)
+}
+
+// ModifyRuleInMapping handles PUT /{tenant_url}/api/v1/workspaces/{workspace_name}/mappings/{mapping_name}/rules/{rule_name}
+func (mh *MappingHandlers) ModifyRuleInMapping(w http.ResponseWriter, r *http.Request) {
+	mh.engine.TrackOperation()
+	defer mh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+	mappingName := vars["mapping_name"]
+	ruleName := vars["rule_name"]
+
+	if tenantURL == "" || workspaceName == "" || mappingName == "" || ruleName == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "All path parameters are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		mh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Parse request body
+	var req ModifyRuleInMappingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if mh.engine.logger != nil {
+			mh.engine.logger.Errorf("Failed to parse request body: %v", err)
+		}
+		mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", "")
+		return
+	}
+
+	// At least one field must be provided
+	if req.Source == nil && req.Target == nil && req.Transformation == nil && req.Order == nil {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "At least one field must be provided for modification", "")
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Modify the mapping rule
+	modifyReq := &corev1.ModifyMappingRuleRequest{
+		TenantId:                      profile.TenantId,
+		WorkspaceName:                 workspaceName,
+		MappingRuleName:               ruleName,
+		MappingRuleSource:             req.Source,
+		MappingRuleTarget:             req.Target,
+		MappingRuleTransformationName: req.Transformation,
+	}
+
+	ruleResp, err := mh.engine.mappingClient.ModifyMappingRule(ctx, modifyReq)
+	if err != nil {
+		mh.handleGRPCError(w, err, "Failed to modify mapping rule")
+		return
+	}
+
+	// Convert to REST response
+	rule := mh.protoToMappingRule(ruleResp.MappingRule)
+
+	response := ModifyRuleInMappingResponse{
+		Message: "Rule modified successfully",
+		Success: true,
+		Rule:    rule,
+		Status:  convertStatus(ruleResp.Status),
+	}
+
+	mh.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// RemoveRuleFromMapping handles DELETE /{tenant_url}/api/v1/workspaces/{workspace_name}/mappings/{mapping_name}/rules/{rule_name}
+func (mh *MappingHandlers) RemoveRuleFromMapping(w http.ResponseWriter, r *http.Request) {
+	mh.engine.TrackOperation()
+	defer mh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+	mappingName := vars["mapping_name"]
+	ruleName := vars["rule_name"]
+
+	if tenantURL == "" || workspaceName == "" || mappingName == "" || ruleName == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "All path parameters are required", "")
+		return
+	}
+
+	// Check for delete query parameter
+	deleteRule := r.URL.Query().Get("delete") == "true"
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		mh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Detach the mapping rule from the mapping
+	detachReq := &corev1.DetachMappingRuleRequest{
+		TenantId:        profile.TenantId,
+		WorkspaceName:   workspaceName,
+		MappingName:     mappingName,
+		MappingRuleName: ruleName,
+	}
+
+	_, err := mh.engine.mappingClient.DetachMappingRule(ctx, detachReq)
+	if err != nil {
+		mh.handleGRPCError(w, err, "Failed to detach mapping rule from mapping")
+		return
+	}
+
+	// If delete flag is set, also delete the rule
+	if deleteRule {
+		deleteReq := &corev1.DeleteMappingRuleRequest{
+			TenantId:        profile.TenantId,
+			WorkspaceName:   workspaceName,
+			MappingRuleName: ruleName,
+		}
+
+		_, err := mh.engine.mappingClient.DeleteMappingRule(ctx, deleteReq)
+		if err != nil {
+			mh.handleGRPCError(w, err, "Failed to delete mapping rule")
+			return
+		}
+	}
+
+	response := RemoveRuleFromMappingResponse{
+		Message: "Rule removed from mapping successfully",
+		Success: true,
+		Status:  Status("STATUS_SUCCESS"),
+	}
+
+	mh.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// ListRulesInMapping handles GET /{tenant_url}/api/v1/workspaces/{workspace_name}/mappings/{mapping_name}/rules
+func (mh *MappingHandlers) ListRulesInMapping(w http.ResponseWriter, r *http.Request) {
+	mh.engine.TrackOperation()
+	defer mh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+	mappingName := vars["mapping_name"]
+
+	if tenantURL == "" || workspaceName == "" || mappingName == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "tenant_url, workspace_name, and mapping_name are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		mh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Get the mapping with its rules
+	showReq := &corev1.ShowMappingRequest{
+		TenantId:      profile.TenantId,
+		WorkspaceName: workspaceName,
+		MappingName:   mappingName,
+	}
+
+	mappingResp, err := mh.engine.mappingClient.ShowMapping(ctx, showReq)
+	if err != nil {
+		mh.handleGRPCError(w, err, "Failed to get mapping")
+		return
+	}
+
+	// Convert rules to response format
+	rules := make([]MappingRuleInMapping, 0, len(mappingResp.Mapping.MappingRules))
+	for _, protoRule := range mappingResp.Mapping.MappingRules {
+		rules = append(rules, mh.protoToMappingRuleInMapping(protoRule))
+	}
+
+	response := ListRulesInMappingResponse{
+		Rules: rules,
+	}
+
+	mh.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// Helper function to convert proto MappingRule to REST MappingRule
+func (mh *MappingHandlers) protoToMappingRule(proto *corev1.MappingRule) MappingRule {
+	var metadata interface{}
+	if proto.MappingRuleMetadata != "" {
+		// Try to parse as JSON
+		var metadataObj map[string]interface{}
+		if err := json.Unmarshal([]byte(proto.MappingRuleMetadata), &metadataObj); err == nil {
+			metadata = metadataObj
+		} else {
+			metadata = proto.MappingRuleMetadata
+		}
+	}
+
+	return MappingRule{
+		TenantID:                         proto.TenantId,
+		WorkspaceID:                      proto.WorkspaceId,
+		MappingRuleID:                    proto.MappingRuleId,
+		MappingRuleName:                  proto.MappingRuleName,
+		MappingRuleDescription:           proto.MappingRuleDescription,
+		MappingRuleMetadata:              metadata,
+		MappingRuleSource:                proto.MappingRuleSource,
+		MappingRuleTarget:                proto.MappingRuleTarget,
+		MappingRuleTransformationID:      proto.MappingRuleTransformationId,
+		MappingRuleTransformationName:    proto.MappingRuleTransformationName,
+		MappingRuleTransformationOptions: proto.MappingRuleTransformationOptions,
+		OwnerID:                          proto.OwnerId,
+		MappingCount:                     proto.MappingCount,
+	}
+}
+
+// Helper function to convert proto MappingRule to REST MappingRuleInMapping
+func (mh *MappingHandlers) protoToMappingRuleInMapping(proto *corev1.MappingRule) MappingRuleInMapping {
+	var metadata interface{}
+	if proto.MappingRuleMetadata != "" {
+		// Try to parse as JSON
+		var metadataObj map[string]interface{}
+		if err := json.Unmarshal([]byte(proto.MappingRuleMetadata), &metadataObj); err == nil {
+			metadata = metadataObj
+		} else {
+			metadata = proto.MappingRuleMetadata
+		}
+	}
+
+	return MappingRuleInMapping{
+		MappingRuleID:                    proto.MappingRuleId,
+		MappingRuleName:                  proto.MappingRuleName,
+		MappingRuleDescription:           proto.MappingRuleDescription,
+		MappingRuleMetadata:              metadata,
+		MappingRuleSource:                proto.MappingRuleSource,
+		MappingRuleTarget:                proto.MappingRuleTarget,
+		MappingRuleTransformationID:      proto.MappingRuleTransformationId,
+		MappingRuleTransformationName:    proto.MappingRuleTransformationName,
+		MappingRuleTransformationOptions: proto.MappingRuleTransformationOptions,
+	}
+}

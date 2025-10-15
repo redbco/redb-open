@@ -7,9 +7,11 @@ type Transformation struct {
 	TransformationName        string `json:"transformation_name"`
 	TransformationDescription string `json:"transformation_description,omitempty"`
 	TransformationType        string `json:"transformation_type"`
-	TransformationVersion     string `json:"transformation_version"`
-	TransformationFunction    string `json:"transformation_function"`
-	OwnerID                   string `json:"owner_id"`
+	TransformationVersion     string `json:"transformation_version,omitempty"`
+	TransformationFunction    string `json:"transformation_function,omitempty"`
+	OwnerID                   string `json:"owner_id,omitempty"`
+	WorkspaceID               string `json:"workspace_id,omitempty"`
+	IsBuiltin                 bool   `json:"is_builtin"`
 }
 
 type ListTransformationsResponse struct {

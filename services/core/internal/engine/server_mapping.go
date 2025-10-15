@@ -9,6 +9,7 @@ import (
 
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
+	transformationv1 "github.com/redbco/redb-open/api/proto/transformation/v1"
 	unifiedmodelv1 "github.com/redbco/redb-open/api/proto/unifiedmodel/v1"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/core/internal/services/database"
@@ -916,6 +917,87 @@ func (s *Server) AddMappingRule(ctx context.Context, req *corev1.AddMappingRuleR
 		}
 	}
 
+	// Validate transformation if provided
+	if req.MappingRuleTransformationName != "" {
+		transformationName := req.MappingRuleTransformationName
+		s.engine.logger.Infof("Validating transformation: %s", transformationName)
+
+		// Get transformation client
+		transformationClient, err := s.getTransformationClient()
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.Unavailable, "failed to connect to transformation service: %v", err)
+		}
+
+		{
+			// Call GetTransformationMetadata to validate transformation exists
+			metadataReq := &transformationv1.GetTransformationMetadataRequest{
+				TransformationName: transformationName,
+			}
+
+			metadataResp, err := transformationClient.GetTransformationMetadata(ctx, metadataReq)
+			if err != nil {
+				s.engine.IncrementErrors()
+				return nil, status.Errorf(codes.InvalidArgument, "transformation '%s' does not exist or is invalid: %v", transformationName, err)
+			}
+
+			// Check if transformation was found (check Status field)
+			if metadataResp.Status != commonv1.Status_STATUS_SUCCESS || metadataResp.Metadata == nil {
+				s.engine.IncrementErrors()
+				return nil, status.Errorf(codes.InvalidArgument, "transformation '%s' does not exist: %s", transformationName, metadataResp.StatusMessage)
+			}
+
+			// Validate transformation requirements based on type
+			if metadataResp.Metadata != nil {
+				transformationType := metadataResp.Metadata.Type
+
+				// Validate based on transformation type
+				switch transformationType {
+				case "generator":
+					// Generator transformations should not have a source
+					if req.MappingRuleSource != "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a generator type and should not have a source column", transformationName)
+					}
+					// Generator transformations must have a target
+					if req.MappingRuleTarget == "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a generator type and requires a target column", transformationName)
+					}
+				case "null_returning":
+					// Null-returning transformations should not have a target
+					if req.MappingRuleTarget != "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a null-returning type and should not have a target column", transformationName)
+					}
+					// Null-returning transformations must have a source
+					if req.MappingRuleSource == "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a null-returning type and requires a source column", transformationName)
+					}
+				case "passthrough":
+					// Passthrough transformations require both source and target
+					if req.MappingRuleSource == "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a passthrough type and requires a source column", transformationName)
+					}
+					if req.MappingRuleTarget == "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a passthrough type and requires a target column", transformationName)
+					}
+				}
+
+				s.engine.logger.Infof("Transformation '%s' validated successfully (type: %s)", transformationName, transformationType)
+			}
+		}
+	}
+
 	// Create the mapping rule
 	createdRule, err := mappingService.CreateMappingRule(ctx, req.TenantId, workspaceID, req.MappingRuleName, req.MappingRuleDescription, req.MappingRuleSource, req.MappingRuleTarget, req.MappingRuleTransformationName, transformationOptions, metadata, req.OwnerId)
 	if err != nil {
@@ -953,6 +1035,149 @@ func (s *Server) ModifyMappingRule(ctx context.Context, req *corev1.ModifyMappin
 
 	// Get mapping service
 	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
+
+	// Get the existing mapping rule to extract information for validation
+	existingRule, err := mappingService.GetMappingRuleByName(ctx, req.TenantId, workspaceID, req.MappingRuleName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "mapping rule not found: %v", err)
+	}
+
+	// Validate transformation if being changed
+	if req.MappingRuleTransformationName != nil && *req.MappingRuleTransformationName != "" {
+		transformationName := *req.MappingRuleTransformationName
+		s.engine.logger.Infof("Validating transformation: %s", transformationName)
+
+		// Get transformation client
+		transformationClient, err := s.getTransformationClient()
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.Unavailable, "failed to connect to transformation service: %v", err)
+		}
+
+		{
+			// Call GetTransformationMetadata to validate transformation exists
+			metadataReq := &transformationv1.GetTransformationMetadataRequest{
+				TransformationName: transformationName,
+			}
+
+			metadataResp, err := transformationClient.GetTransformationMetadata(ctx, metadataReq)
+			if err != nil {
+				s.engine.IncrementErrors()
+				return nil, status.Errorf(codes.InvalidArgument, "transformation '%s' does not exist or is invalid: %v", transformationName, err)
+			}
+
+			// Check if transformation was found (check Status field)
+			if metadataResp.Status != commonv1.Status_STATUS_SUCCESS || metadataResp.Metadata == nil {
+				s.engine.IncrementErrors()
+				return nil, status.Errorf(codes.InvalidArgument, "transformation '%s' does not exist: %s", transformationName, metadataResp.StatusMessage)
+			}
+
+			// Validate transformation requirements based on type
+			if metadataResp.Metadata != nil {
+				transformationType := metadataResp.Metadata.Type
+
+				// Determine final source and target (use existing if not being updated)
+				finalSource := existingRule.SourceIdentifier
+				if req.MappingRuleSource != nil && *req.MappingRuleSource != "" {
+					finalSource = *req.MappingRuleSource
+				}
+
+				finalTarget := existingRule.TargetIdentifier
+				if req.MappingRuleTarget != nil && *req.MappingRuleTarget != "" {
+					finalTarget = *req.MappingRuleTarget
+				}
+
+				// Validate based on transformation type
+				switch transformationType {
+				case "generator":
+					// Generator transformations should not have a source
+					if finalSource != "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a generator type and should not have a source column", transformationName)
+					}
+					// Generator transformations must have a target
+					if finalTarget == "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a generator type and requires a target column", transformationName)
+					}
+				case "null_returning":
+					// Null-returning transformations should not have a target
+					if finalTarget != "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a null-returning type and should not have a target column", transformationName)
+					}
+					// Null-returning transformations must have a source
+					if finalSource == "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a null-returning type and requires a source column", transformationName)
+					}
+				case "passthrough":
+					// Passthrough transformations require both source and target
+					if finalSource == "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a passthrough type and requires a source column", transformationName)
+					}
+					if finalTarget == "" {
+						s.engine.IncrementErrors()
+						return nil, status.Errorf(codes.InvalidArgument,
+							"transformation '%s' is a passthrough type and requires a target column", transformationName)
+					}
+				}
+
+				s.engine.logger.Infof("Transformation '%s' validated successfully (type: %s)", transformationName, transformationType)
+			}
+		}
+	}
+
+	// Validate source column if being changed
+	if req.MappingRuleSource != nil && *req.MappingRuleSource != "" {
+		// Parse source to extract database, table, and column
+		sourceParts := strings.Split(*req.MappingRuleSource, ".")
+		if len(sourceParts) == 3 {
+			databaseName := sourceParts[0]
+			tableName := sourceParts[1]
+			columnName := sourceParts[2]
+
+			// Validate column exists
+			validationResult, err := mappingService.ValidateSourceColumn(ctx, databaseName, tableName, columnName, workspaceID)
+			if err != nil {
+				s.engine.IncrementErrors()
+				return nil, status.Errorf(codes.Internal, "failed to validate source column: %v", err)
+			}
+			if !validationResult.Valid {
+				s.engine.IncrementErrors()
+				return nil, status.Errorf(codes.InvalidArgument, "source column validation failed: %s", validationResult.Message)
+			}
+		}
+	}
+
+	// Validate target column if being changed
+	if req.MappingRuleTarget != nil && *req.MappingRuleTarget != "" {
+		// Parse target to extract database, table, and column
+		targetParts := strings.Split(*req.MappingRuleTarget, ".")
+		if len(targetParts) == 3 {
+			databaseName := targetParts[0]
+			tableName := targetParts[1]
+			columnName := targetParts[2]
+
+			// Validate column exists
+			validationResult, err := mappingService.ValidateTargetColumn(ctx, databaseName, tableName, columnName, workspaceID)
+			if err != nil {
+				s.engine.IncrementErrors()
+				return nil, status.Errorf(codes.Internal, "failed to validate target column: %v", err)
+			}
+			if !validationResult.Valid {
+				s.engine.IncrementErrors()
+				return nil, status.Errorf(codes.InvalidArgument, "target column validation failed: %s", validationResult.Message)
+			}
+		}
+	}
 
 	// Build update map
 	updates := make(map[string]interface{})

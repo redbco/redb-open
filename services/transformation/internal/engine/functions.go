@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // transformUppercase converts input to uppercase
@@ -197,4 +199,23 @@ func transformISOToTimestamp(input string) (string, error) {
 	}
 
 	return strconv.FormatInt(t.Unix(), 10), nil
+}
+
+// transformDirectMapping returns the input as-is (passthrough/default transformation)
+func transformDirectMapping(input string) string {
+	return input
+}
+
+// transformUUIDGenerator generates a random UUID (generator type - no source required)
+func transformUUIDGenerator() string {
+	return uuid.New().String()
+}
+
+// transformNullExport exports data without returning anything (null_returning type)
+// This function would typically send data to an external interface
+// For now, it's a placeholder that just returns empty string
+func transformNullExport(input string) string {
+	// TODO: Implement actual export logic (e.g., send to external API, log, etc.)
+	// For now, we just acknowledge receipt and return empty
+	return ""
 }

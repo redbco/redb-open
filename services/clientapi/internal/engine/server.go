@@ -313,6 +313,12 @@ func (s *Server) setupRoutes() {
 	mappings.HandleFunc("/{mapping_name}/detach-rule", s.mappingHandler.DetachMappingRule).Methods(http.MethodPost)
 	mappings.HandleFunc("/{mapping_name}/copy-data", s.mappingHandler.CopyMappingData).Methods(http.MethodPost)
 
+	// Mapping rule operations within mappings
+	mappings.HandleFunc("/{mapping_name}/rules", s.mappingHandler.ListRulesInMapping).Methods(http.MethodGet)
+	mappings.HandleFunc("/{mapping_name}/rules", s.mappingHandler.AddRuleToMapping).Methods(http.MethodPost)
+	mappings.HandleFunc("/{mapping_name}/rules/{rule_name}", s.mappingHandler.ModifyRuleInMapping).Methods(http.MethodPut)
+	mappings.HandleFunc("/{mapping_name}/rules/{rule_name}", s.mappingHandler.RemoveRuleFromMapping).Methods(http.MethodDelete)
+
 	// Mapping rule endpoints (workspace-level)
 	mappingRules := workspaces.PathPrefix("/{workspace_name}/mapping-rules").Subrouter()
 	mappingRules.HandleFunc("", s.mappingHandler.ListMappingRules).Methods(http.MethodGet)

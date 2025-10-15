@@ -2512,11 +2512,14 @@ message Transformation {
     string transformation_version = 6;
     string transformation_function = 7;
     string owner_id = 8;
+    string workspace_id = 9;
+    bool is_builtin = 10; // True if this is a built-in transformation from transformation service
 }
 
 // Show all transformations request
 message ListTransformationsRequest {
     string tenant_id = 1;
+    optional bool builtin_only = 2; // If true, list built-in transformations from transformation service
 }
 
 // Show all transformations response

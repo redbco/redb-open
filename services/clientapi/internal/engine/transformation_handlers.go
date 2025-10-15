@@ -54,9 +54,16 @@ func (th *TransformationHandlers) ListTransformations(w http.ResponseWriter, r *
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
+	// Check if requesting built-in transformations
+	builtinOnly := r.URL.Query().Get("builtin") == "true"
+
 	// Call core service gRPC
 	grpcReq := &corev1.ListTransformationsRequest{
 		TenantId: profile.TenantId,
+	}
+	if builtinOnly {
+		builtinFlag := true
+		grpcReq.BuiltinOnly = &builtinFlag
 	}
 
 	grpcResp, err := th.engine.transformationClient.ListTransformations(ctx, grpcReq)
@@ -77,6 +84,8 @@ func (th *TransformationHandlers) ListTransformations(w http.ResponseWriter, r *
 			TransformationVersion:     transformation.TransformationVersion,
 			TransformationFunction:    transformation.TransformationFunction,
 			OwnerID:                   transformation.OwnerId,
+			WorkspaceID:               transformation.WorkspaceId,
+			IsBuiltin:                 transformation.IsBuiltin,
 		}
 	}
 

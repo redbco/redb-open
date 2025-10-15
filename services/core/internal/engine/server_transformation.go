@@ -5,6 +5,7 @@ import (
 
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
+	transformationv1 "github.com/redbco/redb-open/api/proto/transformation/v1"
 	"github.com/redbco/redb-open/services/core/internal/services/transformation"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -17,10 +18,45 @@ import (
 func (s *Server) ListTransformations(ctx context.Context, req *corev1.ListTransformationsRequest) (*corev1.ListTransformationsResponse, error) {
 	defer s.trackOperation()()
 
-	// Get transformation service
-	transformationService := transformation.NewService(s.engine.db, s.engine.logger)
+	// Check if requesting built-in transformations
+	if req.BuiltinOnly != nil && *req.BuiltinOnly {
+		// Get built-in transformations from transformation service
+		transformationClient, err := s.getTransformationClient()
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.Unavailable, "failed to connect to transformation service: %v", err)
+		}
 
-	// List transformations for the tenant
+		listReq := &transformationv1.ListTransformationsRequest{}
+		listResp, err := transformationClient.ListTransformations(ctx, listReq)
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.Internal, "failed to list built-in transformations: %v", err)
+		}
+
+		// Convert transformation service metadata to core transformation format
+		protoTransformations := make([]*corev1.Transformation, len(listResp.Transformations))
+		for i, tm := range listResp.Transformations {
+			protoTransformations[i] = &corev1.Transformation{
+				TransformationId:          tm.Name, // Use name as ID for built-in transformations
+				TransformationName:        tm.Name,
+				TransformationDescription: tm.Description,
+				TransformationType:        tm.Type,
+				// Built-in transformations don't have tenant/workspace/owner
+				TenantId:    "",
+				WorkspaceId: "",
+				OwnerId:     "",
+				IsBuiltin:   true,
+			}
+		}
+
+		return &corev1.ListTransformationsResponse{
+			Transformations: protoTransformations,
+		}, nil
+	}
+
+	// List user-created transformations from database
+	transformationService := transformation.NewService(s.engine.db, s.engine.logger)
 	transformations, err := transformationService.List(ctx, req.TenantId)
 	if err != nil {
 		s.engine.IncrementErrors()

@@ -98,6 +98,103 @@ Examples:
 	},
 }
 
+// modifyRuleCmd represents the modify-rule command
+var modifyRuleCmd = &cobra.Command{
+	Use:   "modify-rule",
+	Short: "Modify an existing mapping rule",
+	Long: `Modify source column, target column, transformation, or order of a mapping rule.
+
+Examples:
+  # Modify source column
+  redb mappings modify-rule --mapping user-mapping --rule user_id_rule --source sourcedb.users.user_id
+  
+  # Modify target column
+  redb mappings modify-rule --mapping user-mapping --rule user_id_rule --target targetdb.profiles.profile_id
+  
+  # Modify transformation
+  redb mappings modify-rule --mapping user-mapping --rule name_rule --transformation uppercase
+  
+  # Modify order
+  redb mappings modify-rule --mapping user-mapping --rule name_rule --order 5
+  
+  # Modify multiple properties
+  redb mappings modify-rule --mapping user-mapping --rule email_rule --source sourcedb.users.email --target targetdb.profiles.email_address --transformation lowercase`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mappingName, _ := cmd.Flags().GetString("mapping")
+		ruleName, _ := cmd.Flags().GetString("rule")
+		source, _ := cmd.Flags().GetString("source")
+		target, _ := cmd.Flags().GetString("target")
+		transformation, _ := cmd.Flags().GetString("transformation")
+		order, _ := cmd.Flags().GetInt32("order")
+
+		return mappings.ModifyMappingRule(mappingName, ruleName, source, target, transformation, order)
+	},
+}
+
+// addRuleCmd represents the add-rule command
+var addRuleCmd = &cobra.Command{
+	Use:   "add-rule",
+	Short: "Add a new mapping rule to a mapping",
+	Long: `Create a new mapping rule and attach it to a mapping.
+
+Examples:
+  # Add a rule with direct mapping
+  redb mappings add-rule --mapping user-mapping --rule user_id_rule --source sourcedb.users.user_id --target targetdb.profiles.profile_id --transformation direct_mapping
+  
+  # Add a rule with transformation
+  redb mappings add-rule --mapping user-mapping --rule name_rule --source sourcedb.users.name --target targetdb.profiles.full_name --transformation uppercase
+  
+  # Add a rule with specific order
+  redb mappings add-rule --mapping user-mapping --rule email_rule --source sourcedb.users.email --target targetdb.profiles.email --transformation lowercase --order 2`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mappingName, _ := cmd.Flags().GetString("mapping")
+		ruleName, _ := cmd.Flags().GetString("rule")
+		source, _ := cmd.Flags().GetString("source")
+		target, _ := cmd.Flags().GetString("target")
+		transformation, _ := cmd.Flags().GetString("transformation")
+		order, _ := cmd.Flags().GetInt32("order")
+
+		return mappings.AddMappingRule(mappingName, ruleName, source, target, transformation, order)
+	},
+}
+
+// removeRuleCmd represents the remove-rule command
+var removeRuleCmd = &cobra.Command{
+	Use:   "remove-rule",
+	Short: "Remove a mapping rule from a mapping",
+	Long: `Detach and optionally delete a mapping rule from a mapping.
+
+Examples:
+  # Remove a rule from a mapping (detach only)
+  redb mappings remove-rule --mapping user-mapping --rule email_rule
+  
+  # Remove and delete a rule
+  redb mappings remove-rule --mapping user-mapping --rule email_rule --delete`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mappingName, _ := cmd.Flags().GetString("mapping")
+		ruleName, _ := cmd.Flags().GetString("rule")
+		deleteRule, _ := cmd.Flags().GetBool("delete")
+
+		return mappings.RemoveMappingRule(mappingName, ruleName, deleteRule)
+	},
+}
+
+// listRulesCmd represents the list-rules command
+var listRulesCmd = &cobra.Command{
+	Use:   "list-rules",
+	Short: "List all mapping rules in a mapping",
+	Long: `Display a formatted list of all mapping rules attached to a specific mapping.
+
+Examples:
+  # List all rules in a mapping
+  redb mappings list-rules --mapping user-mapping`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		mappingName, _ := cmd.Flags().GetString("mapping")
+
+		return mappings.ListMappingRules(mappingName)
+	},
+}
+
 func init() {
 	// Add flags to addMappingCmd
 	addMappingCmd.Flags().String("scope", "", "Mapping scope: 'database' or 'table' (required)")
@@ -118,9 +215,46 @@ func init() {
 	copyDataCmd.Flags().Bool("dry-run", false, "Validate mapping and show what would be copied without actually copying data")
 	copyDataCmd.Flags().Bool("progress", false, "Show detailed progress information during copying")
 
+	// Add flags to modifyRuleCmd
+	modifyRuleCmd.Flags().String("mapping", "", "Mapping name (required)")
+	modifyRuleCmd.Flags().String("rule", "", "Rule name (required)")
+	modifyRuleCmd.Flags().String("source", "", "Source column in format 'database.table.column'")
+	modifyRuleCmd.Flags().String("target", "", "Target column in format 'database.table.column'")
+	modifyRuleCmd.Flags().String("transformation", "", "Transformation name")
+	modifyRuleCmd.Flags().Int32("order", -1, "Rule order (position in mapping)")
+	modifyRuleCmd.MarkFlagRequired("mapping")
+	modifyRuleCmd.MarkFlagRequired("rule")
+
+	// Add flags to addRuleCmd
+	addRuleCmd.Flags().String("mapping", "", "Mapping name (required)")
+	addRuleCmd.Flags().String("rule", "", "Rule name (required)")
+	addRuleCmd.Flags().String("source", "", "Source column in format 'database.table.column' (required)")
+	addRuleCmd.Flags().String("target", "", "Target column in format 'database.table.column' (required)")
+	addRuleCmd.Flags().String("transformation", "direct_mapping", "Transformation name (default: direct_mapping)")
+	addRuleCmd.Flags().Int32("order", -1, "Rule order (position in mapping, auto-assigned if not specified)")
+	addRuleCmd.MarkFlagRequired("mapping")
+	addRuleCmd.MarkFlagRequired("rule")
+	addRuleCmd.MarkFlagRequired("source")
+	addRuleCmd.MarkFlagRequired("target")
+
+	// Add flags to removeRuleCmd
+	removeRuleCmd.Flags().String("mapping", "", "Mapping name (required)")
+	removeRuleCmd.Flags().String("rule", "", "Rule name (required)")
+	removeRuleCmd.Flags().Bool("delete", false, "Delete the rule after detaching (default: false)")
+	removeRuleCmd.MarkFlagRequired("mapping")
+	removeRuleCmd.MarkFlagRequired("rule")
+
+	// Add flags to listRulesCmd
+	listRulesCmd.Flags().String("mapping", "", "Mapping name (required)")
+	listRulesCmd.MarkFlagRequired("mapping")
+
 	// Add subcommands to mappings command
 	mappingsCmd.AddCommand(listMappingsCmd)
 	mappingsCmd.AddCommand(showMappingCmd)
 	mappingsCmd.AddCommand(addMappingCmd)
 	mappingsCmd.AddCommand(copyDataCmd)
+	mappingsCmd.AddCommand(modifyRuleCmd)
+	mappingsCmd.AddCommand(addRuleCmd)
+	mappingsCmd.AddCommand(removeRuleCmd)
+	mappingsCmd.AddCommand(listRulesCmd)
 }
