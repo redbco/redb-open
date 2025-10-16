@@ -219,3 +219,21 @@ func transformNullExport(input string) string {
 	// For now, we just acknowledge receipt and return empty
 	return ""
 }
+
+// transformCombineToJSON combines multiple inputs into a JSON object
+func transformCombineToJSON(inputs map[string]interface{}) (string, error) {
+	jsonBytes, err := json.Marshal(inputs)
+	if err != nil {
+		return "", fmt.Errorf("failed to combine inputs to JSON: %v", err)
+	}
+	return string(jsonBytes), nil
+}
+
+// transformSplitJSON splits a JSON object into multiple outputs
+func transformSplitJSON(input string) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(input), &result); err != nil {
+		return nil, fmt.Errorf("failed to split JSON: %v", err)
+	}
+	return result, nil
+}

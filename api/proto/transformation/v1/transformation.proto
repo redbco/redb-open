@@ -11,6 +11,10 @@ service TransformationService {
     rpc Transform(TransformRequest) returns (TransformResponse);
     rpc GetTransformationMetadata(GetTransformationMetadataRequest) returns (GetTransformationMetadataResponse);
     rpc ListTransformations(ListTransformationsRequest) returns (ListTransformationsResponse);
+    rpc TransformWorkflow(TransformWorkflowRequest) returns (TransformWorkflowResponse);
+    rpc ValidateWorkflow(ValidateWorkflowRequest) returns (ValidateWorkflowResponse);
+    rpc CreateTransformation(CreateTransformationRequest) returns (CreateTransformationResponse);
+    rpc GetTransformationIO(GetTransformationIORequest) returns (GetTransformationIOResponse);
 }
 
 message TransformRequest {
@@ -50,4 +54,103 @@ message TransformationMetadata {
     bool requires_source = 4;
     bool requires_target = 5;
     bool allows_multiple_targets = 6;
+}
+
+// Enums for workflow types
+enum IOType {
+    IO_TYPE_UNSPECIFIED = 0;
+    IO_TYPE_INPUT = 1;
+    IO_TYPE_OUTPUT = 2;
+}
+
+enum NodeType {
+    NODE_TYPE_UNSPECIFIED = 0;
+    NODE_TYPE_SOURCE = 1;
+    NODE_TYPE_TRANSFORMATION = 2;
+    NODE_TYPE_TARGET = 3;
+}
+
+// Workflow-based transformation messages
+message TransformationIODefinition {
+    string io_id = 1;
+    string io_name = 2;
+    IOType io_type = 3;
+    string data_type = 4;  // string, int, float, json, array, etc.
+    bool is_mandatory = 5;
+    bool is_array = 6;
+    google.protobuf.Value default_value = 7;
+    string description = 8;
+    google.protobuf.Struct validation_rules = 9;
+}
+
+message WorkflowNode {
+    string node_id = 1;
+    NodeType node_type = 2;
+    optional string transformation_id = 3;  // for TRANSFORMATION nodes
+    google.protobuf.Struct config = 4;
+    int32 node_order = 5;
+}
+
+message WorkflowEdge {
+    string edge_id = 1;
+    string source_node_id = 2;
+    string source_output_name = 3;
+    string target_node_id = 4;
+    string target_input_name = 5;
+}
+
+message TransformWorkflowRequest {
+    repeated WorkflowNode nodes = 1;
+    repeated WorkflowEdge edges = 2;
+    map<string, google.protobuf.Value> source_data = 3;  // Input data keyed by source node IDs
+    optional string key = 4;
+}
+
+message TransformWorkflowResponse {
+    map<string, google.protobuf.Value> target_data = 1;  // Output data keyed by target node IDs
+    string status_message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    repeated string execution_log = 4;  // For debugging
+}
+
+message ValidateWorkflowRequest {
+    repeated WorkflowNode nodes = 1;
+    repeated WorkflowEdge edges = 2;
+}
+
+message ValidateWorkflowResponse {
+    bool is_valid = 1;
+    repeated string errors = 2;
+    repeated string warnings = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+message CreateTransformationRequest {
+    string tenant_id = 1;
+    string transformation_name = 2;
+    string transformation_description = 3;
+    string transformation_type = 4;
+    string transformation_cardinality = 5;
+    bool requires_input = 6;
+    bool produces_output = 7;
+    string transformation_implementation = 8;
+    google.protobuf.Struct transformation_metadata = 9;
+    repeated TransformationIODefinition io_definitions = 10;
+    string owner_id = 11;
+}
+
+message CreateTransformationResponse {
+    string transformation_id = 1;
+    string status_message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+message GetTransformationIORequest {
+    string transformation_id = 1;
+}
+
+message GetTransformationIOResponse {
+    repeated TransformationIODefinition io_definitions = 1;
+    string status_message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
 }

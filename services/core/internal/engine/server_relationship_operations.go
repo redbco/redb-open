@@ -515,8 +515,14 @@ func (s *Server) setupCDCReplication(ctx context.Context, rel *relationship.Rela
 	tableNames := make([]string, 0)
 	tableNameMap := make(map[string]bool)
 	for _, rule := range mappingRules {
+		// Extract source identifier from metadata
+		sourceIdentifier, ok := rule.Metadata["source_identifier"].(string)
+		if !ok || sourceIdentifier == "" {
+			continue
+		}
+
 		// Parse source identifier to get table name
-		sourceInfo, err := s.parseDatabaseIdentifier(rule.SourceIdentifier)
+		sourceInfo, err := s.parseDatabaseIdentifier(sourceIdentifier)
 		if err != nil {
 			continue
 		}

@@ -180,6 +180,9 @@ service MappingService {
   // Data copying services
   rpc CopyMappingData(CopyMappingDataRequest) returns (stream CopyMappingDataResponse);
   rpc GetCopyStatus(GetCopyStatusRequest) returns (GetCopyStatusResponse);
+
+  // Mapping validation services
+  rpc ValidateMapping(ValidateMappingRequest) returns (ValidateMappingResponse);
 }
 
 // Relationship service for relationship management
@@ -2033,6 +2036,10 @@ message Mapping {
     repeated MappingRule mapping_rules = 8;
     string owner_id = 9;
     int32 mapping_rule_count = 10;
+    bool validated = 11;
+    string validated_at = 12;
+    repeated string validation_errors = 13;
+    repeated string validation_warnings = 14;
 }
 
 // Show a mapping request
@@ -2321,6 +2328,21 @@ message GetCopyStatusResponse {
     repeated string errors = 6;
     string started_at = 7;
     string completed_at = 8;
+}
+
+// Validate mapping request
+message ValidateMappingRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+}
+
+// Validate mapping response
+message ValidateMappingResponse {
+    bool is_valid = 1;
+    repeated string errors = 2;
+    repeated string warnings = 3;
+    string validated_at = 4;
 }
 
 // Relationship messages

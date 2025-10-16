@@ -509,13 +509,14 @@ func (s *Server) AddMCPResource(ctx context.Context, req *corev1.AddMCPResourceR
 		return nil, status.Errorf(codes.NotFound, "workspace not found: %v", err)
 	}
 
-	// Get mapping details (including source identifier)
+	// Get mapping details (including source identifier and target type)
 	var mappingID string
 	var mappingSourceType string
 	var mappingSourceIdentifier string
+	var mappingTargetType string
 	err = s.engine.db.Pool().QueryRow(ctx,
-		"SELECT mapping_id, mapping_source_type, mapping_source_identifier FROM mappings WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_name = $3",
-		req.TenantId, workspaceID, req.MappingName).Scan(&mappingID, &mappingSourceType, &mappingSourceIdentifier)
+		"SELECT mapping_id, mapping_source_type, mapping_source_identifier, mapping_target_type FROM mappings WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_name = $3",
+		req.TenantId, workspaceID, req.MappingName).Scan(&mappingID, &mappingSourceType, &mappingSourceIdentifier, &mappingTargetType)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.NotFound, "mapping not found: %v", err)
@@ -529,7 +530,12 @@ func (s *Server) AddMCPResource(ctx context.Context, req *corev1.AddMCPResourceR
 
 	// Auto-populate config from mapping if not already specified
 	if _, hasType := configMap["type"]; !hasType {
-		configMap["type"] = "direct_table"
+		// For MCP mappings (target_type = "mcp"), use mapped_table to apply transformations
+		if mappingTargetType == "mcp" {
+			configMap["type"] = "mapped_table"
+		} else {
+			configMap["type"] = "direct_table"
+		}
 	}
 
 	// Parse the source identifier to extract database and table names

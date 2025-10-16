@@ -833,13 +833,27 @@ func (s *Server) TransformData(ctx context.Context, req *corev1.TransformDataReq
 	// Extract source and target information from the first mapping rule
 	// All rules should have the same source and target databases/tables
 	firstRule := mappingRules[0]
-	sourceInfo, err := s.parseDatabaseIdentifier(firstRule.SourceIdentifier)
+
+	// Extract identifiers from metadata (backward compatibility)
+	sourceIdentifier, ok := firstRule.Metadata["source_identifier"].(string)
+	if !ok || sourceIdentifier == "" {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "source identifier not found in rule metadata")
+	}
+
+	targetIdentifier, ok := firstRule.Metadata["target_identifier"].(string)
+	if !ok || targetIdentifier == "" {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "target identifier not found in rule metadata")
+	}
+
+	sourceInfo, err := s.parseDatabaseIdentifier(sourceIdentifier)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.InvalidArgument, "invalid source identifier: %v", err)
 	}
 
-	targetInfo, err := s.parseDatabaseIdentifier(firstRule.TargetIdentifier)
+	targetInfo, err := s.parseDatabaseIdentifier(targetIdentifier)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.InvalidArgument, "invalid target identifier: %v", err)
@@ -1049,13 +1063,27 @@ func (s *Server) TransformDataStream(req *corev1.TransformDataStreamRequest, str
 	// Extract source and target information from the first mapping rule
 	// All rules should have the same source and target databases/tables
 	firstRule := mappingRules[0]
-	sourceInfo, err := s.parseDatabaseIdentifier(firstRule.SourceIdentifier)
+
+	// Extract identifiers from metadata (backward compatibility)
+	sourceIdentifier, ok := firstRule.Metadata["source_identifier"].(string)
+	if !ok || sourceIdentifier == "" {
+		s.engine.IncrementErrors()
+		return status.Errorf(codes.InvalidArgument, "source identifier not found in rule metadata")
+	}
+
+	targetIdentifier, ok := firstRule.Metadata["target_identifier"].(string)
+	if !ok || targetIdentifier == "" {
+		s.engine.IncrementErrors()
+		return status.Errorf(codes.InvalidArgument, "target identifier not found in rule metadata")
+	}
+
+	sourceInfo, err := s.parseDatabaseIdentifier(sourceIdentifier)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return status.Errorf(codes.InvalidArgument, "invalid source identifier: %v", err)
 	}
 
-	targetInfo, err := s.parseDatabaseIdentifier(firstRule.TargetIdentifier)
+	targetInfo, err := s.parseDatabaseIdentifier(targetIdentifier)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return status.Errorf(codes.InvalidArgument, "invalid target identifier: %v", err)
@@ -1264,24 +1292,39 @@ func (s *Server) convertMappingRulesToTransformationRules(mappingRules []*mappin
 	var transformationRules []map[string]interface{}
 
 	for _, rule := range mappingRules {
+		// Extract identifiers from metadata (backward compatibility)
+		sourceIdentifier, ok := rule.Metadata["source_identifier"].(string)
+		if !ok || sourceIdentifier == "" {
+			continue
+		}
+
+		targetIdentifier, ok := rule.Metadata["target_identifier"].(string)
+		if !ok || targetIdentifier == "" {
+			continue
+		}
+
 		// Parse source and target identifiers using the proper parser
-		sourceInfo, err := s.parseDatabaseIdentifier(rule.SourceIdentifier)
+		sourceInfo, err := s.parseDatabaseIdentifier(sourceIdentifier)
 		if err != nil {
 			// Skip this rule if parsing fails
 			continue
 		}
 
-		targetInfo, err := s.parseDatabaseIdentifier(rule.TargetIdentifier)
+		targetInfo, err := s.parseDatabaseIdentifier(targetIdentifier)
 		if err != nil {
 			// Skip this rule if parsing fails
 			continue
 		}
+
+		// Extract transformation info from metadata
+		transformationName, _ := rule.Metadata["transformation_name"].(string)
+		transformationOptions, _ := rule.Metadata["transformation_options"].(map[string]interface{})
 
 		transformationRule := map[string]interface{}{
 			"source_field":           sourceInfo.ColumnName,
 			"target_field":           targetInfo.ColumnName,
-			"transformation_type":    rule.TransformationName,
-			"transformation_options": rule.TransformationOptions,
+			"transformation_type":    transformationName,
+			"transformation_options": transformationOptions,
 		}
 
 		transformationRules = append(transformationRules, transformationRule)

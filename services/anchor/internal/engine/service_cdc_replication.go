@@ -93,7 +93,9 @@ func (e *Engine) StartCDCReplication(ctx context.Context, req *anchorv1.StartCDC
 		sourceConn.Type(), targetConn.Type())
 
 	// Step 4: Create CDC event router for transforming and routing events
-	eventRouter, err := NewCDCEventRouter(sourceConn, targetConn, req.MappingRules, e.logger)
+	// Get transformation service endpoint for custom transformations
+	transformationServiceEndpoint := e.getServiceAddress("transformation")
+	eventRouter, err := NewCDCEventRouter(sourceConn, targetConn, req.MappingRules, transformationServiceEndpoint, e.logger)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create event router: %v", err)
 	}

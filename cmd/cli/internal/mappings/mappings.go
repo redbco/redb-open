@@ -44,6 +44,10 @@ type Mapping struct {
 	OwnerID            string        `json:"owner_id"`
 	MappingRuleCount   int32         `json:"mapping_rule_count"`
 	MappingRules       []MappingRule `json:"mapping_rules"`
+	Validated          bool          `json:"validated"`
+	ValidatedAt        string        `json:"validated_at"`
+	ValidationErrors   []string      `json:"validation_errors"`
+	ValidationWarnings []string      `json:"validation_warnings"`
 }
 
 // AddMapping creates a new mapping with specified scope
@@ -338,18 +342,32 @@ func ListMappings() error {
 	}
 
 	fmt.Println()
-	fmt.Printf("%-20s %-30s %-15s %-10s\n", "Name", "Description", "Type", "Rules")
-	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("%-20s %-30s %-15s %-10s %-12s\n", "Name", "Description", "Type", "Rules", "Validated")
+	fmt.Println(strings.Repeat("-", 92))
 	for _, mapping := range mappingsResponse.Mappings {
 		description := mapping.MappingDescription
 		if len(description) > 28 {
 			description = description[:25] + "..."
 		}
-		fmt.Printf("%-20s %-30s %-15s %-10d\n",
+
+		// Determine validation status symbol
+		validationStatus := "-"
+		if mapping.ValidatedAt != "" {
+			if !mapping.Validated || len(mapping.ValidationErrors) > 0 {
+				validationStatus = "✗"
+			} else if len(mapping.ValidationWarnings) > 0 {
+				validationStatus = "⚠"
+			} else {
+				validationStatus = "✓"
+			}
+		}
+
+		fmt.Printf("%-20s %-30s %-15s %-10d %-12s\n",
 			mapping.MappingName,
 			description,
 			mapping.MappingType,
-			mapping.MappingRuleCount)
+			mapping.MappingRuleCount,
+			validationStatus)
 	}
 	fmt.Println()
 	return nil
@@ -397,6 +415,43 @@ func ShowMapping(mappingName string) error {
 	if mapping.PolicyID != "" {
 		fmt.Printf("Policy ID:   %s\n", mapping.PolicyID)
 	}
+
+	// Display validation information
+	if mapping.ValidatedAt != "" {
+		fmt.Println()
+		fmt.Println("Validation Status:")
+		fmt.Println(strings.Repeat("-", 50))
+		if mapping.Validated && len(mapping.ValidationErrors) == 0 {
+			if len(mapping.ValidationWarnings) > 0 {
+				fmt.Printf("Status:      ⚠ Valid (with %d warning(s))\n", len(mapping.ValidationWarnings))
+			} else {
+				fmt.Println("Status:      ✓ Valid")
+			}
+		} else {
+			fmt.Printf("Status:      ✗ Invalid (with %d error(s))\n", len(mapping.ValidationErrors))
+		}
+		fmt.Printf("Validated:   %s\n", mapping.ValidatedAt)
+
+		if len(mapping.ValidationErrors) > 0 {
+			fmt.Println("\nValidation Errors:")
+			for i, err := range mapping.ValidationErrors {
+				fmt.Printf("  %d. %s\n", i+1, err)
+			}
+		}
+
+		if len(mapping.ValidationWarnings) > 0 {
+			fmt.Println("\nValidation Warnings:")
+			for i, warn := range mapping.ValidationWarnings {
+				fmt.Printf("  %d. %s\n", i+1, warn)
+			}
+		}
+	} else {
+		fmt.Println()
+		fmt.Println("Validation Status:")
+		fmt.Println(strings.Repeat("-", 50))
+		fmt.Println("Status:      Not validated yet")
+		fmt.Println("Run 'redb mappings validate <mapping-name>' to validate this mapping")
+	}
 	fmt.Println()
 
 	// Display mapping rules table
@@ -431,15 +486,25 @@ func ShowMapping(mappingName string) error {
 				transformName = transformName[:21] + "..."
 			}
 
-			// Format match score as percentage
-			matchScore := fmt.Sprintf("%.1f%%", rule.MappingRuleMetadata.MatchScore*100)
+			// Format match indicator based on rule type
+			var matchIndicator string
+			if rule.MappingRuleMetadata.MatchType == "auto_generated" {
+				// Show percentage for auto-generated rules
+				matchIndicator = fmt.Sprintf("%.1f%%", rule.MappingRuleMetadata.MatchScore*100)
+			} else if rule.MappingRuleMetadata.MatchType == "user_defined" {
+				// Show indicator for user-defined rules
+				matchIndicator = "User"
+			} else {
+				// Default to showing score if match_type is not set (backward compatibility)
+				matchIndicator = fmt.Sprintf("%.1f%%", rule.MappingRuleMetadata.MatchScore*100)
+			}
 
 			fmt.Printf("%-55s %-30s %-30s %-20s %-10s\n",
 				ruleName,
 				sourceCol,
 				targetCol,
 				transformName,
-				matchScore)
+				matchIndicator)
 		}
 		fmt.Println()
 	} else {
@@ -852,4 +917,143 @@ func ListMappingRules(mappingName string) error {
 	fmt.Println()
 
 	return nil
+}
+
+// ValidateMapping validates a mapping
+func ValidateMapping(mappingName string) error {
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/mappings/%s/validate", mappingName))
+	if err != nil {
+		return err
+	}
+
+	// Make request
+	fmt.Printf("Validating mapping '%s'...\n", mappingName)
+	var result map[string]interface{}
+	if err := client.Post(url, nil, &result); err != nil {
+		return fmt.Errorf("failed to validate mapping: %w", err)
+	}
+
+	// Extract validation results
+	data, ok := result["data"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid response format")
+	}
+
+	isValid, _ := data["is_valid"].(bool)
+	errorsRaw, _ := data["errors"].([]interface{})
+	warningsRaw, _ := data["warnings"].([]interface{})
+	validatedAt, _ := data["validated_at"].(string)
+
+	// Convert errors and warnings
+	errors := []string{}
+	for _, e := range errorsRaw {
+		if str, ok := e.(string); ok {
+			errors = append(errors, str)
+		}
+	}
+
+	warnings := []string{}
+	for _, w := range warningsRaw {
+		if str, ok := w.(string); ok {
+			warnings = append(warnings, str)
+		}
+	}
+
+	// Display results
+	fmt.Println("\n╔═══════════════════════════════════════════════════════════════╗")
+	fmt.Println("║                   MAPPING VALIDATION REPORT                   ║")
+	fmt.Println("╠═══════════════════════════════════════════════════════════════╣")
+	fmt.Printf("║ Mapping: %-52s ║\n", mappingName)
+	fmt.Printf("║ Validated At: %-47s ║\n", validatedAt)
+	fmt.Println("╠═══════════════════════════════════════════════════════════════╣")
+
+	if isValid {
+		fmt.Println("║ Status: ✓ VALID                                               ║")
+	} else {
+		fmt.Println("║ Status: ✗ INVALID                                             ║")
+	}
+
+	fmt.Println("╠═══════════════════════════════════════════════════════════════╣")
+
+	if len(errors) > 0 {
+		fmt.Printf("║ Errors: %-53d ║\n", len(errors))
+		fmt.Println("╠═══════════════════════════════════════════════════════════════╣")
+		for i, errMsg := range errors {
+			// Word wrap long error messages
+			lines := wrapText(errMsg, 61)
+			for j, line := range lines {
+				if j == 0 {
+					fmt.Printf("║ %d. %-58s ║\n", i+1, line)
+				} else {
+					fmt.Printf("║    %-58s ║\n", line)
+				}
+			}
+		}
+		fmt.Println("╠═══════════════════════════════════════════════════════════════╣")
+	} else {
+		fmt.Println("║ No errors found                                               ║")
+		fmt.Println("╠═══════════════════════════════════════════════════════════════╣")
+	}
+
+	if len(warnings) > 0 {
+		fmt.Printf("║ Warnings: %-51d ║\n", len(warnings))
+		fmt.Println("╠═══════════════════════════════════════════════════════════════╣")
+		for i, warnMsg := range warnings {
+			// Word wrap long warning messages
+			lines := wrapText(warnMsg, 61)
+			for j, line := range lines {
+				if j == 0 {
+					fmt.Printf("║ %d. %-58s ║\n", i+1, line)
+				} else {
+					fmt.Printf("║    %-58s ║\n", line)
+				}
+			}
+		}
+		fmt.Println("╠═══════════════════════════════════════════════════════════════╣")
+	} else {
+		fmt.Println("║ No warnings found                                             ║")
+		fmt.Println("╠═══════════════════════════════════════════════════════════════╣")
+	}
+
+	fmt.Println("╚═══════════════════════════════════════════════════════════════╝")
+
+	if !isValid {
+		// Exit with error code but don't return error to avoid showing usage
+		os.Exit(1)
+	}
+
+	return nil
+}
+
+// wrapText wraps text to specified width
+func wrapText(text string, width int) []string {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{}
+	}
+
+	lines := []string{}
+	currentLine := words[0]
+
+	for _, word := range words[1:] {
+		if len(currentLine)+1+len(word) <= width {
+			currentLine += " " + word
+		} else {
+			lines = append(lines, currentLine)
+			currentLine = word
+		}
+	}
+	lines = append(lines, currentLine)
+
+	return lines
 }

@@ -88,6 +88,10 @@ func (mh *MappingHandlers) ListMappings(w http.ResponseWriter, r *http.Request) 
 			PolicyID:           mapping.PolicyId,
 			OwnerID:            mapping.OwnerId,
 			MappingRuleCount:   mapping.MappingRuleCount,
+			Validated:          mapping.Validated,
+			ValidatedAt:        mapping.ValidatedAt,
+			ValidationErrors:   mapping.ValidationErrors,
+			ValidationWarnings: mapping.ValidationWarnings,
 		}
 	}
 
@@ -157,6 +161,10 @@ func (mh *MappingHandlers) ShowMapping(w http.ResponseWriter, r *http.Request) {
 		MappingType:        grpcResp.Mapping.MappingType,
 		PolicyID:           grpcResp.Mapping.PolicyId,
 		OwnerID:            grpcResp.Mapping.OwnerId,
+		Validated:          grpcResp.Mapping.Validated,
+		ValidatedAt:        grpcResp.Mapping.ValidatedAt,
+		ValidationErrors:   grpcResp.Mapping.ValidationErrors,
+		ValidationWarnings: grpcResp.Mapping.ValidationWarnings,
 	}
 
 	// Convert mapping rules (always include, even if empty)
@@ -1875,4 +1883,79 @@ func (mh *MappingHandlers) protoToMappingRuleInMapping(proto *corev1.MappingRule
 		MappingRuleTransformationName:    proto.MappingRuleTransformationName,
 		MappingRuleTransformationOptions: proto.MappingRuleTransformationOptions,
 	}
+}
+
+// ValidateMapping handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/mappings/{mapping_name}/validate
+func (mh *MappingHandlers) ValidateMapping(w http.ResponseWriter, r *http.Request) {
+	mh.engine.TrackOperation()
+	defer mh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+	mappingName := vars["mapping_name"]
+
+	if tenantURL == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "tenant_url is required", "")
+		return
+	}
+
+	if workspaceName == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "workspace_name is required", "")
+		return
+	}
+
+	if mappingName == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "mapping_name is required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		mh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Log request
+	if mh.engine.logger != nil {
+		mh.engine.logger.Infof("Validate mapping request for mapping: %s, workspace: %s, tenant: %s, user: %s", mappingName, workspaceName, profile.TenantId, profile.UserId)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	// Call core service gRPC
+	grpcReq := &corev1.ValidateMappingRequest{
+		TenantId:      profile.TenantId,
+		WorkspaceName: workspaceName,
+		MappingName:   mappingName,
+	}
+
+	grpcResp, err := mh.engine.mappingClient.ValidateMapping(ctx, grpcReq)
+	if err != nil {
+		mh.handleGRPCError(w, err, "Failed to validate mapping")
+		return
+	}
+
+	// Prepare response
+	response := map[string]interface{}{
+		"is_valid":     grpcResp.IsValid,
+		"errors":       grpcResp.Errors,
+		"warnings":     grpcResp.Warnings,
+		"validated_at": grpcResp.ValidatedAt,
+	}
+
+	// Log response
+	if mh.engine.logger != nil {
+		mh.engine.logger.Infof("Mapping validation completed: valid=%v, errors=%d, warnings=%d", grpcResp.IsValid, len(grpcResp.Errors), len(grpcResp.Warnings))
+	}
+
+	mh.writeJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"data":    response,
+		"message": "Mapping validated successfully",
+		"status":  "success",
+	})
 }

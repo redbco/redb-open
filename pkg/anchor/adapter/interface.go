@@ -154,7 +154,8 @@ type ReplicationOperator interface {
 
 	// TransformData applies transformation rules to event data
 	// Returns the transformed data ready for application to target database
-	TransformData(ctx context.Context, data map[string]interface{}, rules []TransformationRule) (map[string]interface{}, error)
+	// transformationServiceEndpoint is the gRPC endpoint for the transformation service (optional, for custom transformations)
+	TransformData(ctx context.Context, data map[string]interface{}, rules []TransformationRule, transformationServiceEndpoint string) (map[string]interface{}, error)
 }
 
 // MetadataOperator handles metadata collection and introspection.

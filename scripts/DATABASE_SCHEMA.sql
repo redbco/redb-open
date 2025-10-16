@@ -550,6 +550,33 @@ CREATE TABLE commits (
 -- =============================================================================
 
 -- Data mappings between systems
+--
+-- Mappings define how data is mapped and transformed between systems.
+-- For MCP (Model Context Protocol) mappings (mapping_target_type = 'mcp'):
+--   - Mapping rules are automatically generated with direct_mapping transformations for all source columns
+--   - The target_table in rule metadata is a virtual table (mcp_virtual_{mapping_name})
+--   - Virtual tables don't exist in any physical database but represent the transformed view
+--   - Users can modify mapping rules using CLI commands to customize transformations:
+--     * redb mappings add-rule - Add a new transformation rule
+--     * redb mappings modify-rule - Modify an existing rule's transformation
+--     * redb mappings remove-rule - Remove a transformation rule
+--   - When MCP resources/tools query data, transformations are applied on-the-fly
+--
+-- Example MCP mapping rule metadata structure:
+-- {
+--   "source_table": "users",
+--   "source_column": "email",
+--   "source_identifier": "db://db_abc123.users.email",
+--   "target_table": "mcp_virtual_user_resource",
+--   "target_column": "email",
+--   "target_identifier": "mcp_virtual://user_mapping.mcp_virtual_user_resource.email",
+--   "match_type": "auto_generated_mcp",
+--   "transformation_name": "direct_mapping",
+--   "column_data_type": "varchar",
+--   "column_nullable": false,
+--   "is_primary_key": false,
+--   "generated_at": "2025-01-01T00:00:00Z"
+-- }
 CREATE TABLE mappings (
     mapping_id ulid PRIMARY KEY DEFAULT generate_ulid('map'),
     tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE ON UPDATE CASCADE,
@@ -559,12 +586,25 @@ CREATE TABLE mappings (
     mapping_type VARCHAR(255) NOT NULL DEFAULT 'table',
     policy_ids ulid[] DEFAULT '{}',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    validated BOOLEAN DEFAULT false,
+    validated_at TIMESTAMP DEFAULT NULL,
+    validation_errors JSONB DEFAULT '[]',
+    validation_warnings JSONB DEFAULT '[]',
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(workspace_id, mapping_name)
 );
 
 -- Mapping rules
+--
+-- Mapping rules define column-level transformations within a mapping.
+-- Each rule specifies:
+--   - Source column (where data comes from)
+--   - Target column (where data goes to)
+--   - Transformation to apply (e.g., direct_mapping, uppercase, hash_sha256)
+--   - Additional metadata for processing
+--
+-- Rules are ordered within a mapping using mapping_rule_order in mapping_rule_mappings table.
 CREATE TABLE mapping_rules (
     mapping_rule_id ulid PRIMARY KEY DEFAULT generate_ulid('maprule'),
     tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE ON UPDATE CASCADE,
@@ -572,13 +612,7 @@ CREATE TABLE mapping_rules (
     mapping_rule_name VARCHAR(255) NOT NULL,
     mapping_rule_description TEXT NOT NULL DEFAULT '',
     mapping_rule_metadata JSONB NOT NULL DEFAULT '{}',
-    mapping_rule_source_type VARCHAR(255) DEFAULT 'column',
-    mapping_rule_source VARCHAR(255) NOT NULL,
-    mapping_rule_target_type VARCHAR(255) DEFAULT 'column',
-    mapping_rule_target VARCHAR(255) NOT NULL,
-    mapping_rule_transformation_id ulid NOT NULL,
-    mapping_rule_transformation_name VARCHAR(255) NOT NULL,
-    mapping_rule_transformation_options JSONB DEFAULT '{}',
+    mapping_rule_workflow_type VARCHAR(50) DEFAULT 'simple',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -653,6 +687,11 @@ CREATE TABLE transformations (
     transformation_type VARCHAR(255) DEFAULT 'mutate',
     transformation_version VARCHAR(255) DEFAULT '1.0.0',
     transformation_function TEXT DEFAULT '',
+    transformation_cardinality VARCHAR(50) DEFAULT 'one-to-one',
+    requires_input BOOLEAN DEFAULT true,
+    produces_output BOOLEAN DEFAULT true,
+    transformation_implementation TEXT DEFAULT '',
+    transformation_metadata JSONB DEFAULT '{}',
     transformation_enabled BOOLEAN DEFAULT false,
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -660,7 +699,47 @@ CREATE TABLE transformations (
     UNIQUE(tenant_id, transformation_name)
 );
 
-ALTER TABLE mapping_rules ADD CONSTRAINT fk_mapping_rule_transformation_id FOREIGN KEY (mapping_rule_transformation_id) REFERENCES transformations(transformation_id) ON DELETE CASCADE ON UPDATE CASCADE;
+-- Transformation I/O definitions
+CREATE TABLE transformation_io_definitions (
+    io_id ulid PRIMARY KEY DEFAULT generate_ulid('tfio'),
+    transformation_id ulid NOT NULL REFERENCES transformations(transformation_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    io_type VARCHAR(10) NOT NULL CHECK (io_type IN ('input', 'output')),
+    io_name VARCHAR(255) NOT NULL,
+    io_data_type VARCHAR(100) NOT NULL,
+    is_mandatory BOOLEAN DEFAULT true,
+    is_array BOOLEAN DEFAULT false,
+    default_value JSONB DEFAULT NULL,
+    description TEXT DEFAULT '',
+    validation_rules JSONB DEFAULT '{}',
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(transformation_id, io_type, io_name)
+);
+
+-- Transformation workflow nodes
+CREATE TABLE transformation_workflow_nodes (
+    node_id ulid PRIMARY KEY DEFAULT generate_ulid('tfnode'),
+    mapping_rule_id ulid NOT NULL REFERENCES mapping_rules(mapping_rule_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    node_type VARCHAR(20) NOT NULL CHECK (node_type IN ('source', 'transformation', 'target')),
+    transformation_id ulid REFERENCES transformations(transformation_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    node_config JSONB DEFAULT '{}',
+    node_order INTEGER DEFAULT 0,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Transformation workflow edges
+CREATE TABLE transformation_workflow_edges (
+    edge_id ulid PRIMARY KEY DEFAULT generate_ulid('tfedge'),
+    mapping_rule_id ulid NOT NULL REFERENCES mapping_rules(mapping_rule_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    source_node_id ulid NOT NULL REFERENCES transformation_workflow_nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    source_output_name VARCHAR(255) NOT NULL,
+    target_node_id ulid NOT NULL REFERENCES transformation_workflow_nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    target_input_name VARCHAR(255) NOT NULL,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(mapping_rule_id, source_node_id, source_output_name, target_node_id, target_input_name)
+);
 
 -- =============================================================================
 -- INTEGRATIONS

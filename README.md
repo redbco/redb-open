@@ -81,7 +81,32 @@ Deploy and manage database schemas across different systems:
 ./redb-cli branches show pg/main
 
 # Deploy the PostgreSQL testdb1 to a new database in MySQL
-./redb-cli commits deploy-schema pg/main/12345abc --instance my_instance --db-name deployed1
+./redb-cli commits deploy-schema pg/main/12345abc --instance my_instance --db-name new
+```
+
+### Schema Mapping
+
+Map and transform an existing schema to a target
+
+```bash
+# Create a mapping between tables
+./redb-cli mappings add --scope table --source pg.users --target new.users
+
+# Show the mapping status
+./redb-cli mappings list
+./redb-cli mappings show pg_users_to_new_users
+
+# Add a new mapping rule
+./redb-cli mappings add-rule --mapping user-mapping --rule email_rule --source pg.users.email --target new.users.email
+
+# Modify a rule by adding a transformation to it
+./redb-cli mappings modify-rule --mapping user-mapping --rule email_rule --transformation uppercase
+
+# Remove a mapping rule
+./redb-cli mappings remove-rule --mapping user-mapping --rule email_rule --delete
+
+# Validate a mapping
+./redb-cli mappings validate pg_users_to_new_users
 ```
 
 ### Data Replication
@@ -89,26 +114,22 @@ Deploy and manage database schemas across different systems:
 Set up data synchronization between databases using mappings and CDC:
 
 ```bash
-# Create a mapping between tables
-./redb-cli mappings add --scope table --source pg.users --target deployed1.users
-./redb-cli mappings show pg_users_to_deployed1_users
-
 # The data can be copied by either using a one-time data copy, or a continuous CDC replication
 # One-time data copy from PostgreSQL to MySQL
-./redb-cli mappings copy-data pg_users_to_deployed1_users
+./redb-cli mappings copy-data pg_users_to_new_users
 
 # Or set up real-time CDC replication
-./redb-cli relationships add --mapping pg_users_to_deployed1_users --type replication
-./redb-cli relationships start pg_to_deployed1
+./redb-cli relationships add --mapping pg_users_to_new_users --type replication
+./redb-cli relationships start pg_to_new
 
 # Monitor the relationship status
 ./redb-cli relationships list
-./redb-cli relationships show pg_to_deployed1
+./redb-cli relationships show pg_to_new
 
 # Manage the relationship lifecycle
-./redb-cli relationships stop pg_to_deployed1    # Pause synchronization
-./redb-cli relationships start pg_to_deployed1   # Resume synchronization
-./redb-cli relationships remove pg_to_deployed1  # Remove completely
+./redb-cli relationships stop pg_to_new    # Pause synchronization
+./redb-cli relationships start pg_to_new   # Resume synchronization
+./redb-cli relationships remove pg_to_new  # Remove completely
 ```
 
 ### MCP Server (AI Integration)
@@ -117,22 +138,22 @@ Expose your data as resources and tools to AI agents using the Model Context Pro
 
 ```bash
 # First, create a mapping for the data you want to expose
-./redb-cli mappings add --scope table --source pg.users --target mcp://users_resource
+./redb-cli mappings add --scope table --source pg.users --target mcp://users_res
 
-# Create an MCP server on a specific port
-./redb-cli mcpservers add --name my-server --port 9000
+# Create a virtual MCP server on a specific port
+./redb-cli mcpservers add --name mcp-server --port 9000
 
 # Create a resource that exposes data through the mapping
-./redb-cli mcpresources add --name users_resource --mapping pg_users_to_mcp_users_resource
+./redb-cli mcpresources add --name users_res --mapping pg_users_to_mcp_users_res
 
 # Attach the resource to your MCP server
-./redb-cli mcpresources attach --resource users_resource --server my-server
+./redb-cli mcpresources attach --resource users_res --server mcp-server
 
 # Create a tool that allows querying the data
-./redb-cli mcptools add --name query_users --mapping pg_users_to_mcp_users_resource
+./redb-cli mcptools add --name query_users --mapping pg_users_to_mcp_users_res
 
 # Attach the tool to your MCP server
-./redb-cli mcptools attach --tool query_users --server my-server
+./redb-cli mcptools attach --tool query_users --server mcp-server
 ```
 
 Now your MCP server is running and can be used by AI agents like Claude Desktop, Cline, or any MCP-compatible client. For detailed MCP server management, see `docs/MCP_SERVER_MANAGEMENT.md`.

@@ -750,6 +750,16 @@ func (s *Server) AttachMappingRule(ctx context.Context, req *corev1.AttachMappin
 		return nil, status.Errorf(codes.Internal, "failed to attach mapping rule: %v", err)
 	}
 
+	// Invalidate the mapping's validation status
+	mappingObj, err := mappingService.GetByName(ctx, req.TenantId, workspaceID, req.MappingName)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get mapping for invalidation: %v", err)
+	} else {
+		if err := mappingService.InvalidateMapping(ctx, mappingObj.ID); err != nil {
+			s.engine.logger.Warnf("Failed to invalidate mapping validation: %v", err)
+		}
+	}
+
 	return &corev1.AttachMappingRuleResponse{
 		Message: "Mapping rule attached successfully",
 		Success: true,
@@ -778,6 +788,16 @@ func (s *Server) DetachMappingRule(ctx context.Context, req *corev1.DetachMappin
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to detach mapping rule: %v", err)
+	}
+
+	// Invalidate the mapping's validation status
+	mappingObj, err := mappingService.GetByName(ctx, req.TenantId, workspaceID, req.MappingName)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get mapping for invalidation: %v", err)
+	} else {
+		if err := mappingService.InvalidateMapping(ctx, mappingObj.ID); err != nil {
+			s.engine.logger.Warnf("Failed to invalidate mapping validation: %v", err)
+		}
 	}
 
 	return &corev1.DetachMappingRuleResponse{
@@ -917,6 +937,79 @@ func (s *Server) AddMappingRule(ctx context.Context, req *corev1.AddMappingRuleR
 		}
 	}
 
+	// Convert source and target identifiers from "database_name.table.column" to "db://database_id.table.column"
+	// Also extract table and column names for metadata
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+
+	var sourceTable, sourceColumn, targetTable, targetColumn string
+
+	formattedSource := req.MappingRuleSource
+	if req.MappingRuleSource != "" && !strings.HasPrefix(req.MappingRuleSource, "db://") {
+		// Parse source: database_name.table.column
+		sourceParts := strings.Split(req.MappingRuleSource, ".")
+		if len(sourceParts) == 3 {
+			sourceDB, err := databaseService.Get(ctx, req.TenantId, workspaceID, sourceParts[0])
+			if err != nil {
+				s.engine.IncrementErrors()
+				return nil, status.Errorf(codes.NotFound, "source database '%s' not found: %v", sourceParts[0], err)
+			}
+			sourceTable = sourceParts[1]
+			sourceColumn = sourceParts[2]
+			formattedSource = fmt.Sprintf("db://%s.%s.%s", sourceDB.ID, sourceTable, sourceColumn)
+			s.engine.logger.Infof("Converted source identifier from '%s' to '%s'", req.MappingRuleSource, formattedSource)
+		}
+	} else if formattedSource != "" {
+		// Already in db:// format, extract table and column
+		cleanIdentifier := strings.TrimPrefix(formattedSource, "db://")
+		parts := strings.Split(cleanIdentifier, ".")
+		if len(parts) >= 3 {
+			sourceTable = parts[1]
+			sourceColumn = parts[2]
+		}
+	}
+
+	formattedTarget := req.MappingRuleTarget
+	if req.MappingRuleTarget != "" && !strings.HasPrefix(req.MappingRuleTarget, "db://") {
+		// Parse target: database_name.table.column
+		targetParts := strings.Split(req.MappingRuleTarget, ".")
+		if len(targetParts) == 3 {
+			targetDB, err := databaseService.Get(ctx, req.TenantId, workspaceID, targetParts[0])
+			if err != nil {
+				s.engine.IncrementErrors()
+				return nil, status.Errorf(codes.NotFound, "target database '%s' not found: %v", targetParts[0], err)
+			}
+			targetTable = targetParts[1]
+			targetColumn = targetParts[2]
+			formattedTarget = fmt.Sprintf("db://%s.%s.%s", targetDB.ID, targetTable, targetColumn)
+			s.engine.logger.Infof("Converted target identifier from '%s' to '%s'", req.MappingRuleTarget, formattedTarget)
+		}
+	} else if formattedTarget != "" {
+		// Already in db:// format, extract table and column
+		cleanIdentifier := strings.TrimPrefix(formattedTarget, "db://")
+		parts := strings.Split(cleanIdentifier, ".")
+		if len(parts) >= 3 {
+			targetTable = parts[1]
+			targetColumn = parts[2]
+		}
+	}
+
+	// Add extracted table and column names to metadata for consistency with auto-generated rules
+	if sourceTable != "" {
+		metadata["source_table"] = sourceTable
+	}
+	if sourceColumn != "" {
+		metadata["source_column"] = sourceColumn
+	}
+	if targetTable != "" {
+		metadata["target_table"] = targetTable
+	}
+	if targetColumn != "" {
+		metadata["target_column"] = targetColumn
+	}
+
+	// Mark as user-defined rule
+	metadata["match_type"] = "user_defined"
+
 	// Validate transformation if provided
 	if req.MappingRuleTransformationName != "" {
 		transformationName := req.MappingRuleTransformationName
@@ -951,42 +1044,42 @@ func (s *Server) AddMappingRule(ctx context.Context, req *corev1.AddMappingRuleR
 			if metadataResp.Metadata != nil {
 				transformationType := metadataResp.Metadata.Type
 
-				// Validate based on transformation type
+				// Validate based on transformation type (use formatted identifiers)
 				switch transformationType {
 				case "generator":
 					// Generator transformations should not have a source
-					if req.MappingRuleSource != "" {
+					if formattedSource != "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a generator type and should not have a source column", transformationName)
 					}
 					// Generator transformations must have a target
-					if req.MappingRuleTarget == "" {
+					if formattedTarget == "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a generator type and requires a target column", transformationName)
 					}
 				case "null_returning":
 					// Null-returning transformations should not have a target
-					if req.MappingRuleTarget != "" {
+					if formattedTarget != "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a null-returning type and should not have a target column", transformationName)
 					}
 					// Null-returning transformations must have a source
-					if req.MappingRuleSource == "" {
+					if formattedSource == "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a null-returning type and requires a source column", transformationName)
 					}
 				case "passthrough":
 					// Passthrough transformations require both source and target
-					if req.MappingRuleSource == "" {
+					if formattedSource == "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a passthrough type and requires a source column", transformationName)
 					}
-					if req.MappingRuleTarget == "" {
+					if formattedTarget == "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a passthrough type and requires a target column", transformationName)
@@ -998,8 +1091,8 @@ func (s *Server) AddMappingRule(ctx context.Context, req *corev1.AddMappingRuleR
 		}
 	}
 
-	// Create the mapping rule
-	createdRule, err := mappingService.CreateMappingRule(ctx, req.TenantId, workspaceID, req.MappingRuleName, req.MappingRuleDescription, req.MappingRuleSource, req.MappingRuleTarget, req.MappingRuleTransformationName, transformationOptions, metadata, req.OwnerId)
+	// Create the mapping rule (use formatted identifiers with database IDs)
+	createdRule, err := mappingService.CreateMappingRule(ctx, req.TenantId, workspaceID, req.MappingRuleName, req.MappingRuleDescription, formattedSource, formattedTarget, req.MappingRuleTransformationName, transformationOptions, metadata, req.OwnerId)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to create mapping rule: %v", err)
@@ -1078,12 +1171,21 @@ func (s *Server) ModifyMappingRule(ctx context.Context, req *corev1.ModifyMappin
 				transformationType := metadataResp.Metadata.Type
 
 				// Determine final source and target (use existing if not being updated)
-				finalSource := existingRule.SourceIdentifier
+				// Extract from metadata (backward compatibility)
+				var finalSource, finalTarget string
+				if existingRule.Metadata != nil {
+					if src, ok := existingRule.Metadata["source_identifier"].(string); ok {
+						finalSource = src
+					}
+					if tgt, ok := existingRule.Metadata["target_identifier"].(string); ok {
+						finalTarget = tgt
+					}
+				}
+
 				if req.MappingRuleSource != nil && *req.MappingRuleSource != "" {
 					finalSource = *req.MappingRuleSource
 				}
 
-				finalTarget := existingRule.TargetIdentifier
 				if req.MappingRuleTarget != nil && *req.MappingRuleTarget != "" {
 					finalTarget = *req.MappingRuleTarget
 				}
@@ -1179,33 +1281,74 @@ func (s *Server) ModifyMappingRule(ctx context.Context, req *corev1.ModifyMappin
 		}
 	}
 
-	// Build update map
+	// Build update map - need to merge changes into metadata for new schema
 	updates := make(map[string]interface{})
+
+	// Handle simple field updates
 	if req.MappingRuleNameNew != nil {
 		updates["mapping_rule_name"] = *req.MappingRuleNameNew
 	}
 	if req.MappingRuleDescription != nil {
 		updates["mapping_rule_description"] = *req.MappingRuleDescription
 	}
+
+	// Handle metadata updates - merge with existing metadata
+	needsMetadataUpdate := false
+	updatedMetadata := make(map[string]interface{})
+
+	// Start with existing metadata
+	if existingRule.Metadata != nil {
+		for k, v := range existingRule.Metadata {
+			updatedMetadata[k] = v
+		}
+	}
+
+	// Update source identifier in metadata if provided
 	if req.MappingRuleSource != nil {
-		updates["mapping_rule_source"] = *req.MappingRuleSource
+		updatedMetadata["source_identifier"] = *req.MappingRuleSource
+		needsMetadataUpdate = true
 	}
+
+	// Update target identifier in metadata if provided
 	if req.MappingRuleTarget != nil {
-		updates["mapping_rule_target"] = *req.MappingRuleTarget
+		updatedMetadata["target_identifier"] = *req.MappingRuleTarget
+		needsMetadataUpdate = true
 	}
+
+	// Update transformation name in metadata if provided
 	if req.MappingRuleTransformationName != nil {
-		updates["mapping_rule_transformation_name"] = *req.MappingRuleTransformationName
+		updatedMetadata["transformation_name"] = *req.MappingRuleTransformationName
+		needsMetadataUpdate = true
 	}
+
+	// Update transformation options in metadata if provided
 	if req.MappingRuleTransformationOptions != nil {
-		updates["mapping_rule_transformation_options"] = *req.MappingRuleTransformationOptions
+		var transformationOptions map[string]interface{}
+		if err := json.Unmarshal([]byte(*req.MappingRuleTransformationOptions), &transformationOptions); err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.InvalidArgument, "failed to unmarshal transformation options: %v", err)
+		}
+		updatedMetadata["transformation_options"] = transformationOptions
+		needsMetadataUpdate = true
 	}
+
+	// Handle explicit metadata updates (merge with above changes)
 	if req.MappingRuleMetadata != nil {
-		var metadata map[string]interface{}
-		if err := json.Unmarshal([]byte(*req.MappingRuleMetadata), &metadata); err != nil {
+		var explicitMetadata map[string]interface{}
+		if err := json.Unmarshal([]byte(*req.MappingRuleMetadata), &explicitMetadata); err != nil {
 			s.engine.IncrementErrors()
 			return nil, status.Errorf(codes.InvalidArgument, "failed to unmarshal metadata: %v", err)
 		}
-		updates["mapping_rule_metadata"] = metadata
+		// Merge explicit metadata into updatedMetadata
+		for k, v := range explicitMetadata {
+			updatedMetadata[k] = v
+		}
+		needsMetadataUpdate = true
+	}
+
+	// Add metadata to updates if it changed
+	if needsMetadataUpdate {
+		updates["mapping_rule_metadata"] = updatedMetadata
 	}
 
 	// Update the mapping rule
@@ -1213,6 +1356,18 @@ func (s *Server) ModifyMappingRule(ctx context.Context, req *corev1.ModifyMappin
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to update mapping rule: %v", err)
+	}
+
+	// Invalidate all mappings that use this rule
+	mappings, err := mappingService.GetMappingsForRule(ctx, req.TenantId, workspaceID, req.MappingRuleName)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get mappings for rule invalidation: %v", err)
+	} else {
+		for _, mappingObj := range mappings {
+			if err := mappingService.InvalidateMapping(ctx, mappingObj.ID); err != nil {
+				s.engine.logger.Warnf("Failed to invalidate mapping %s: %v", mappingObj.Name, err)
+			}
+		}
 	}
 
 	// Convert to protobuf format
@@ -1246,11 +1401,25 @@ func (s *Server) DeleteMappingRule(ctx context.Context, req *corev1.DeleteMappin
 	// Get mapping service
 	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
 
+	// Get mappings using this rule before deletion (for invalidation)
+	mappingsToInvalidate, err := mappingService.GetMappingsForRule(ctx, req.TenantId, workspaceID, req.MappingRuleName)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get mappings for rule invalidation: %v", err)
+		mappingsToInvalidate = nil
+	}
+
 	// Delete the mapping rule
 	err = mappingService.DeleteMappingRule(ctx, req.TenantId, workspaceID, req.MappingRuleName)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to delete mapping rule: %v", err)
+	}
+
+	// Invalidate all mappings that used this rule
+	for _, mappingObj := range mappingsToInvalidate {
+		if err := mappingService.InvalidateMapping(ctx, mappingObj.ID); err != nil {
+			s.engine.logger.Warnf("Failed to invalidate mapping %s: %v", mappingObj.Name, err)
+		}
 	}
 
 	return &corev1.DeleteMappingRuleResponse{
@@ -1839,6 +2008,17 @@ func (s *Server) addMCPMapping(ctx context.Context, req *corev1.AddMappingReques
 
 	s.engine.logger.Infof("Created MCP mapping %s (ID: %s) from %s to mcp://%s", req.MappingName, mappingID, sourceIdentifier, mcpResourceName)
 
+	// Auto-generate mapping rules for table-scope MCP mappings
+	if req.Scope == "table" && sourceTable != "" {
+		err = s.autoGenerateMCPMappingRules(ctx, req.TenantId, workspaceID, mappingID, req.MappingName, sourceDB, sourceTable, mcpResourceName, req.OwnerId)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to auto-generate mapping rules for MCP mapping: %v", err)
+			// Don't fail the mapping creation, just log the warning
+		}
+	} else if req.Scope == "database" {
+		s.engine.logger.Warnf("Database-scope MCP mappings are not supported for auto-rule generation. Please use table-scope mappings.")
+	}
+
 	// Get the created mapping
 	createdMapping, err := mappingService.Get(ctx, req.TenantId, workspaceID, req.MappingName)
 	if err != nil {
@@ -1854,9 +2034,188 @@ func (s *Server) addMCPMapping(ctx context.Context, req *corev1.AddMappingReques
 	}
 
 	return &corev1.AddMappingResponse{
-		Message: fmt.Sprintf("MCP mapping created successfully from %s to mcp://%s", sourceIdentifier, mcpResourceName),
+		Message: fmt.Sprintf("MCP mapping created successfully from %s to mcp://%s with %d auto-generated rules", sourceIdentifier, mcpResourceName, len(protoMapping.MappingRules)),
 		Success: true,
 		Mapping: protoMapping,
 		Status:  commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+// autoGenerateMCPMappingRules creates mapping rules with direct_mapping for all columns in the source table
+func (s *Server) autoGenerateMCPMappingRules(ctx context.Context, tenantID, workspaceID, mappingID, mappingName, sourceDatabaseName, sourceTableName, mcpResourceName, ownerID string) error {
+	s.engine.logger.Infof("Auto-generating mapping rules for MCP mapping %s (source: %s.%s)", mappingName, sourceDatabaseName, sourceTableName)
+
+	// Get database service
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+
+	// Get source database object to access schema
+	sourceDBObj, err := databaseService.Get(ctx, tenantID, workspaceID, sourceDatabaseName)
+	if err != nil {
+		return fmt.Errorf("failed to get source database: %w", err)
+	}
+
+	// Convert database schema to UnifiedModel
+	if sourceDBObj.Schema == "" {
+		return fmt.Errorf("source database has no schema information")
+	}
+
+	sourceUM, err := s.convertDatabaseSchemaToUnifiedModel(sourceDBObj.Schema)
+	if err != nil {
+		return fmt.Errorf("failed to convert database schema: %w", err)
+	}
+
+	// Find the source table in the schema
+	sourceTable, exists := sourceUM.Tables[sourceTableName]
+	if !exists {
+		return fmt.Errorf("table %s not found in source database schema", sourceTableName)
+	}
+
+	if len(sourceTable.Columns) == 0 {
+		return fmt.Errorf("table %s has no columns", sourceTableName)
+	}
+
+	s.engine.logger.Infof("Found %d columns in table %s", len(sourceTable.Columns), sourceTableName)
+
+	// Get mapping service
+	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
+
+	// Generate virtual table name
+	virtualTableName := fmt.Sprintf("mcp_virtual_%s", mappingName)
+
+	// Create a mapping rule for each column
+	ruleOrder := int32(0)
+	rulesCreated := 0
+
+	for columnName, column := range sourceTable.Columns {
+		// Generate unique rule name
+		baseRuleName := fmt.Sprintf("%s_%s_mcp_%s", sourceTableName, columnName, mcpResourceName)
+		ruleName := baseRuleName
+
+		// Check if rule name already exists and find a unique one
+		counter := 1
+		for {
+			existingRule, err := mappingService.GetMappingRuleByName(ctx, tenantID, workspaceID, ruleName)
+			if err != nil || existingRule == nil {
+				break // Name is available
+			}
+			ruleName = fmt.Sprintf("%s_%d", baseRuleName, counter)
+			counter++
+		}
+
+		// Build source and target identifiers
+		sourceIdentifier := fmt.Sprintf("db://%s.%s.%s", sourceDBObj.ID, sourceTableName, columnName)
+		targetIdentifier := fmt.Sprintf("mcp_virtual://%s.%s.%s", mappingName, virtualTableName, columnName)
+
+		// Create metadata for the mapping rule (additional fields beyond source/target identifiers)
+		metadata := map[string]interface{}{
+			"source_table":     sourceTableName,
+			"source_column":    columnName,
+			"target_table":     virtualTableName,
+			"target_column":    columnName, // Same name by default
+			"match_type":       "auto_generated_mcp",
+			"column_data_type": column.DataType,
+			"column_nullable":  column.Nullable,
+			"is_primary_key":   column.IsPrimaryKey,
+			"generated_at":     time.Now().UTC().Format(time.RFC3339),
+		}
+
+		// Create empty transformation options
+		transformationOptions := map[string]interface{}{}
+
+		// Create the mapping rule
+		_, err := mappingService.CreateMappingRule(ctx, tenantID, workspaceID, ruleName, fmt.Sprintf("Auto-generated rule for %s.%s", sourceTableName, columnName), sourceIdentifier, targetIdentifier, "direct_mapping", transformationOptions, metadata, ownerID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to create mapping rule %s: %v", ruleName, err)
+			continue
+		}
+
+		// Attach rule to mapping
+		orderPtr := int64(ruleOrder)
+		err = mappingService.AttachMappingRule(ctx, tenantID, workspaceID, mappingName, ruleName, &orderPtr)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to attach rule %s to mapping: %v", ruleName, err)
+			continue
+		}
+
+		s.engine.logger.Debugf("Created and attached mapping rule %s for column %s (order: %d)", ruleName, columnName, ruleOrder)
+		ruleOrder++
+		rulesCreated++
+	}
+
+	s.engine.logger.Infof("Auto-generated %d mapping rules for MCP mapping %s", rulesCreated, mappingName)
+
+	if rulesCreated == 0 {
+		return fmt.Errorf("failed to create any mapping rules")
+	}
+
+	return nil
+}
+
+// ValidateMapping validates a mapping
+func (s *Server) ValidateMapping(ctx context.Context, req *corev1.ValidateMappingRequest) (*corev1.ValidateMappingResponse, error) {
+	defer s.trackOperation()()
+
+	// Validate input
+	if req.TenantId == "" {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "tenant_id is required")
+	}
+	if req.WorkspaceName == "" {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "workspace_name is required")
+	}
+	if req.MappingName == "" {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "mapping_name is required")
+	}
+
+	// Get workspace service
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID from workspace name
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		s.engine.logger.Errorf("Failed to get workspace: %v", err)
+		return nil, status.Errorf(codes.NotFound, "workspace not found: %v", err)
+	}
+
+	// Get mapping service
+	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
+
+	// Get mapping by name
+	mappingObj, err := mappingService.GetByName(ctx, req.TenantId, workspaceID, req.MappingName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		s.engine.logger.Errorf("Failed to get mapping: %v", err)
+		return nil, status.Errorf(codes.NotFound, "mapping not found: %v", err)
+	}
+
+	// Perform validation
+	validationResult, err := mappingService.ValidateMappingComplete(ctx, mappingObj.ID, workspaceID, req.TenantId)
+	if err != nil {
+		s.engine.IncrementErrors()
+		s.engine.logger.Errorf("Failed to validate mapping: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to validate mapping: %v", err)
+	}
+
+	// Update validation status in database
+	err = mappingService.UpdateValidationStatus(ctx, mappingObj.ID, validationResult.IsValid, validationResult.Errors, validationResult.Warnings)
+	if err != nil {
+		s.engine.IncrementErrors()
+		s.engine.logger.Errorf("Failed to update validation status: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to update validation status: %v", err)
+	}
+
+	// Get current timestamp
+	validatedAt := time.Now().Format(time.RFC3339)
+
+	s.engine.logger.Infof("Mapping '%s' validated: valid=%v, errors=%d, warnings=%d", req.MappingName, validationResult.IsValid, len(validationResult.Errors), len(validationResult.Warnings))
+
+	return &corev1.ValidateMappingResponse{
+		IsValid:     validationResult.IsValid,
+		Errors:      validationResult.Errors,
+		Warnings:    validationResult.Warnings,
+		ValidatedAt: validatedAt,
 	}, nil
 }

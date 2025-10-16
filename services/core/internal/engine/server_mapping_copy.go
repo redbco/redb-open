@@ -2,11 +2,13 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	anchorv1 "github.com/redbco/redb-open/api/proto/anchor/v1"
+	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	transformationv1 "github.com/redbco/redb-open/api/proto/transformation/v1"
 	"github.com/redbco/redb-open/pkg/grpcconfig"
@@ -189,16 +191,29 @@ func (s *Server) groupMappingRulesByTables(rules []*mapping.Rule) []TablePair {
 	tableMap := make(map[string]TablePair)
 
 	for _, rule := range rules {
-		// Parse source and target identifiers
-		sourceInfo, err := s.parseDatabaseIdentifier(rule.SourceIdentifier)
-		if err != nil {
-			s.engine.logger.Warnf("Failed to parse source identifier '%s': %v", rule.SourceIdentifier, err)
+		// Extract identifiers from metadata (backward compatibility)
+		sourceIdentifier, ok := rule.Metadata["source_identifier"].(string)
+		if !ok || sourceIdentifier == "" {
+			s.engine.logger.Warnf("Failed to get source identifier from rule metadata")
 			continue
 		}
 
-		targetInfo, err := s.parseDatabaseIdentifier(rule.TargetIdentifier)
+		targetIdentifier, ok := rule.Metadata["target_identifier"].(string)
+		if !ok || targetIdentifier == "" {
+			s.engine.logger.Warnf("Failed to get target identifier from rule metadata")
+			continue
+		}
+
+		// Parse source and target identifiers
+		sourceInfo, err := s.parseDatabaseIdentifier(sourceIdentifier)
 		if err != nil {
-			s.engine.logger.Warnf("Failed to parse target identifier '%s': %v", rule.TargetIdentifier, err)
+			s.engine.logger.Warnf("Failed to parse source identifier '%s': %v", sourceIdentifier, err)
+			continue
+		}
+
+		targetInfo, err := s.parseDatabaseIdentifier(targetIdentifier)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to parse target identifier '%s': %v", targetIdentifier, err)
 			continue
 		}
 
@@ -286,7 +301,13 @@ func (s *Server) copyTableData(ctx context.Context, tablePair TablePair, batchSi
 	// Get specific columns from mapping rules
 	sourceColumns := make([]string, len(tablePair.Rules))
 	for i, rule := range tablePair.Rules {
-		sourceInfo, err := s.parseDatabaseIdentifier(rule.SourceIdentifier)
+		// Extract source identifier from metadata
+		sourceIdentifier, ok := rule.Metadata["source_identifier"].(string)
+		if !ok || sourceIdentifier == "" {
+			continue
+		}
+
+		sourceInfo, err := s.parseDatabaseIdentifier(sourceIdentifier)
 		if err != nil {
 			continue
 		}
@@ -404,27 +425,97 @@ func (s *Server) getTransformationClient() (transformationv1.TransformationServi
 
 // applyTransformations applies transformation rules to a batch of data
 func (s *Server) applyTransformations(ctx context.Context, client transformationv1.TransformationServiceClient, data []byte, rules []*mapping.Rule) ([]byte, error) {
-	// For now, return the data as-is if no transformations are needed
-	// In a full implementation, this would:
-	// 1. Parse the JSON data
-	// 2. Apply each transformation rule
-	// 3. Rebuild the JSON data with transformed values
+	// Parse the JSON data (array of rows)
+	var sourceRows []map[string]interface{}
+	if err := json.Unmarshal(data, &sourceRows); err != nil {
+		return nil, fmt.Errorf("failed to parse source data: %v", err)
+	}
 
-	// Check if any rules have transformations other than "direct_mapping"
-	hasTransformations := false
-	for _, rule := range rules {
-		if rule.TransformationName != "direct_mapping" && rule.TransformationName != "" {
-			hasTransformations = true
-			break
+	// Transform each row
+	targetRows := make([]map[string]interface{}, 0, len(sourceRows))
+	for _, sourceRow := range sourceRows {
+		targetRow := make(map[string]interface{})
+
+		// Apply each mapping rule
+		for _, rule := range rules {
+			// Extract source and target column names from metadata
+			sourceColumn, _ := rule.Metadata["source_column"].(string)
+			targetColumn, _ := rule.Metadata["target_column"].(string)
+			transformationName, _ := rule.Metadata["transformation_name"].(string)
+
+			if sourceColumn == "" || targetColumn == "" {
+				s.engine.logger.Warnf("Rule missing source or target column in metadata")
+				continue
+			}
+
+			// Get the source value
+			sourceValue, exists := sourceRow[sourceColumn]
+			if !exists {
+				s.engine.logger.Warnf("Source column '%s' not found in row data", sourceColumn)
+				continue
+			}
+
+			// Apply transformation if needed
+			var targetValue interface{}
+			if transformationName != "" && transformationName != "direct_mapping" {
+				// Call transformation service for non-direct transformations
+				transformedValue, err := s.applyTransformation(ctx, client, transformationName, sourceValue)
+				if err != nil {
+					s.engine.logger.Warnf("Failed to apply transformation '%s' to column '%s': %v, using original value",
+						transformationName, sourceColumn, err)
+					targetValue = sourceValue
+				} else {
+					targetValue = transformedValue
+				}
+			} else {
+				// Direct mapping - no transformation needed
+				targetValue = sourceValue
+			}
+
+			// Set the target column with the (possibly transformed) value
+			targetRow[targetColumn] = targetValue
 		}
+
+		targetRows = append(targetRows, targetRow)
 	}
 
-	if !hasTransformations {
-		return data, nil
+	// Convert back to JSON
+	transformedData, err := json.Marshal(targetRows)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal transformed data: %v", err)
 	}
 
-	// TODO: Implement actual transformation logic
-	// For now, just return the original data
-	s.engine.logger.Infof("Transformation logic not yet implemented, returning original data")
-	return data, nil
+	return transformedData, nil
+}
+
+// applyTransformation applies a single transformation to a value
+func (s *Server) applyTransformation(ctx context.Context, client transformationv1.TransformationServiceClient, transformationName string, value interface{}) (interface{}, error) {
+	// Convert value to string for transformation
+	var inputStr string
+	switch v := value.(type) {
+	case string:
+		inputStr = v
+	case nil:
+		return nil, nil
+	default:
+		// Convert other types to string
+		inputStr = fmt.Sprintf("%v", v)
+	}
+
+	// Call transformation service
+	transformReq := &transformationv1.TransformRequest{
+		FunctionName: transformationName,
+		Input:        inputStr,
+	}
+
+	transformResp, err := client.Transform(ctx, transformReq)
+	if err != nil {
+		return nil, fmt.Errorf("transformation service error: %v", err)
+	}
+
+	if transformResp.Status != commonv1.Status_STATUS_SUCCESS {
+		return nil, fmt.Errorf("transformation failed: %s", transformResp.StatusMessage)
+	}
+
+	return transformResp.Output, nil
 }

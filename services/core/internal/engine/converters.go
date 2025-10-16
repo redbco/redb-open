@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
@@ -486,6 +487,11 @@ func (s *Server) mappingToProto(m *mapping.Mapping) (*corev1.Mapping, error) {
 		policyId = m.PolicyIDs[0] // Use first policy ID for protobuf
 	}
 
+	var validatedAt string
+	if m.ValidatedAt != nil {
+		validatedAt = m.ValidatedAt.Format(time.RFC3339)
+	}
+
 	return &corev1.Mapping{
 		TenantId:           m.TenantID,
 		WorkspaceId:        m.WorkspaceID,
@@ -496,15 +502,38 @@ func (s *Server) mappingToProto(m *mapping.Mapping) (*corev1.Mapping, error) {
 		PolicyId:           policyId,
 		OwnerId:            m.OwnerID,
 		MappingRuleCount:   m.MappingRuleCount,
+		Validated:          m.Validated,
+		ValidatedAt:        validatedAt,
+		ValidationErrors:   m.ValidationErrors,
+		ValidationWarnings: m.ValidationWarnings,
 	}, nil
 }
 
 // Helper function to convert mapping rule to protobuf
 func (s *Server) mappingRuleToProto(m *mapping.Rule) (*corev1.MappingRule, error) {
-	// Convert transformation options map to JSON string
+	// Extract values from metadata (backward compatibility)
+	var sourceIdentifier, targetIdentifier, transformationID, transformationName string
+	var transformationOptions map[string]interface{}
+
+	if m.Metadata != nil {
+		if v, ok := m.Metadata["source_identifier"].(string); ok {
+			sourceIdentifier = v
+		}
+		if v, ok := m.Metadata["target_identifier"].(string); ok {
+			targetIdentifier = v
+		}
+		if v, ok := m.Metadata["transformation_name"].(string); ok {
+			transformationName = v
+		}
+		if v, ok := m.Metadata["transformation_options"].(map[string]interface{}); ok {
+			transformationOptions = v
+		}
+	}
+
+	// Convert transformation options to JSON string
 	transformationOptionsJSON := "{}"
-	if len(m.TransformationOptions) > 0 {
-		if jsonBytes, err := json.Marshal(m.TransformationOptions); err == nil {
+	if len(transformationOptions) > 0 {
+		if jsonBytes, err := json.Marshal(transformationOptions); err == nil {
 			transformationOptionsJSON = string(jsonBytes)
 		} else {
 			// Log error but continue - transformation options are optional
@@ -529,10 +558,10 @@ func (s *Server) mappingRuleToProto(m *mapping.Rule) (*corev1.MappingRule, error
 		MappingRuleId:                    m.ID,
 		MappingRuleName:                  m.Name,
 		MappingRuleDescription:           m.Description,
-		MappingRuleSource:                m.SourceIdentifier,
-		MappingRuleTarget:                m.TargetIdentifier,
-		MappingRuleTransformationId:      m.TransformationID,
-		MappingRuleTransformationName:    m.TransformationName,
+		MappingRuleSource:                sourceIdentifier,
+		MappingRuleTarget:                targetIdentifier,
+		MappingRuleTransformationId:      transformationID,
+		MappingRuleTransformationName:    transformationName,
 		MappingRuleTransformationOptions: transformationOptionsJSON,
 		MappingRuleMetadata:              metadataJSON,
 		OwnerId:                          m.OwnerID,

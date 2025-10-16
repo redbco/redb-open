@@ -83,7 +83,8 @@ type TransformationRule struct {
 	TargetTable  string `json:"target_table,omitempty"`
 
 	// Transformation configuration
-	TransformationType string                 `json:"transformation_type"` // direct, cast, function, expression
+	TransformationType string                 `json:"transformation_type"`           // direct, cast, function, expression
+	TransformationName string                 `json:"transformation_name,omitempty"` // Name of transformation function (e.g., "reverse", "uppercase")
 	Parameters         map[string]interface{} `json:"parameters,omitempty"`
 
 	// Metadata

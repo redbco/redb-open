@@ -141,11 +141,9 @@ func AddMCPResource(name, description, mapping, configStr string, policyIDs []st
 	// Generate default config if not provided
 	var config map[string]interface{}
 	if configStr == "" {
-		// Default config for direct table access
-		config = map[string]interface{}{
-			"type": "direct_table",
-		}
-		fmt.Println("Using default config: direct_table")
+		// Use empty config - let the server auto-detect type based on mapping
+		config = map[string]interface{}{}
+		fmt.Println("Using auto-detected config based on mapping")
 	} else {
 		// Parse provided config JSON
 		if err := json.Unmarshal([]byte(configStr), &config); err != nil {

@@ -9,6 +9,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redbco/redb-open/pkg/anchor/adapter"
 	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
+	transformationv1 "github.com/redbco/redb-open/api/proto/transformation/v1"
 )
 
 // ParseEvent converts a PostgreSQL-specific raw event to a standardized CDCEvent.
@@ -310,13 +315,30 @@ func (r *ReplicationOps) applyCDCTruncate(ctx context.Context, event *adapter.CD
 }
 
 // TransformData applies transformation rules to event data.
-// This is a basic implementation that handles common transformation types.
-func (r *ReplicationOps) TransformData(ctx context.Context, data map[string]interface{}, rules []adapter.TransformationRule) (map[string]interface{}, error) {
+// This implementation handles basic transformations and calls the transformation service for custom transformations.
+func (r *ReplicationOps) TransformData(ctx context.Context, data map[string]interface{}, rules []adapter.TransformationRule, transformationServiceEndpoint string) (map[string]interface{}, error) {
 	if len(rules) == 0 {
 		return data, nil
 	}
 
+	// Log the transformation process
+	// Note: We don't have direct access to logger here, but we can use fmt.Printf for debugging
+	// In production, consider passing logger or using a global logger
+
 	transformedData := make(map[string]interface{})
+
+	// Create transformation service client if endpoint is provided
+	var transformClient transformationv1.TransformationServiceClient
+	var grpcConn *grpc.ClientConn
+	if transformationServiceEndpoint != "" {
+		// Connect to transformation service
+		conn, err := grpc.Dial(transformationServiceEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err == nil {
+			transformClient = transformationv1.NewTransformationServiceClient(conn)
+			grpcConn = conn
+			defer conn.Close()
+		}
+	}
 
 	// Apply each transformation rule
 	for _, rule := range rules {
@@ -329,56 +351,100 @@ func (r *ReplicationOps) TransformData(ctx context.Context, data map[string]inte
 
 		// Apply transformation based on type
 		var transformedValue interface{}
+		var err error
 
-		switch rule.TransformationType {
-		case adapter.TransformDirect:
-			transformedValue = sourceValue
-
-		case adapter.TransformUppercase:
-			if str, ok := sourceValue.(string); ok {
-				transformedValue = strings.ToUpper(str)
-			} else {
+		// Check if there's a custom transformation name (e.g., "reverse", "base64_encode")
+		if rule.TransformationName != "" && rule.TransformationName != "direct_mapping" && grpcConn != nil {
+			// Call transformation service for custom transformations
+			transformedValue, err = callTransformationService(ctx, transformClient, rule.TransformationName, sourceValue)
+			if err != nil {
+				// Log warning and fall back to source value
 				transformedValue = sourceValue
 			}
-
-		case adapter.TransformLowercase:
-			if str, ok := sourceValue.(string); ok {
-				transformedValue = strings.ToLower(str)
-			} else {
-				transformedValue = sourceValue
+		} else {
+			// Handle basic transformations locally
+			transformType := rule.TransformationType
+			if transformType == "" && rule.TransformationName != "" {
+				transformType = rule.TransformationName
 			}
 
-		case adapter.TransformCast:
-			// Type casting would be implemented here
-			// For now, just pass through
-			transformedValue = sourceValue
+			switch transformType {
+			case adapter.TransformDirect, "direct_mapping":
+				transformedValue = sourceValue
 
-		case adapter.TransformDefault:
-			if sourceValue == nil {
-				// Use default value from parameters
-				if defaultVal, ok := rule.Parameters["default_value"]; ok {
-					transformedValue = defaultVal
+			case adapter.TransformUppercase:
+				if str, ok := sourceValue.(string); ok {
+					transformedValue = strings.ToUpper(str)
 				} else {
-					transformedValue = nil
+					transformedValue = sourceValue
 				}
-			} else {
+
+			case adapter.TransformLowercase:
+				if str, ok := sourceValue.(string); ok {
+					transformedValue = strings.ToLower(str)
+				} else {
+					transformedValue = sourceValue
+				}
+
+			case adapter.TransformCast:
+				// Type casting would be implemented here
+				// For now, just pass through
+				transformedValue = sourceValue
+
+			case adapter.TransformDefault:
+				if sourceValue == nil {
+					// Use default value from parameters
+					if defaultVal, ok := rule.Parameters["default_value"]; ok {
+						transformedValue = defaultVal
+					} else {
+						transformedValue = nil
+					}
+				} else {
+					transformedValue = sourceValue
+				}
+
+			default:
+				// Unknown transformation type - pass through source value
 				transformedValue = sourceValue
 			}
-
-		default:
-			// Unknown transformation type - pass through
-			transformedValue = sourceValue
 		}
 
 		transformedData[rule.TargetColumn] = transformedValue
 	}
 
-	// If no transformations were applied, return original data
-	if len(transformedData) == 0 {
-		return data, nil
+	return transformedData, nil
+}
+
+// callTransformationService calls the transformation service to apply a custom transformation
+func callTransformationService(ctx context.Context, client transformationv1.TransformationServiceClient, transformationName string, value interface{}) (interface{}, error) {
+	// Convert value to string for transformation
+	var inputStr string
+	switch v := value.(type) {
+	case string:
+		inputStr = v
+	case nil:
+		return nil, nil
+	default:
+		// Convert other types to string
+		inputStr = fmt.Sprintf("%v", v)
 	}
 
-	return transformedData, nil
+	// Call transformation service
+	transformReq := &transformationv1.TransformRequest{
+		FunctionName: transformationName,
+		Input:        inputStr,
+	}
+
+	transformResp, err := client.Transform(ctx, transformReq)
+	if err != nil {
+		return nil, fmt.Errorf("transformation service error: %v", err)
+	}
+
+	if transformResp.Status != commonv1.Status_STATUS_SUCCESS {
+		return nil, fmt.Errorf("transformation failed: %s", transformResp.StatusMessage)
+	}
+
+	return transformResp.Output, nil
 }
 
 // Helper methods

@@ -2,6 +2,7 @@ package mapping
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -27,38 +28,36 @@ func NewService(db *database.PostgreSQL, logger *logger.Logger) *Service {
 
 // Mapping represents a mapping in the system
 type Mapping struct {
-	ID               string
-	TenantID         string
-	WorkspaceID      string
-	Name             string
-	Description      string
-	MappingType      string
-	PolicyIDs        []string
-	OwnerID          string
-	Created          time.Time
-	Updated          time.Time
-	MappingRuleCount int32
+	ID                 string
+	TenantID           string
+	WorkspaceID        string
+	Name               string
+	Description        string
+	MappingType        string
+	PolicyIDs          []string
+	OwnerID            string
+	Validated          bool
+	ValidatedAt        *time.Time
+	ValidationErrors   []string
+	ValidationWarnings []string
+	Created            time.Time
+	Updated            time.Time
+	MappingRuleCount   int32
 }
 
 // Rule represents a mapping rule in the system
 type Rule struct {
-	ID                    string
-	TenantID              string
-	WorkspaceID           string
-	Name                  string
-	Description           string
-	Metadata              map[string]interface{}
-	SourceType            string
-	SourceIdentifier      string
-	TargetType            string
-	TargetIdentifier      string
-	TransformationID      string
-	TransformationName    string
-	TransformationOptions map[string]interface{}
-	OwnerID               string
-	Created               time.Time
-	Updated               time.Time
-	MappingCount          int32
+	ID           string
+	TenantID     string
+	WorkspaceID  string
+	Name         string
+	Description  string
+	Metadata     map[string]interface{}
+	WorkflowType string // 'simple' or 'dag'
+	OwnerID      string
+	Created      time.Time
+	Updated      time.Time
+	MappingCount int32
 }
 
 // Create creates a new mapping
@@ -128,12 +127,14 @@ func (s *Service) Get(ctx context.Context, tenantID, workspaceID, mappingName st
 	s.logger.Infof("Retrieving mapping from database with name: %s", mappingName)
 	query := `
 		SELECT mapping_id, tenant_id, workspace_id, mapping_name, mapping_description, mapping_type,
-		       COALESCE(policy_ids, '{}') as policy_ids, owner_id, created, updated
+		       COALESCE(policy_ids, '{}') as policy_ids, owner_id, validated, validated_at,
+		       validation_errors, validation_warnings, created, updated
 		FROM mappings
 		WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_name = $3
 	`
 
 	var mapping Mapping
+	var validationErrorsJSON, validationWarningsJSON []byte
 	err := s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, mappingName).Scan(
 		&mapping.ID,
 		&mapping.TenantID,
@@ -143,6 +144,10 @@ func (s *Service) Get(ctx context.Context, tenantID, workspaceID, mappingName st
 		&mapping.MappingType,
 		&mapping.PolicyIDs,
 		&mapping.OwnerID,
+		&mapping.Validated,
+		&mapping.ValidatedAt,
+		&validationErrorsJSON,
+		&validationWarningsJSON,
 		&mapping.Created,
 		&mapping.Updated,
 	)
@@ -152,6 +157,18 @@ func (s *Service) Get(ctx context.Context, tenantID, workspaceID, mappingName st
 		}
 		s.logger.Errorf("Failed to get mapping: %v", err)
 		return nil, err
+	}
+
+	// Unmarshal JSON fields
+	if len(validationErrorsJSON) > 0 {
+		if err := json.Unmarshal(validationErrorsJSON, &mapping.ValidationErrors); err != nil {
+			s.logger.Warnf("Failed to unmarshal validation errors: %v", err)
+		}
+	}
+	if len(validationWarningsJSON) > 0 {
+		if err := json.Unmarshal(validationWarningsJSON, &mapping.ValidationWarnings); err != nil {
+			s.logger.Warnf("Failed to unmarshal validation warnings: %v", err)
+		}
 	}
 
 	// Get mapping rule count
@@ -170,13 +187,15 @@ func (s *Service) List(ctx context.Context, tenantID, workspaceID string) ([]*Ma
 	s.logger.Infof("Listing mappings for tenant: %s, workspace: %s", tenantID, workspaceID)
 	query := `
 		SELECT m.mapping_id, m.tenant_id, m.workspace_id, m.mapping_name, m.mapping_description, m.mapping_type,
-		       COALESCE(m.policy_ids, '{}') as policy_ids, m.owner_id, m.created, m.updated,
+		       COALESCE(m.policy_ids, '{}') as policy_ids, m.owner_id, m.validated, m.validated_at,
+		       m.validation_errors, m.validation_warnings, m.created, m.updated,
 		       COALESCE(COUNT(mrm.mapping_rule_id), 0) as mapping_rule_count
 		FROM mappings m
 		LEFT JOIN mapping_rule_mappings mrm ON m.mapping_id = mrm.mapping_id
 		WHERE m.tenant_id = $1 AND m.workspace_id = $2
 		GROUP BY m.mapping_id, m.tenant_id, m.workspace_id, m.mapping_name, m.mapping_description, m.mapping_type,
-		         m.policy_ids, m.owner_id, m.created, m.updated
+		         m.policy_ids, m.owner_id, m.validated, m.validated_at, m.validation_errors, m.validation_warnings,
+		         m.created, m.updated
 		ORDER BY m.mapping_name
 	`
 
@@ -190,6 +209,7 @@ func (s *Service) List(ctx context.Context, tenantID, workspaceID string) ([]*Ma
 	var mappings []*Mapping
 	for rows.Next() {
 		var mapping Mapping
+		var validationErrorsJSON, validationWarningsJSON []byte
 		err := rows.Scan(
 			&mapping.ID,
 			&mapping.TenantID,
@@ -199,6 +219,10 @@ func (s *Service) List(ctx context.Context, tenantID, workspaceID string) ([]*Ma
 			&mapping.MappingType,
 			&mapping.PolicyIDs,
 			&mapping.OwnerID,
+			&mapping.Validated,
+			&mapping.ValidatedAt,
+			&validationErrorsJSON,
+			&validationWarningsJSON,
 			&mapping.Created,
 			&mapping.Updated,
 			&mapping.MappingRuleCount,
@@ -207,6 +231,19 @@ func (s *Service) List(ctx context.Context, tenantID, workspaceID string) ([]*Ma
 			s.logger.Errorf("Failed to scan mapping: %v", err)
 			return nil, err
 		}
+
+		// Unmarshal JSON fields
+		if len(validationErrorsJSON) > 0 {
+			if err := json.Unmarshal(validationErrorsJSON, &mapping.ValidationErrors); err != nil {
+				s.logger.Warnf("Failed to unmarshal validation errors: %v", err)
+			}
+		}
+		if len(validationWarningsJSON) > 0 {
+			if err := json.Unmarshal(validationWarningsJSON, &mapping.ValidationWarnings); err != nil {
+				s.logger.Warnf("Failed to unmarshal validation warnings: %v", err)
+			}
+		}
+
 		mappings = append(mappings, &mapping)
 	}
 
@@ -504,6 +541,22 @@ func (s *Service) DetachMappingRule(ctx context.Context, tenantID, workspaceID, 
 		return fmt.Errorf("failed to detach mapping rule: %w", err)
 	}
 
+	// After detaching, check if this rule is still attached to any other mappings
+	var remainingAttachments int
+	err = s.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM mapping_rule_mappings WHERE mapping_rule_id = $1", rule.ID).Scan(&remainingAttachments)
+	if err != nil {
+		return fmt.Errorf("failed to check remaining attachments: %w", err)
+	}
+
+	// If the rule is not attached to any other mappings, delete it completely
+	if remainingAttachments == 0 {
+		s.logger.Infof("Mapping rule %s has no remaining attachments, deleting completely", ruleName)
+		_, err = s.db.Pool().Exec(ctx, "DELETE FROM mapping_rules WHERE mapping_rule_id = $1", rule.ID)
+		if err != nil {
+			return fmt.Errorf("failed to delete orphaned mapping rule: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -513,17 +566,13 @@ func (s *Service) ListMappingRules(ctx context.Context, tenantID, workspaceID st
 
 	query := `
 		SELECT mr.mapping_rule_id, mr.tenant_id, mr.workspace_id, mr.mapping_rule_name, mr.mapping_rule_description, 
-			mr.mapping_rule_metadata, mr.mapping_rule_source_type, mr.mapping_rule_source, mr.mapping_rule_target_type, mr.mapping_rule_target,
-			mr.mapping_rule_transformation_id, mr.mapping_rule_transformation_name,
-			mr.mapping_rule_transformation_options, mr.owner_id, mr.created, mr.updated,
+			mr.mapping_rule_metadata, mr.mapping_rule_workflow_type, mr.owner_id, mr.created, mr.updated,
 			COALESCE(COUNT(mrm.mapping_id), 0) as mapping_count
 		FROM mapping_rules mr
 		LEFT JOIN mapping_rule_mappings mrm ON mr.mapping_rule_id = mrm.mapping_rule_id
 		WHERE mr.tenant_id = $1 AND mr.workspace_id = $2
 		GROUP BY mr.mapping_rule_id, mr.tenant_id, mr.workspace_id, mr.mapping_rule_name, mr.mapping_rule_description, 
-		         mr.mapping_rule_metadata, mr.mapping_rule_source_type, mr.mapping_rule_source, mr.mapping_rule_target_type, mr.mapping_rule_target,
-		         mr.mapping_rule_transformation_id, mr.mapping_rule_transformation_name,
-		         mr.mapping_rule_transformation_options, mr.owner_id, mr.created, mr.updated
+		         mr.mapping_rule_metadata, mr.mapping_rule_workflow_type, mr.owner_id, mr.created, mr.updated
 		ORDER BY mr.mapping_rule_name
 	`
 
@@ -537,20 +586,15 @@ func (s *Service) ListMappingRules(ctx context.Context, tenantID, workspaceID st
 	var rules []*Rule
 	for rows.Next() {
 		var rule Rule
+		var metadataBytes []byte
 		err := rows.Scan(
 			&rule.ID,
 			&rule.TenantID,
 			&rule.WorkspaceID,
 			&rule.Name,
 			&rule.Description,
-			&rule.Metadata,
-			&rule.SourceType,
-			&rule.SourceIdentifier,
-			&rule.TargetType,
-			&rule.TargetIdentifier,
-			&rule.TransformationID,
-			&rule.TransformationName,
-			&rule.TransformationOptions,
+			&metadataBytes,
+			&rule.WorkflowType,
 			&rule.OwnerID,
 			&rule.Created,
 			&rule.Updated,
@@ -560,6 +604,14 @@ func (s *Service) ListMappingRules(ctx context.Context, tenantID, workspaceID st
 			s.logger.Errorf("Failed to scan mapping rule: %v", err)
 			return nil, err
 		}
+
+		// Parse metadata
+		if len(metadataBytes) > 0 {
+			if err := json.Unmarshal(metadataBytes, &rule.Metadata); err != nil {
+				s.logger.Warnf("Failed to parse metadata: %v", err)
+			}
+		}
+
 		rules = append(rules, &rule)
 	}
 
@@ -577,28 +629,21 @@ func (s *Service) GetMappingRuleByName(ctx context.Context, tenantID, workspaceI
 
 	query := `
 		SELECT mapping_rule_id, tenant_id, workspace_id, mapping_rule_name, mapping_rule_description, 
-			mapping_rule_metadata, mapping_rule_source_type, mapping_rule_source, mapping_rule_target_type, mapping_rule_target,
-			mapping_rule_transformation_id, mapping_rule_transformation_name,
-			mapping_rule_transformation_options, owner_id, created, updated
+			mapping_rule_metadata, mapping_rule_workflow_type, owner_id, created, updated
 		FROM mapping_rules
 		WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_rule_name = $3
 	`
 
 	var rule Rule
+	var metadataBytes []byte
 	err := s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, name).Scan(
 		&rule.ID,
 		&rule.TenantID,
 		&rule.WorkspaceID,
 		&rule.Name,
 		&rule.Description,
-		&rule.Metadata,
-		&rule.SourceType,
-		&rule.SourceIdentifier,
-		&rule.TargetType,
-		&rule.TargetIdentifier,
-		&rule.TransformationID,
-		&rule.TransformationName,
-		&rule.TransformationOptions,
+		&metadataBytes,
+		&rule.WorkflowType,
 		&rule.OwnerID,
 		&rule.Created,
 		&rule.Updated,
@@ -609,6 +654,13 @@ func (s *Service) GetMappingRuleByName(ctx context.Context, tenantID, workspaceI
 		}
 		s.logger.Errorf("Failed to get mapping rule: %v", err)
 		return nil, err
+	}
+
+	// Parse metadata
+	if len(metadataBytes) > 0 {
+		if err := json.Unmarshal(metadataBytes, &rule.Metadata); err != nil {
+			s.logger.Warnf("Failed to parse metadata: %v", err)
+		}
 	}
 
 	// Get mapping count
@@ -623,6 +675,8 @@ func (s *Service) GetMappingRuleByName(ctx context.Context, tenantID, workspaceI
 }
 
 // CreateMappingRule creates a new mapping rule
+// NOTE: This is a simplified version for the new workflow-based schema
+// The old parameters are kept for backward compatibility but stored in metadata
 func (s *Service) CreateMappingRule(ctx context.Context, tenantID, workspaceID, name, description, sourceIdentifier, targetIdentifier, transformationName string, transformationOptions map[string]interface{}, metadata map[string]interface{}, ownerID string) (*Rule, error) {
 	s.logger.Infof("Creating mapping rule in database for tenant: %s, workspace: %s, name: %s", tenantID, workspaceID, name)
 
@@ -656,52 +710,41 @@ func (s *Service) CreateMappingRule(ctx context.Context, tenantID, workspaceID, 
 		return nil, errors.New("mapping rule with this name already exists in the workspace")
 	}
 
-	// Get transformation ID (placeholder for now)
-	var transformationID string
-	err = s.db.Pool().QueryRow(ctx, "SELECT transformation_id FROM transformations WHERE tenant_id = $1 LIMIT 1", tenantID).Scan(&transformationID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// Create a placeholder transformation
-			err = s.db.Pool().QueryRow(ctx, `
-				INSERT INTO transformations (tenant_id, transformation_name, transformation_description, transformation_type, transformation_function, owner_id)
-				VALUES ($1, $2, $3, $4, $5, $6)
-				RETURNING transformation_id
-			`, tenantID, transformationName, "Auto-generated transformation", "mutate", "function placeholder", ownerID).Scan(&transformationID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create placeholder transformation: %w", err)
-			}
-		} else {
-			return nil, fmt.Errorf("failed to get transformation: %w", err)
-		}
+	// Store the old-style mapping information in metadata for backward compatibility
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+	metadata["source_identifier"] = sourceIdentifier
+	metadata["target_identifier"] = targetIdentifier
+	metadata["transformation_name"] = transformationName
+	if transformationOptions != nil {
+		metadata["transformation_options"] = transformationOptions
 	}
 
-	// Insert the mapping rule into the database
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	// Insert the mapping rule into the database with simplified schema
 	query := `
 		INSERT INTO mapping_rules (tenant_id, workspace_id, mapping_rule_name, mapping_rule_description, 
-			mapping_rule_metadata, mapping_rule_source, mapping_rule_target, mapping_rule_transformation_id,
-			mapping_rule_transformation_name, mapping_rule_transformation_options, owner_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			mapping_rule_metadata, mapping_rule_workflow_type, owner_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING mapping_rule_id, tenant_id, workspace_id, mapping_rule_name, mapping_rule_description, 
-			mapping_rule_metadata, mapping_rule_source_type, mapping_rule_source, mapping_rule_target_type, mapping_rule_target,
-			mapping_rule_transformation_id, mapping_rule_transformation_name,
-			mapping_rule_transformation_options, owner_id, created, updated
+			mapping_rule_metadata, mapping_rule_workflow_type, owner_id, created, updated
 	`
 
 	var rule Rule
-	err = s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, name, description, metadata, sourceIdentifier, targetIdentifier, transformationID, transformationName, transformationOptions, ownerID).Scan(
+	var metadataBytes []byte
+	err = s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, name, description, metadataJSON, "simple", ownerID).Scan(
 		&rule.ID,
 		&rule.TenantID,
 		&rule.WorkspaceID,
 		&rule.Name,
 		&rule.Description,
-		&rule.Metadata,
-		&rule.SourceType,
-		&rule.SourceIdentifier,
-		&rule.TargetType,
-		&rule.TargetIdentifier,
-		&rule.TransformationID,
-		&rule.TransformationName,
-		&rule.TransformationOptions,
+		&metadataBytes,
+		&rule.WorkflowType,
 		&rule.OwnerID,
 		&rule.Created,
 		&rule.Updated,
@@ -709,6 +752,13 @@ func (s *Service) CreateMappingRule(ctx context.Context, tenantID, workspaceID, 
 	if err != nil {
 		s.logger.Errorf("Failed to create mapping rule: %v", err)
 		return nil, err
+	}
+
+	// Parse metadata
+	if len(metadataBytes) > 0 {
+		if err := json.Unmarshal(metadataBytes, &rule.Metadata); err != nil {
+			s.logger.Warnf("Failed to parse metadata: %v", err)
+		}
 	}
 
 	return &rule, nil
@@ -731,8 +781,7 @@ func (s *Service) ModifyMappingRule(ctx context.Context, tenantID, workspaceID, 
 
 	for field, value := range updates {
 		switch field {
-		case "mapping_rule_name", "mapping_rule_description", "mapping_rule_metadata", "mapping_rule_source", "mapping_rule_target",
-			"mapping_rule_transformation_name", "mapping_rule_transformation_options":
+		case "mapping_rule_name", "mapping_rule_description", "mapping_rule_metadata", "mapping_rule_workflow_type":
 			setParts = append(setParts, fmt.Sprintf("%s = $%d", field, argIndex))
 			args = append(args, value)
 			argIndex++
@@ -756,26 +805,19 @@ func (s *Service) ModifyMappingRule(ctx context.Context, tenantID, workspaceID, 
 		SET %s
 		WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_rule_name = $3
 		RETURNING mapping_rule_id, tenant_id, workspace_id, mapping_rule_name, mapping_rule_description, 
-			mapping_rule_metadata, mapping_rule_source_type, mapping_rule_source, mapping_rule_target_type, mapping_rule_target,
-			mapping_rule_transformation_id, mapping_rule_transformation_name,
-			mapping_rule_transformation_options, owner_id, created, updated
+			mapping_rule_metadata, mapping_rule_workflow_type, owner_id, created, updated
 	`, setClause)
 
 	var rule Rule
+	var metadataBytes []byte
 	err = s.db.Pool().QueryRow(ctx, query, args...).Scan(
 		&rule.ID,
 		&rule.TenantID,
 		&rule.WorkspaceID,
 		&rule.Name,
 		&rule.Description,
-		&rule.Metadata,
-		&rule.SourceType,
-		&rule.SourceIdentifier,
-		&rule.TargetType,
-		&rule.TargetIdentifier,
-		&rule.TransformationID,
-		&rule.TransformationName,
-		&rule.TransformationOptions,
+		&metadataBytes,
+		&rule.WorkflowType,
 		&rule.OwnerID,
 		&rule.Created,
 		&rule.Updated,
@@ -783,6 +825,13 @@ func (s *Service) ModifyMappingRule(ctx context.Context, tenantID, workspaceID, 
 	if err != nil {
 		s.logger.Errorf("Failed to modify mapping rule: %v", err)
 		return nil, err
+	}
+
+	// Parse metadata
+	if len(metadataBytes) > 0 {
+		if err := json.Unmarshal(metadataBytes, &rule.Metadata); err != nil {
+			s.logger.Warnf("Failed to parse metadata: %v", err)
+		}
 	}
 
 	return &rule, nil
@@ -914,9 +963,7 @@ func (s *Service) GetMappingRulesForMappingByID(ctx context.Context, tenantID, w
 
 	query := `
 		SELECT mr.mapping_rule_id, mr.tenant_id, mr.workspace_id, mr.mapping_rule_name, mr.mapping_rule_description, 
-			mr.mapping_rule_metadata, mr.mapping_rule_source_type, mr.mapping_rule_source, mr.mapping_rule_target_type, mr.mapping_rule_target,
-			mr.mapping_rule_transformation_id, mr.mapping_rule_transformation_name,
-			mr.mapping_rule_transformation_options, mr.owner_id, mr.created, mr.updated
+			mr.mapping_rule_metadata, mr.mapping_rule_workflow_type, mr.owner_id, mr.created, mr.updated
 		FROM mapping_rules mr
 		INNER JOIN mapping_rule_mappings mrm ON mr.mapping_rule_id = mrm.mapping_rule_id
 		WHERE mr.tenant_id = $1 AND mr.workspace_id = $2 AND mrm.mapping_id = $3
@@ -933,20 +980,15 @@ func (s *Service) GetMappingRulesForMappingByID(ctx context.Context, tenantID, w
 	var rules []*Rule
 	for rows.Next() {
 		var rule Rule
+		var metadataBytes []byte
 		err := rows.Scan(
 			&rule.ID,
 			&rule.TenantID,
 			&rule.WorkspaceID,
 			&rule.Name,
 			&rule.Description,
-			&rule.Metadata,
-			&rule.SourceType,
-			&rule.SourceIdentifier,
-			&rule.TargetType,
-			&rule.TargetIdentifier,
-			&rule.TransformationID,
-			&rule.TransformationName,
-			&rule.TransformationOptions,
+			&metadataBytes,
+			&rule.WorkflowType,
 			&rule.OwnerID,
 			&rule.Created,
 			&rule.Updated,
@@ -955,6 +997,14 @@ func (s *Service) GetMappingRulesForMappingByID(ctx context.Context, tenantID, w
 			s.logger.Errorf("Failed to scan mapping rule: %v", err)
 			return nil, err
 		}
+
+		// Parse metadata
+		if len(metadataBytes) > 0 {
+			if err := json.Unmarshal(metadataBytes, &rule.Metadata); err != nil {
+				s.logger.Warnf("Failed to parse metadata: %v", err)
+			}
+		}
+
 		rules = append(rules, &rule)
 	}
 
@@ -964,4 +1014,253 @@ func (s *Service) GetMappingRulesForMappingByID(ctx context.Context, tenantID, w
 	}
 
 	return rules, nil
+}
+
+// GetByID retrieves a mapping by its ID
+func (s *Service) GetByID(ctx context.Context, mappingID string) (*Mapping, error) {
+	query := `
+		SELECT mapping_id, tenant_id, workspace_id, mapping_name, mapping_description, 
+		       mapping_type, policy_ids, owner_id, validated, validated_at, 
+		       validation_errors, validation_warnings, created, updated
+		FROM mappings
+		WHERE mapping_id = $1
+	`
+
+	mapping := &Mapping{}
+	var validationErrorsJSON, validationWarningsJSON []byte
+	err := s.db.Pool().QueryRow(ctx, query, mappingID).Scan(
+		&mapping.ID,
+		&mapping.TenantID,
+		&mapping.WorkspaceID,
+		&mapping.Name,
+		&mapping.Description,
+		&mapping.MappingType,
+		&mapping.PolicyIDs,
+		&mapping.OwnerID,
+		&mapping.Validated,
+		&mapping.ValidatedAt,
+		&validationErrorsJSON,
+		&validationWarningsJSON,
+		&mapping.Created,
+		&mapping.Updated,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("mapping not found")
+		}
+		return nil, fmt.Errorf("failed to get mapping: %w", err)
+	}
+
+	// Unmarshal JSON fields
+	if len(validationErrorsJSON) > 0 {
+		if err := json.Unmarshal(validationErrorsJSON, &mapping.ValidationErrors); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal validation errors: %w", err)
+		}
+	}
+	if len(validationWarningsJSON) > 0 {
+		if err := json.Unmarshal(validationWarningsJSON, &mapping.ValidationWarnings); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal validation warnings: %w", err)
+		}
+	}
+
+	return mapping, nil
+}
+
+// GetRulesByMappingID retrieves all rules associated with a mapping
+func (s *Service) GetRulesByMappingID(ctx context.Context, mappingID string) ([]*Rule, error) {
+	query := `
+		SELECT 
+			mr.mapping_rule_id,
+			mr.tenant_id,
+			mr.workspace_id,
+			mr.mapping_rule_name,
+			mr.mapping_rule_description,
+			mr.mapping_rule_metadata,
+			mr.mapping_rule_workflow_type,
+			mr.owner_id,
+			mr.created,
+			mr.updated
+		FROM mapping_rules mr
+		JOIN mapping_rule_mappings mrm ON mr.mapping_rule_id = mrm.mapping_rule_id
+		WHERE mrm.mapping_id = $1
+		ORDER BY mrm.mapping_rule_order
+	`
+
+	rows, err := s.db.Pool().Query(ctx, query, mappingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query mapping rules: %w", err)
+	}
+	defer rows.Close()
+
+	rules := []*Rule{}
+	for rows.Next() {
+		rule := &Rule{}
+		var metadataBytes []byte
+		err := rows.Scan(
+			&rule.ID,
+			&rule.TenantID,
+			&rule.WorkspaceID,
+			&rule.Name,
+			&rule.Description,
+			&metadataBytes,
+			&rule.WorkflowType,
+			&rule.OwnerID,
+			&rule.Created,
+			&rule.Updated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan mapping rule: %w", err)
+		}
+
+		// Parse metadata
+		if len(metadataBytes) > 0 {
+			if err := json.Unmarshal(metadataBytes, &rule.Metadata); err != nil {
+				s.logger.Warnf("Failed to parse metadata: %v", err)
+			}
+		}
+
+		rules = append(rules, rule)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating mapping rules: %w", err)
+	}
+
+	return rules, nil
+}
+
+// UpdateValidationStatus updates the validation status of a mapping
+func (s *Service) UpdateValidationStatus(ctx context.Context, mappingID string, isValid bool, errors, warnings []string) error {
+	query := `
+		UPDATE mappings
+		SET validated = $1,
+		    validated_at = CURRENT_TIMESTAMP,
+		    validation_errors = $2,
+		    validation_warnings = $3,
+		    updated = CURRENT_TIMESTAMP
+		WHERE mapping_id = $4
+	`
+
+	errorsJSON, err := json.Marshal(errors)
+	if err != nil {
+		return fmt.Errorf("failed to marshal errors: %w", err)
+	}
+
+	warningsJSON, err := json.Marshal(warnings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal warnings: %w", err)
+	}
+
+	_, err = s.db.Pool().Exec(ctx, query, isValid, errorsJSON, warningsJSON, mappingID)
+	if err != nil {
+		return fmt.Errorf("failed to update validation status: %w", err)
+	}
+
+	return nil
+}
+
+// InvalidateMapping invalidates a mapping's validation status (sets validated to false and clears validation data)
+func (s *Service) InvalidateMapping(ctx context.Context, mappingID string) error {
+	query := `
+		UPDATE mappings
+		SET validated = false,
+		    validated_at = NULL,
+		    validation_errors = '[]',
+		    validation_warnings = '[]',
+		    updated = CURRENT_TIMESTAMP
+		WHERE mapping_id = $1
+	`
+
+	_, err := s.db.Pool().Exec(ctx, query, mappingID)
+	if err != nil {
+		return fmt.Errorf("failed to invalidate mapping: %w", err)
+	}
+
+	return nil
+}
+
+// InvalidateMappingsByTarget invalidates all mappings that target a specific database and table
+func (s *Service) InvalidateMappingsByTarget(ctx context.Context, workspaceID, databaseID, tableName string) error {
+	// Find all mapping rules that target the specified database and table
+	// Then invalidate the associated mappings
+	query := `
+		UPDATE mappings m
+		SET validated = false,
+		    validated_at = NULL,
+		    validation_errors = '[]',
+		    validation_warnings = '[]',
+		    updated = CURRENT_TIMESTAMP
+		WHERE m.workspace_id = $1
+		AND m.mapping_id IN (
+			SELECT DISTINCT mrm.mapping_id
+			FROM mapping_rule_mappings mrm
+			JOIN mapping_rules mr ON mrm.mapping_rule_id = mr.mapping_rule_id
+			WHERE mr.mapping_rule_metadata->>'target_identifier' LIKE $2
+		)
+	`
+
+	// The target identifier format is: db://database_id.table_name.column_name
+	targetPattern := fmt.Sprintf("db://%s.%s.%%", databaseID, tableName)
+
+	result, err := s.db.Pool().Exec(ctx, query, workspaceID, targetPattern)
+	if err != nil {
+		return fmt.Errorf("failed to invalidate mappings by target: %w", err)
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected > 0 {
+		s.logger.Infof("Invalidated %d mapping(s) targeting %s.%s", rowsAffected, databaseID, tableName)
+	}
+
+	return nil
+}
+
+// GetByName retrieves a mapping by its name
+func (s *Service) GetByName(ctx context.Context, tenantID, workspaceID, mappingName string) (*Mapping, error) {
+	query := `
+		SELECT mapping_id, tenant_id, workspace_id, mapping_name, mapping_description, 
+		       mapping_type, policy_ids, owner_id, validated, validated_at,
+		       validation_errors, validation_warnings, created, updated
+		FROM mappings
+		WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_name = $3
+	`
+
+	mapping := &Mapping{}
+	var validationErrorsJSON, validationWarningsJSON []byte
+	err := s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, mappingName).Scan(
+		&mapping.ID,
+		&mapping.TenantID,
+		&mapping.WorkspaceID,
+		&mapping.Name,
+		&mapping.Description,
+		&mapping.MappingType,
+		&mapping.PolicyIDs,
+		&mapping.OwnerID,
+		&mapping.Validated,
+		&mapping.ValidatedAt,
+		&validationErrorsJSON,
+		&validationWarningsJSON,
+		&mapping.Created,
+		&mapping.Updated,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("mapping not found")
+		}
+		return nil, fmt.Errorf("failed to get mapping: %w", err)
+	}
+
+	// Unmarshal JSON fields
+	if len(validationErrorsJSON) > 0 {
+		if err := json.Unmarshal(validationErrorsJSON, &mapping.ValidationErrors); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal validation errors: %w", err)
+		}
+	}
+	if len(validationWarningsJSON) > 0 {
+		if err := json.Unmarshal(validationWarningsJSON, &mapping.ValidationWarnings); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal validation warnings: %w", err)
+		}
+	}
+
+	return mapping, nil
 }

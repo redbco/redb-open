@@ -92,10 +92,12 @@ INSERT INTO mcpservers (
 ### Resource Configuration
 
 Resources can be:
-1. **Direct Tables**: Direct access to database tables
-2. **Mapped Tables**: Virtual tables with transformations
+1. **Direct Tables**: Direct access to database tables without transformations
+2. **Mapped Tables**: Virtual tables with custom transformations defined by mapping rules
 
-Example resource configuration in `mcpresources`:
+#### Direct Table Resources
+
+Example direct table resource configuration in `mcpresources`:
 
 ```json
 {
@@ -107,9 +109,72 @@ Example resource configuration in `mcpresources`:
 
 Note: The `database_id` field can contain either a database name or a database ID. Database names are automatically resolved to IDs at runtime.
 
+#### Mapped Table Resources (Virtual Tables)
+
+Mapped table resources use **virtual target tables** defined by mapping rules. When you create an MCP mapping, the system automatically:
+
+1. **Generates mapping rules** with `direct_mapping` transformation for all source table columns
+2. **Creates a virtual target table** named `mcp_virtual_{mapping_name}`
+3. **Applies transformations on-the-fly** when data is queried through the MCP resource
+
+**Example Workflow:**
+
+1. Create an MCP mapping from a source table to an MCP resource:
+   ```bash
+   redb mappings add --scope table \
+     --source postgres_db.users \
+     --target mcp://user_resource \
+     --name user_mcp_mapping
+   ```
+
+2. The system automatically creates mapping rules for all columns with `direct_mapping` transformation.
+
+3. Customize transformations using CLI commands:
+   ```bash
+   # Mask email addresses
+   redb mappings modify-rule \
+     --mapping user_mcp_mapping \
+     --rule users_email_mcp_user_resource \
+     --transformation hash_sha256
+
+   # Convert usernames to lowercase
+   redb mappings modify-rule \
+     --mapping user_mcp_mapping \
+     --rule users_username_mcp_user_resource \
+     --transformation lowercase
+
+   # Add a new computed column
+   redb mappings add-rule \
+     --mapping user_mcp_mapping \
+     --rule custom_full_name \
+     --source postgres_db.users.first_name \
+     --target mcp_virtual_user_resource.full_name \
+     --transformation concat_with_space
+   ```
+
+4. When MCP clients query the resource, transformations are applied automatically.
+
+**Virtual Table Structure:**
+
+- Virtual table name: `mcp_virtual_{mapping_name}`
+- Columns are defined by mapping rules' `target_column` metadata
+- Data is fetched from the source table and transformed in real-time
+- No physical table is created - transformations happen on-the-fly
+
+**Available Transformations:**
+
+- `direct_mapping` - Pass through without modification (default)
+- `uppercase` / `lowercase` - Case conversion
+- `hash_sha256` / `hash_md5` - Hashing for sensitive data
+- `base64_encode` / `base64_decode` - Encoding
+- `url_encode` / `url_decode` - URL encoding
+- Custom transformations defined in the transformation service
+
 ### Tool Configuration
 
-Tools define operations that can be executed. Example in `mcptools`:
+Tools define operations that can be executed. Tools can also use mappings to apply transformations to query results, just like resources.
+
+**Example tool configuration in `mcptools`:**
 
 ```json
 {
@@ -125,6 +190,16 @@ Tools define operations that can be executed. Example in `mcptools`:
   }
 }
 ```
+
+**Mapped Tools with Transformations:**
+
+When a tool is associated with a mapping (via `mapping_id`), query results are automatically transformed using the mapping rules:
+
+1. Create an MCP mapping and associate it with a tool
+2. The tool will apply transformations to query results
+3. Users can customize transformations using the same mapping rule commands
+
+This provides consistent data transformation across both resources and tools.
 
 ### Prompt Configuration
 

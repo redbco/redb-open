@@ -8,6 +8,7 @@ import (
 
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	pb "github.com/redbco/redb-open/api/proto/transformation/v1"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 type TransformationServer struct {
@@ -333,4 +334,276 @@ func getAllTransformationMetadata() []*pb.TransformationMetadata {
 	}
 
 	return result
+}
+
+// TransformWorkflow executes a workflow-based transformation
+func (s *TransformationServer) TransformWorkflow(ctx context.Context, req *pb.TransformWorkflowRequest) (*pb.TransformWorkflowResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+
+	atomic.AddInt64(&s.engine.metrics.requestsProcessed, 1)
+
+	// Validate request
+	if len(req.Nodes) == 0 {
+		atomic.AddInt64(&s.engine.metrics.errors, 1)
+		return &pb.TransformWorkflowResponse{
+			TargetData:    nil,
+			StatusMessage: "no workflow nodes provided",
+			Status:        commonv1.Status_STATUS_FAILURE,
+		}, nil
+	}
+
+	// Build DAG
+	dag, err := s.engine.workflowEngine.BuildDAG(req.Nodes, req.Edges)
+	if err != nil {
+		atomic.AddInt64(&s.engine.metrics.errors, 1)
+		return &pb.TransformWorkflowResponse{
+			TargetData:    nil,
+			StatusMessage: fmt.Sprintf("failed to build workflow DAG: %v", err),
+			Status:        commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	// Validate DAG
+	errors, warnings, err := s.engine.workflowEngine.ValidateDAG(dag)
+	if err != nil {
+		atomic.AddInt64(&s.engine.metrics.errors, 1)
+		return &pb.TransformWorkflowResponse{
+			TargetData:    nil,
+			StatusMessage: fmt.Sprintf("workflow validation failed: %v", err),
+			Status:        commonv1.Status_STATUS_FAILURE,
+			ExecutionLog:  append(errors, warnings...),
+		}, nil
+	}
+
+	// Execute DAG
+	targetData, executionLog, err := s.engine.workflowEngine.ExecuteDAG(ctx, dag, req.SourceData)
+	if err != nil {
+		atomic.AddInt64(&s.engine.metrics.errors, 1)
+		return &pb.TransformWorkflowResponse{
+			TargetData:    nil,
+			StatusMessage: fmt.Sprintf("workflow execution failed: %v", err),
+			Status:        commonv1.Status_STATUS_ERROR,
+			ExecutionLog:  executionLog,
+		}, nil
+	}
+
+	return &pb.TransformWorkflowResponse{
+		TargetData:    targetData,
+		StatusMessage: "workflow executed successfully",
+		Status:        commonv1.Status_STATUS_SUCCESS,
+		ExecutionLog:  executionLog,
+	}, nil
+}
+
+// ValidateWorkflow validates a workflow without executing it
+func (s *TransformationServer) ValidateWorkflow(ctx context.Context, req *pb.ValidateWorkflowRequest) (*pb.ValidateWorkflowResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+
+	atomic.AddInt64(&s.engine.metrics.requestsProcessed, 1)
+
+	// Validate request
+	if len(req.Nodes) == 0 {
+		atomic.AddInt64(&s.engine.metrics.errors, 1)
+		return &pb.ValidateWorkflowResponse{
+			IsValid: false,
+			Errors:  []string{"no workflow nodes provided"},
+			Status:  commonv1.Status_STATUS_FAILURE,
+		}, nil
+	}
+
+	// Build DAG
+	dag, err := s.engine.workflowEngine.BuildDAG(req.Nodes, req.Edges)
+	if err != nil {
+		atomic.AddInt64(&s.engine.metrics.errors, 1)
+		return &pb.ValidateWorkflowResponse{
+			IsValid: false,
+			Errors:  []string{fmt.Sprintf("failed to build workflow DAG: %v", err)},
+			Status:  commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	// Validate DAG
+	errors, warnings, err := s.engine.workflowEngine.ValidateDAG(dag)
+	if err != nil {
+		atomic.AddInt64(&s.engine.metrics.errors, 1)
+		return &pb.ValidateWorkflowResponse{
+			IsValid:  false,
+			Errors:   errors,
+			Warnings: warnings,
+			Status:   commonv1.Status_STATUS_FAILURE,
+		}, nil
+	}
+
+	return &pb.ValidateWorkflowResponse{
+		IsValid:  true,
+		Errors:   []string{},
+		Warnings: warnings,
+		Status:   commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+// CreateTransformation creates a new transformation in the database
+func (s *TransformationServer) CreateTransformation(ctx context.Context, req *pb.CreateTransformationRequest) (*pb.CreateTransformationResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+
+	atomic.AddInt64(&s.engine.metrics.requestsProcessed, 1)
+
+	// Validate request
+	if req.TenantId == "" || req.TransformationName == "" {
+		atomic.AddInt64(&s.engine.metrics.errors, 1)
+		return &pb.CreateTransformationResponse{
+			TransformationId: "",
+			StatusMessage:    "tenant_id and transformation_name are required",
+			Status:           commonv1.Status_STATUS_FAILURE,
+		}, nil
+	}
+
+	// Convert protobuf request to database record
+	metadata := make(map[string]interface{})
+	if req.TransformationMetadata != nil {
+		metadata = req.TransformationMetadata.AsMap()
+	}
+
+	record := &TransformationRecord{
+		TenantID:       req.TenantId,
+		Name:           req.TransformationName,
+		Description:    req.TransformationDescription,
+		Type:           req.TransformationType,
+		Version:        "1.0.0",
+		Function:       "",
+		Cardinality:    req.TransformationCardinality,
+		RequiresInput:  req.RequiresInput,
+		ProducesOutput: req.ProducesOutput,
+		Implementation: req.TransformationImplementation,
+		Metadata:       metadata,
+		Enabled:        true,
+		OwnerID:        req.OwnerId,
+	}
+
+	// Convert I/O definitions
+	for _, ioDef := range req.IoDefinitions {
+		ioType := "input"
+		if ioDef.IoType == pb.IOType_IO_TYPE_OUTPUT {
+			ioType = "output"
+		}
+
+		var defaultValue interface{}
+		if ioDef.DefaultValue != nil {
+			defaultValue = ioDef.DefaultValue.AsInterface()
+		}
+
+		validationRules := make(map[string]interface{})
+		if ioDef.ValidationRules != nil {
+			validationRules = ioDef.ValidationRules.AsMap()
+		}
+
+		record.IODefinitions = append(record.IODefinitions, IODefinitionRecord{
+			IOType:          ioType,
+			Name:            ioDef.IoName,
+			DataType:        ioDef.DataType,
+			IsMandatory:     ioDef.IsMandatory,
+			IsArray:         ioDef.IsArray,
+			DefaultValue:    defaultValue,
+			Description:     ioDef.Description,
+			ValidationRules: validationRules,
+		})
+	}
+
+	// Create transformation in database
+	dbOps := NewDatabaseOps(s.engine.db, s.engine.logger)
+	transformationID, err := dbOps.CreateTransformation(ctx, record)
+	if err != nil {
+		atomic.AddInt64(&s.engine.metrics.errors, 1)
+		return &pb.CreateTransformationResponse{
+			TransformationId: "",
+			StatusMessage:    fmt.Sprintf("failed to create transformation: %v", err),
+			Status:           commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	// Register in registry
+	record.ID = transformationID
+	s.engine.registry.RegisterTransformation(record)
+
+	return &pb.CreateTransformationResponse{
+		TransformationId: transformationID,
+		StatusMessage:    "transformation created successfully",
+		Status:           commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+// GetTransformationIO retrieves I/O definitions for a transformation
+func (s *TransformationServer) GetTransformationIO(ctx context.Context, req *pb.GetTransformationIORequest) (*pb.GetTransformationIOResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+
+	atomic.AddInt64(&s.engine.metrics.requestsProcessed, 1)
+
+	// Validate request
+	if req.TransformationId == "" {
+		atomic.AddInt64(&s.engine.metrics.errors, 1)
+		return &pb.GetTransformationIOResponse{
+			IoDefinitions: nil,
+			StatusMessage: "transformation_id is required",
+			Status:        commonv1.Status_STATUS_FAILURE,
+		}, nil
+	}
+
+	// Get transformation from registry
+	transformation, err := s.engine.registry.GetTransformation(req.TransformationId)
+	if err != nil {
+		atomic.AddInt64(&s.engine.metrics.errors, 1)
+		return &pb.GetTransformationIOResponse{
+			IoDefinitions: nil,
+			StatusMessage: fmt.Sprintf("transformation not found: %v", err),
+			Status:        commonv1.Status_STATUS_FAILURE,
+		}, nil
+	}
+
+	// Convert I/O definitions to protobuf
+	ioDefinitions := make([]*pb.TransformationIODefinition, 0, len(transformation.IODefinitions))
+	for _, ioDef := range transformation.IODefinitions {
+		var ioType pb.IOType
+		if ioDef.IOType == "input" {
+			ioType = pb.IOType_IO_TYPE_INPUT
+		} else {
+			ioType = pb.IOType_IO_TYPE_OUTPUT
+		}
+
+		var defaultValue *structpb.Value
+		if ioDef.DefaultValue != nil {
+			var err error
+			defaultValue, err = structpb.NewValue(ioDef.DefaultValue)
+			if err != nil {
+				s.engine.logger.Warnf("Failed to convert default value: %v", err)
+			}
+		}
+
+		validationRules, err := structpb.NewStruct(ioDef.ValidationRules)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to convert validation rules: %v", err)
+			validationRules = &structpb.Struct{}
+		}
+
+		ioDefinitions = append(ioDefinitions, &pb.TransformationIODefinition{
+			IoId:            ioDef.ID,
+			IoName:          ioDef.Name,
+			IoType:          ioType,
+			DataType:        ioDef.DataType,
+			IsMandatory:     ioDef.IsMandatory,
+			IsArray:         ioDef.IsArray,
+			DefaultValue:    defaultValue,
+			Description:     ioDef.Description,
+			ValidationRules: validationRules,
+		})
+	}
+
+	return &pb.GetTransformationIOResponse{
+		IoDefinitions: ioDefinitions,
+		StatusMessage: "I/O definitions retrieved successfully",
+		Status:        commonv1.Status_STATUS_SUCCESS,
+	}, nil
 }

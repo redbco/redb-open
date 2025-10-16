@@ -86,7 +86,7 @@ func (u *UnsupportedReplicationOperator) ApplyCDCEvent(ctx context.Context, even
 	return NewUnsupportedOperationError(u.dbType, "apply CDC event", "this database does not support CDC/replication")
 }
 
-func (u *UnsupportedReplicationOperator) TransformData(ctx context.Context, data map[string]interface{}, rules []TransformationRule) (map[string]interface{}, error) {
+func (u *UnsupportedReplicationOperator) TransformData(ctx context.Context, data map[string]interface{}, rules []TransformationRule, transformationServiceEndpoint string) (map[string]interface{}, error) {
 	return nil, NewUnsupportedOperationError(u.dbType, "transform data", "this database does not support CDC/replication")
 }
 

@@ -7,11 +7,17 @@ import (
 	"strings"
 
 	anchorv1 "github.com/redbco/redb-open/api/proto/anchor/v1"
+	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
+	transformationv1 "github.com/redbco/redb-open/api/proto/transformation/v1"
+	"github.com/redbco/redb-open/pkg/config"
 	"github.com/redbco/redb-open/pkg/database"
+	"github.com/redbco/redb-open/pkg/grpcconfig"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/pkg/models"
 	"github.com/redbco/redb-open/services/mcpserver/internal/auth"
 	"github.com/redbco/redb-open/services/mcpserver/internal/protocol"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Handler handles MCP tool operations
@@ -21,6 +27,7 @@ type Handler struct {
 	anchorClient   anchorv1.AnchorServiceClient
 	authMiddleware *auth.Middleware
 	mcpServerID    string
+	config         *config.Config // Global config for service discovery
 }
 
 // NewHandler creates a new tool handler
@@ -30,6 +37,7 @@ func NewHandler(
 	anchorClient anchorv1.AnchorServiceClient,
 	authMiddleware *auth.Middleware,
 	mcpServerID string,
+	config *config.Config,
 ) *Handler {
 	return &Handler{
 		logger:         logger,
@@ -37,6 +45,7 @@ func NewHandler(
 		anchorClient:   anchorClient,
 		authMiddleware: authMiddleware,
 		mcpServerID:    mcpServerID,
+		config:         config,
 	}
 }
 
@@ -168,7 +177,7 @@ func (h *Handler) Call(ctx context.Context, req *protocol.CallToolRequest) (*pro
 	}
 
 	// Execute tool based on operation type
-	result, err := h.executeTool(ctx, session, config, tool.MCPToolConfig, req.Arguments)
+	result, err := h.executeTool(ctx, session, config, tool.MCPToolConfig, tool.MappingID, req.Arguments)
 	if err != nil {
 		h.logger.Errorf("Tool execution failed: %v", err)
 		return &protocol.CallToolResult{
@@ -186,7 +195,7 @@ func (h *Handler) Call(ctx context.Context, req *protocol.CallToolRequest) (*pro
 }
 
 // executeTool executes a tool based on its configuration
-func (h *Handler) executeTool(ctx context.Context, session *auth.SessionContext, config ToolConfig, fullConfig map[string]interface{}, args map[string]interface{}) (*protocol.CallToolResult, error) {
+func (h *Handler) executeTool(ctx context.Context, session *auth.SessionContext, config ToolConfig, fullConfig map[string]interface{}, mappingID string, args map[string]interface{}) (*protocol.CallToolResult, error) {
 	// Merge config defaults with arguments (arguments take precedence)
 	mergedArgs := make(map[string]interface{})
 
@@ -205,7 +214,7 @@ func (h *Handler) executeTool(ctx context.Context, session *auth.SessionContext,
 
 	switch config.Operation {
 	case "query_database":
-		return h.executeQuery(ctx, session, mergedArgs)
+		return h.executeQuery(ctx, session, mappingID, mergedArgs)
 	case "insert_data":
 		return h.executeInsert(ctx, session, mergedArgs)
 	case "update_data":
@@ -224,7 +233,7 @@ func (h *Handler) executeTool(ctx context.Context, session *auth.SessionContext,
 }
 
 // executeQuery executes a database query
-func (h *Handler) executeQuery(ctx context.Context, session *auth.SessionContext, args map[string]interface{}) (*protocol.CallToolResult, error) {
+func (h *Handler) executeQuery(ctx context.Context, session *auth.SessionContext, mappingID string, args map[string]interface{}) (*protocol.CallToolResult, error) {
 	databaseIdentifier, _ := args["database_id"].(string)
 	// Also check for "database_name" for backwards compatibility
 	if databaseIdentifier == "" {
@@ -261,11 +270,31 @@ func (h *Handler) executeQuery(ctx context.Context, session *auth.SessionContext
 		return nil, fmt.Errorf("query failed: %s", resp.Message)
 	}
 
+	// Apply transformations if mapping exists
+	resultData := resp.Data
+	if mappingID != "" {
+		// Load mapping rules for transformation
+		mappingRules, err := h.loadMappingRules(ctx, session, mappingID)
+		if err != nil {
+			h.logger.Warnf("Failed to load mapping rules: %v", err)
+			// Continue with untransformed data
+		} else if len(mappingRules) > 0 {
+			// Apply transformations
+			transformedData, err := h.applyMappingTransformations(ctx, session, resp.Data, mappingRules)
+			if err != nil {
+				h.logger.Warnf("Failed to apply transformations: %v", err)
+				// Continue with untransformed data
+			} else {
+				resultData = transformedData
+			}
+		}
+	}
+
 	return &protocol.CallToolResult{
 		Content: []protocol.ToolContent{
 			{
 				Type:     "text",
-				Text:     string(resp.Data),
+				Text:     string(resultData),
 				MimeType: "application/json",
 			},
 		},
@@ -510,4 +539,182 @@ func (h *Handler) resolveDatabaseIdentifier(ctx context.Context, session *auth.S
 	}
 
 	return databaseID, nil
+}
+
+// MappingRule represents a simplified mapping rule for transformations
+type MappingRule struct {
+	ID       string
+	Name     string
+	Metadata map[string]interface{}
+}
+
+// loadMappingRules loads all mapping rules for a given mapping
+func (h *Handler) loadMappingRules(ctx context.Context, session *auth.SessionContext, mappingID string) ([]*MappingRule, error) {
+	query := `
+		SELECT mr.mapping_rule_id, mr.mapping_rule_name, mr.mapping_rule_metadata
+		FROM mapping_rules mr
+		JOIN mapping_rule_mappings mrm ON mr.mapping_rule_id = mrm.mapping_rule_id
+		WHERE mrm.mapping_id = $1
+		  AND mr.tenant_id = $2
+		  AND mr.workspace_id = $3
+		ORDER BY mrm.mapping_rule_order ASC
+	`
+
+	rows, err := h.db.Pool().Query(ctx, query, mappingID, session.TenantID, session.WorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query mapping rules: %w", err)
+	}
+	defer rows.Close()
+
+	var rules []*MappingRule
+	for rows.Next() {
+		var rule MappingRule
+		var metadataBytes []byte
+
+		err := rows.Scan(&rule.ID, &rule.Name, &metadataBytes)
+		if err != nil {
+			h.logger.Warnf("Failed to scan mapping rule: %v", err)
+			continue
+		}
+
+		// Parse metadata
+		if len(metadataBytes) > 0 {
+			if err := json.Unmarshal(metadataBytes, &rule.Metadata); err != nil {
+				h.logger.Warnf("Failed to parse metadata for rule %s: %v", rule.Name, err)
+				continue
+			}
+		}
+
+		rules = append(rules, &rule)
+	}
+
+	return rules, nil
+}
+
+// applyMappingTransformations applies transformation rules to data
+func (h *Handler) applyMappingTransformations(ctx context.Context, session *auth.SessionContext, data []byte, rules []*MappingRule) ([]byte, error) {
+	// Parse the JSON data (array of rows)
+	var sourceRows []map[string]interface{}
+	if err := json.Unmarshal(data, &sourceRows); err != nil {
+		return nil, fmt.Errorf("failed to parse source data: %w", err)
+	}
+
+	// Try to get transformation client (optional - may not be available)
+	var transformationClient transformationv1.TransformationServiceClient
+	var transformationClientErr error
+	transformationClient, transformationClientErr = h.getTransformationClient(ctx)
+	if transformationClientErr != nil {
+		h.logger.Warnf("Transformation service unavailable, will use direct mapping for all transformations: %v", transformationClientErr)
+	}
+
+	// Transform each row
+	targetRows := make([]map[string]interface{}, 0, len(sourceRows))
+	for _, sourceRow := range sourceRows {
+		targetRow := make(map[string]interface{})
+
+		// Apply each mapping rule
+		for _, rule := range rules {
+			// Extract source and target column names from metadata
+			sourceColumn, _ := rule.Metadata["source_column"].(string)
+			targetColumn, _ := rule.Metadata["target_column"].(string)
+			transformationName, _ := rule.Metadata["transformation_name"].(string)
+
+			if sourceColumn == "" || targetColumn == "" {
+				h.logger.Warnf("Rule %s missing source or target column in metadata", rule.Name)
+				continue
+			}
+
+			// Get the source value
+			sourceValue, exists := sourceRow[sourceColumn]
+			if !exists {
+				h.logger.Debugf("Source column '%s' not found in row data", sourceColumn)
+				// Set null for missing columns
+				targetRow[targetColumn] = nil
+				continue
+			}
+
+			// Apply transformation if needed
+			var targetValue interface{}
+			if transformationName != "" && transformationName != "direct_mapping" {
+				// Call transformation service for non-direct transformations
+				if transformationClient != nil {
+					transformedValue, err := h.applyTransformation(ctx, transformationClient, transformationName, sourceValue)
+					if err != nil {
+						h.logger.Warnf("Failed to apply transformation '%s' to column '%s': %v, using original value",
+							transformationName, sourceColumn, err)
+						targetValue = sourceValue
+					} else {
+						targetValue = transformedValue
+					}
+				} else {
+					// Transformation service not available, fall back to direct mapping
+					h.logger.Debugf("Transformation service unavailable, using direct mapping for '%s'", transformationName)
+					targetValue = sourceValue
+				}
+			} else {
+				// Direct mapping - no transformation needed
+				targetValue = sourceValue
+			}
+
+			// Set the target column with the (possibly transformed) value
+			targetRow[targetColumn] = targetValue
+		}
+
+		targetRows = append(targetRows, targetRow)
+	}
+
+	// Convert back to JSON
+	transformedData, err := json.Marshal(targetRows)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal transformed data: %w", err)
+	}
+
+	return transformedData, nil
+}
+
+// applyTransformation applies a single transformation to a value
+func (h *Handler) applyTransformation(ctx context.Context, client transformationv1.TransformationServiceClient, transformationName string, value interface{}) (interface{}, error) {
+	// Convert value to string for transformation
+	var inputStr string
+	switch v := value.(type) {
+	case string:
+		inputStr = v
+	case nil:
+		return nil, nil
+	default:
+		// Convert other types to string
+		inputStr = fmt.Sprintf("%v", v)
+	}
+
+	// Call transformation service
+	transformReq := &transformationv1.TransformRequest{
+		FunctionName: transformationName,
+		Input:        inputStr,
+	}
+
+	transformResp, err := client.Transform(ctx, transformReq)
+	if err != nil {
+		return nil, fmt.Errorf("transformation service error: %w", err)
+	}
+
+	if transformResp.Status != commonv1.Status_STATUS_SUCCESS {
+		return nil, fmt.Errorf("transformation failed: %s", transformResp.StatusMessage)
+	}
+
+	return transformResp.Output, nil
+}
+
+// getTransformationClient returns a transformation service client
+func (h *Handler) getTransformationClient(ctx context.Context) (transformationv1.TransformationServiceClient, error) {
+	// Get transformation service address from global config
+	transformationAddr := grpcconfig.GetServiceAddress(h.config, "transformation")
+
+	// Connect to transformation service without blocking
+	// The connection is established lazily when first used
+	conn, err := grpc.Dial(transformationAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to transformation service at %s: %w", transformationAddr, err)
+	}
+
+	return transformationv1.NewTransformationServiceClient(conn), nil
 }

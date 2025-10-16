@@ -7,11 +7,17 @@ import (
 	"strings"
 
 	anchorv1 "github.com/redbco/redb-open/api/proto/anchor/v1"
+	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
+	transformationv1 "github.com/redbco/redb-open/api/proto/transformation/v1"
+	"github.com/redbco/redb-open/pkg/config"
 	"github.com/redbco/redb-open/pkg/database"
+	"github.com/redbco/redb-open/pkg/grpcconfig"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/pkg/models"
 	"github.com/redbco/redb-open/services/mcpserver/internal/auth"
 	"github.com/redbco/redb-open/services/mcpserver/internal/protocol"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Handler handles MCP resource operations
@@ -21,6 +27,7 @@ type Handler struct {
 	anchorClient   anchorv1.AnchorServiceClient
 	authMiddleware *auth.Middleware
 	mcpServerID    string
+	config         *config.Config // Global config for service discovery
 }
 
 // NewHandler creates a new resource handler
@@ -30,6 +37,7 @@ func NewHandler(
 	anchorClient anchorv1.AnchorServiceClient,
 	authMiddleware *auth.Middleware,
 	mcpServerID string,
+	config *config.Config,
 ) *Handler {
 	return &Handler{
 		logger:         logger,
@@ -37,6 +45,7 @@ func NewHandler(
 		anchorClient:   anchorClient,
 		authMiddleware: authMiddleware,
 		mcpServerID:    mcpServerID,
+		config:         config,
 	}
 }
 
@@ -147,7 +156,6 @@ func (h *Handler) Read(ctx context.Context, req *protocol.ReadResourceRequest) (
 	}
 
 	// Load resource from database by matching config
-	// We need to find the resource that matches the database_id and table_name in the URI
 	rows, err := h.db.Pool().Query(ctx, `
 		SELECT r.mcpresource_id, r.mcpresource_name, r.mcpresource_config, r.mapping_id
 		FROM mcpresources r
@@ -200,9 +208,12 @@ func (h *Handler) Read(ctx context.Context, req *protocol.ReadResourceRequest) (
 				break
 			}
 		} else if config.Type == "mapped_table" {
-			// For mapped tables, the URI contains the mapping name
-			// We'd need to match by mapping_id, but for now skip
-			continue
+			// For mapped tables, match by resource name
+			if storedConfig.Type == "mapped_table" && tempResource.MCPResourceName == config.ResourceName {
+				r = tempResource
+				found = true
+				break
+			}
 		}
 	}
 
@@ -302,42 +313,47 @@ func (h *Handler) readDirectTable(ctx context.Context, session *auth.SessionCont
 func (h *Handler) readMappedTable(ctx context.Context, session *auth.SessionContext, mappingID string, config ResourceConfig) (string, error) {
 	// Load mapping definition
 	var mapping models.Mapping
+	var mappingType string
 	err := h.db.Pool().QueryRow(ctx, `
-		SELECT mapping_source_identifier, mapping_target_identifier, mapping_object
+		SELECT mapping_source_identifier, mapping_target_identifier, mapping_type
 		FROM mappings
 		WHERE mapping_id = $1 AND tenant_id = $2 AND workspace_id = $3
 	`, mappingID, session.TenantID, session.WorkspaceID).Scan(
 		&mapping.MappingSourceIdentifier,
 		&mapping.MappingTargetIdentifier,
-		&mapping.MappingObject,
+		&mappingType,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to load mapping: %w", err)
 	}
 
-	// For now, treat mapped table as direct fetch with transformations applied
-	// In a full implementation, this would:
-	// 1. Fetch source data
-	// 2. Apply mapping rules/transformations
-	// 3. Return transformed data
-
-	// Extract database identifier from mapping source identifier or config
-	databaseIdentifier := config.DatabaseID
-	if databaseIdentifier == "" {
-		databaseIdentifier = mapping.MappingSourceIdentifier
+	// Parse source identifier to extract database name and table name
+	// For table-scope mappings, format is "database_name.table_name"
+	var databaseName, tableName string
+	if mappingType == "table" {
+		parts := strings.Split(mapping.MappingSourceIdentifier, ".")
+		if len(parts) == 2 {
+			databaseName = parts[0]
+			tableName = parts[1]
+		} else {
+			return "", fmt.Errorf("invalid source identifier format for table mapping: %s", mapping.MappingSourceIdentifier)
+		}
+	} else {
+		return "", fmt.Errorf("only table-scope mappings are supported for MCP resources")
 	}
 
 	// Resolve database identifier (could be ID or name)
-	databaseID, err := h.resolveDatabaseIdentifier(ctx, session, databaseIdentifier)
+	databaseID, err := h.resolveDatabaseIdentifier(ctx, session, databaseName)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve database: %w", err)
 	}
 
+	// Fetch data from source table
 	fetchResp, err := h.anchorClient.FetchData(ctx, &anchorv1.FetchDataRequest{
 		TenantId:    session.TenantID,
 		WorkspaceId: session.WorkspaceID,
 		DatabaseId:  databaseID,
-		TableName:   config.TableName,
+		TableName:   tableName,
 		Options:     []byte(`{"limit": 100}`),
 	})
 
@@ -349,7 +365,25 @@ func (h *Handler) readMappedTable(ctx context.Context, session *auth.SessionCont
 		return "", fmt.Errorf("anchor fetch unsuccessful: %s", fetchResp.Message)
 	}
 
-	// TODO: Apply mapping transformations here
+	// Load mapping rules for transformation
+	mappingRules, err := h.loadMappingRules(ctx, session, mappingID)
+	if err != nil {
+		h.logger.Warnf("Failed to load mapping rules: %v", err)
+		// Return untransformed data if we can't load rules
+		return string(fetchResp.Data), nil
+	}
+
+	// Apply transformations if rules exist
+	if len(mappingRules) > 0 {
+		transformedData, err := h.applyMappingTransformations(ctx, session, fetchResp.Data, mappingRules)
+		if err != nil {
+			h.logger.Warnf("Failed to apply transformations: %v", err)
+			// Fall back to untransformed data if transformation fails
+			return string(fetchResp.Data), nil
+		}
+		return string(transformedData), nil
+	}
+
 	return string(fetchResp.Data), nil
 }
 
@@ -394,9 +428,10 @@ func (h *Handler) parseResourceURI(uri string) (string, ResourceConfig, error) {
 
 	case "mapping":
 		if len(parts) != 2 {
-			return "", ResourceConfig{}, fmt.Errorf("invalid mapping URI format, expected: redb://mapping/{mapping_name}")
+			return "", ResourceConfig{}, fmt.Errorf("invalid mapping URI format, expected: redb://mapping/{resource_name}")
 		}
 		config.Type = "mapped_table"
+		config.ResourceName = parts[1] // This is the resource name, not mapping name
 		return parts[1], config, nil
 
 	default:
@@ -406,9 +441,10 @@ func (h *Handler) parseResourceURI(uri string) (string, ResourceConfig, error) {
 
 // ResourceConfig represents resource configuration
 type ResourceConfig struct {
-	Type       string `json:"type"`        // "direct_table" or "mapped_table"
-	DatabaseID string `json:"database_id"` // For direct tables (can be ID or name)
-	TableName  string `json:"table_name"`  // For direct tables
+	Type         string `json:"type"`          // "direct_table" or "mapped_table"
+	DatabaseID   string `json:"database_id"`   // For direct tables (can be ID or name)
+	TableName    string `json:"table_name"`    // For direct tables
+	ResourceName string `json:"resource_name"` // For mapped tables (the resource name from URI)
 }
 
 // resolveDatabaseIdentifier resolves a database identifier (ID or name) to a database ID
@@ -457,4 +493,182 @@ func (h *Handler) getDatabaseName(ctx context.Context, session *auth.SessionCont
 	}
 
 	return databaseName, nil
+}
+
+// MappingRule represents a simplified mapping rule for transformations
+type MappingRule struct {
+	ID       string
+	Name     string
+	Metadata map[string]interface{}
+}
+
+// loadMappingRules loads all mapping rules for a given mapping
+func (h *Handler) loadMappingRules(ctx context.Context, session *auth.SessionContext, mappingID string) ([]*MappingRule, error) {
+	query := `
+		SELECT mr.mapping_rule_id, mr.mapping_rule_name, mr.mapping_rule_metadata
+		FROM mapping_rules mr
+		JOIN mapping_rule_mappings mrm ON mr.mapping_rule_id = mrm.mapping_rule_id
+		WHERE mrm.mapping_id = $1
+		  AND mr.tenant_id = $2
+		  AND mr.workspace_id = $3
+		ORDER BY mrm.mapping_rule_order ASC
+	`
+
+	rows, err := h.db.Pool().Query(ctx, query, mappingID, session.TenantID, session.WorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query mapping rules: %w", err)
+	}
+	defer rows.Close()
+
+	var rules []*MappingRule
+	for rows.Next() {
+		var rule MappingRule
+		var metadataBytes []byte
+
+		err := rows.Scan(&rule.ID, &rule.Name, &metadataBytes)
+		if err != nil {
+			h.logger.Warnf("Failed to scan mapping rule: %v", err)
+			continue
+		}
+
+		// Parse metadata
+		if len(metadataBytes) > 0 {
+			if err := json.Unmarshal(metadataBytes, &rule.Metadata); err != nil {
+				h.logger.Warnf("Failed to parse metadata for rule %s: %v", rule.Name, err)
+				continue
+			}
+		}
+
+		rules = append(rules, &rule)
+	}
+
+	return rules, nil
+}
+
+// applyMappingTransformations applies transformation rules to data
+func (h *Handler) applyMappingTransformations(ctx context.Context, session *auth.SessionContext, data []byte, rules []*MappingRule) ([]byte, error) {
+	// Parse the JSON data (array of rows)
+	var sourceRows []map[string]interface{}
+	if err := json.Unmarshal(data, &sourceRows); err != nil {
+		return nil, fmt.Errorf("failed to parse source data: %w", err)
+	}
+
+	// Try to get transformation client (optional - may not be available)
+	var transformationClient transformationv1.TransformationServiceClient
+	var transformationClientErr error
+	transformationClient, transformationClientErr = h.getTransformationClient(ctx)
+	if transformationClientErr != nil {
+		h.logger.Warnf("Transformation service unavailable, will use direct mapping for all transformations: %v", transformationClientErr)
+	}
+
+	// Transform each row
+	targetRows := make([]map[string]interface{}, 0, len(sourceRows))
+	for _, sourceRow := range sourceRows {
+		targetRow := make(map[string]interface{})
+
+		// Apply each mapping rule
+		for _, rule := range rules {
+			// Extract source and target column names from metadata
+			sourceColumn, _ := rule.Metadata["source_column"].(string)
+			targetColumn, _ := rule.Metadata["target_column"].(string)
+			transformationName, _ := rule.Metadata["transformation_name"].(string)
+
+			if sourceColumn == "" || targetColumn == "" {
+				h.logger.Warnf("Rule %s missing source or target column in metadata", rule.Name)
+				continue
+			}
+
+			// Get the source value
+			sourceValue, exists := sourceRow[sourceColumn]
+			if !exists {
+				h.logger.Debugf("Source column '%s' not found in row data", sourceColumn)
+				// Set null for missing columns
+				targetRow[targetColumn] = nil
+				continue
+			}
+
+			// Apply transformation if needed
+			var targetValue interface{}
+			if transformationName != "" && transformationName != "direct_mapping" {
+				// Call transformation service for non-direct transformations
+				if transformationClient != nil {
+					transformedValue, err := h.applyTransformation(ctx, transformationClient, transformationName, sourceValue)
+					if err != nil {
+						h.logger.Warnf("Failed to apply transformation '%s' to column '%s': %v, using original value",
+							transformationName, sourceColumn, err)
+						targetValue = sourceValue
+					} else {
+						targetValue = transformedValue
+					}
+				} else {
+					// Transformation service not available, fall back to direct mapping
+					h.logger.Debugf("Transformation service unavailable, using direct mapping for '%s'", transformationName)
+					targetValue = sourceValue
+				}
+			} else {
+				// Direct mapping - no transformation needed
+				targetValue = sourceValue
+			}
+
+			// Set the target column with the (possibly transformed) value
+			targetRow[targetColumn] = targetValue
+		}
+
+		targetRows = append(targetRows, targetRow)
+	}
+
+	// Convert back to JSON
+	transformedData, err := json.Marshal(targetRows)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal transformed data: %w", err)
+	}
+
+	return transformedData, nil
+}
+
+// applyTransformation applies a single transformation to a value
+func (h *Handler) applyTransformation(ctx context.Context, client transformationv1.TransformationServiceClient, transformationName string, value interface{}) (interface{}, error) {
+	// Convert value to string for transformation
+	var inputStr string
+	switch v := value.(type) {
+	case string:
+		inputStr = v
+	case nil:
+		return nil, nil
+	default:
+		// Convert other types to string
+		inputStr = fmt.Sprintf("%v", v)
+	}
+
+	// Call transformation service
+	transformReq := &transformationv1.TransformRequest{
+		FunctionName: transformationName,
+		Input:        inputStr,
+	}
+
+	transformResp, err := client.Transform(ctx, transformReq)
+	if err != nil {
+		return nil, fmt.Errorf("transformation service error: %w", err)
+	}
+
+	if transformResp.Status != commonv1.Status_STATUS_SUCCESS {
+		return nil, fmt.Errorf("transformation failed: %s", transformResp.StatusMessage)
+	}
+
+	return transformResp.Output, nil
+}
+
+// getTransformationClient returns a transformation service client
+func (h *Handler) getTransformationClient(ctx context.Context) (transformationv1.TransformationServiceClient, error) {
+	// Get transformation service address from global config
+	transformationAddr := grpcconfig.GetServiceAddress(h.config, "transformation")
+
+	// Connect to transformation service without blocking
+	// The connection is established lazily when first used
+	conn, err := grpc.Dial(transformationAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to transformation service at %s: %w", transformationAddr, err)
+	}
+
+	return transformationv1.NewTransformationServiceClient(conn), nil
 }

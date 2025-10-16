@@ -430,6 +430,9 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 					w.logError("Failed to store schema changes: %v", err)
 					continue
 				}
+
+				// Invalidate mappings that target tables in this database
+				w.invalidateMappingsForDatabase(ctx, client.Config.WorkspaceID, client.Config.DatabaseID)
 			} else {
 				w.logDebug("No schema changes detected for database %s", clientID)
 			}
@@ -518,6 +521,9 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 						w.logError("Failed to store schema changes: %v", err)
 						continue
 					}
+
+					// Invalidate mappings that target tables in this database
+					w.invalidateMappingsForDatabase(ctx, client.Config.WorkspaceID, client.Config.DatabaseID)
 				} else {
 					w.logDebug("No schema changes detected for database %s", clientID)
 				}
@@ -534,4 +540,43 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// invalidateMappingsForDatabase invalidates all mappings that target any table in the specified database
+func (w *SchemaWatcher) invalidateMappingsForDatabase(ctx context.Context, workspaceID, databaseID string) {
+	w.logInfo("Invalidating mappings that target database %s", databaseID)
+
+	// Query to invalidate all mappings that have rules targeting this database
+	query := `
+		UPDATE mappings m
+		SET validated = false,
+		    validated_at = NULL,
+		    validation_errors = '[]',
+		    validation_warnings = '[]',
+		    updated = CURRENT_TIMESTAMP
+		WHERE m.workspace_id = $1
+		AND m.mapping_id IN (
+			SELECT DISTINCT mrm.mapping_id
+			FROM mapping_rule_mappings mrm
+			JOIN mapping_rules mr ON mrm.mapping_rule_id = mr.mapping_rule_id
+			WHERE mr.mapping_rule_metadata->>'target_identifier' LIKE $2
+		)
+	`
+
+	// The target identifier format is: db://database_id.table_name.column_name
+	// We want to match any target in this database
+	targetPattern := fmt.Sprintf("db://%s.%%", databaseID)
+
+	result, err := w.db.Pool().Exec(ctx, query, workspaceID, targetPattern)
+	if err != nil {
+		w.logError("Failed to invalidate mappings for database %s: %v", databaseID, err)
+		return
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected > 0 {
+		w.logInfo("Invalidated %d mapping(s) targeting database %s", rowsAffected, databaseID)
+	} else {
+		w.logDebug("No mappings found targeting database %s", databaseID)
+	}
 }

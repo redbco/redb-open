@@ -2,15 +2,19 @@ package engine
 
 // Mapping represents a mapping
 type Mapping struct {
-	TenantID           string `json:"tenant_id"`
-	WorkspaceID        string `json:"workspace_id"`
-	MappingID          string `json:"mapping_id"`
-	MappingName        string `json:"mapping_name"`
-	MappingDescription string `json:"mapping_description,omitempty"`
-	MappingType        string `json:"mapping_type,omitempty"`
-	PolicyID           string `json:"policy_id,omitempty"`
-	OwnerID            string `json:"owner_id"`
-	MappingRuleCount   int32  `json:"mapping_rule_count"`
+	TenantID           string   `json:"tenant_id"`
+	WorkspaceID        string   `json:"workspace_id"`
+	MappingID          string   `json:"mapping_id"`
+	MappingName        string   `json:"mapping_name"`
+	MappingDescription string   `json:"mapping_description,omitempty"`
+	MappingType        string   `json:"mapping_type,omitempty"`
+	PolicyID           string   `json:"policy_id,omitempty"`
+	OwnerID            string   `json:"owner_id"`
+	MappingRuleCount   int32    `json:"mapping_rule_count"`
+	Validated          bool     `json:"validated"`
+	ValidatedAt        string   `json:"validated_at,omitempty"`
+	ValidationErrors   []string `json:"validation_errors,omitempty"`
+	ValidationWarnings []string `json:"validation_warnings,omitempty"`
 }
 
 type MappingWithRules struct {
@@ -23,6 +27,10 @@ type MappingWithRules struct {
 	PolicyID           string                 `json:"policy_id,omitempty"`
 	OwnerID            string                 `json:"owner_id"`
 	MappingRules       []MappingRuleInMapping `json:"mapping_rules"`
+	Validated          bool                   `json:"validated"`
+	ValidatedAt        string                 `json:"validated_at,omitempty"`
+	ValidationErrors   []string               `json:"validation_errors,omitempty"`
+	ValidationWarnings []string               `json:"validation_warnings,omitempty"`
 }
 
 type ListMappingsResponse struct {
@@ -237,4 +245,12 @@ type RemoveRuleFromMappingResponse struct {
 
 type ListRulesInMappingResponse struct {
 	Rules []MappingRuleInMapping `json:"rules"`
+}
+
+// ValidateMappingResponse represents the response for validating a mapping
+type ValidateMappingResponse struct {
+	IsValid     bool     `json:"is_valid"`
+	Errors      []string `json:"errors"`
+	Warnings    []string `json:"warnings"`
+	ValidatedAt string   `json:"validated_at"`
 }

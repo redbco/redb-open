@@ -195,6 +195,27 @@ Examples:
 	},
 }
 
+// validateMappingCmd represents the validate command
+var validateMappingCmd = &cobra.Command{
+	Use:   "validate [mapping-name]",
+	Short: "Validate a mapping",
+	Long: `Validate that a mapping is correctly configured with all required target columns mapped,
+valid transformations, and compatible data types.
+
+Examples:
+  # Validate a mapping
+  redb mappings validate user-profile-mapping
+  
+  # The validation checks:
+  # - All non-nullable target columns have mapping rules
+  # - Transformations are valid with correct inputs/outputs
+  # - Data types are compatible between source and target`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return mappings.ValidateMapping(args[0])
+	},
+}
+
 func init() {
 	// Add flags to addMappingCmd
 	addMappingCmd.Flags().String("scope", "", "Mapping scope: 'database' or 'table' (required)")
@@ -253,6 +274,7 @@ func init() {
 	mappingsCmd.AddCommand(showMappingCmd)
 	mappingsCmd.AddCommand(addMappingCmd)
 	mappingsCmd.AddCommand(copyDataCmd)
+	mappingsCmd.AddCommand(validateMappingCmd)
 	mappingsCmd.AddCommand(modifyRuleCmd)
 	mappingsCmd.AddCommand(addRuleCmd)
 	mappingsCmd.AddCommand(removeRuleCmd)

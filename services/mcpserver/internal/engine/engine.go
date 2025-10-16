@@ -364,11 +364,11 @@ func (e *Engine) runMCPServer(ctx context.Context, server models.MCPServer) {
 	protocolHandler.SetAuditLogger(auditLogger)
 
 	// Create resource handler
-	resourceHandler := resources.NewHandler(e.logger, e.db, e.anchor, authMiddleware, server.MCPServerID)
+	resourceHandler := resources.NewHandler(e.logger, e.db, e.anchor, authMiddleware, server.MCPServerID, e.config)
 	protocolHandler.SetResourceHandler(resourceHandler)
 
 	// Create tool handler
-	toolHandler := tools.NewHandler(e.logger, e.db, e.anchor, authMiddleware, server.MCPServerID)
+	toolHandler := tools.NewHandler(e.logger, e.db, e.anchor, authMiddleware, server.MCPServerID, e.config)
 	protocolHandler.SetToolHandler(toolHandler)
 
 	// Create prompt handler

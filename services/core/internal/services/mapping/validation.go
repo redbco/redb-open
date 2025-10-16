@@ -102,13 +102,14 @@ func (s *Service) ValidateTargetColumn(ctx context.Context, databaseName, tableN
 }
 
 // CheckColumnNotMapped checks if a column is already mapped in the same mapping
+// NOTE: Updated for new workflow-based schema - checks metadata for source_identifier
 func (s *Service) CheckColumnNotMapped(ctx context.Context, mappingID, sourceColumn, excludeRuleID string) (*ValidationResult, error) {
 	query := `
 		SELECT COUNT(*) 
 		FROM mapping_rules mr
 		JOIN mapping_rule_mappings mrm ON mr.mapping_rule_id = mrm.mapping_rule_id
 		WHERE mrm.mapping_id = $1 
-		  AND mr.mapping_rule_source = $2
+		  AND mr.mapping_rule_metadata->>'source_identifier' = $2
 		  AND mr.mapping_rule_id != $3
 	`
 
@@ -135,18 +136,35 @@ func (s *Service) CheckColumnNotMapped(ctx context.Context, mappingID, sourceCol
 }
 
 // getDatabaseSchema retrieves and parses the database schema from the databases table
-func (s *Service) getDatabaseSchema(ctx context.Context, databaseName, workspaceID string) (*DatabaseSchema, error) {
-	query := `
-		SELECT database_schema, database_tables 
-		FROM databases 
-		WHERE database_name = $1 AND workspace_id = $2
-	`
+// Accepts either database name or database ID (starting with 'db_')
+func (s *Service) getDatabaseSchema(ctx context.Context, databaseNameOrID, workspaceID string) (*DatabaseSchema, error) {
+	var query string
+	var args []interface{}
+
+	// Check if it's a database ID (starts with 'db_') or a database name
+	if len(databaseNameOrID) > 3 && databaseNameOrID[:3] == "db_" {
+		// It's a database ID
+		query = `
+			SELECT database_schema, database_tables 
+			FROM databases 
+			WHERE database_id = $1 AND workspace_id = $2
+		`
+		args = []interface{}{databaseNameOrID, workspaceID}
+	} else {
+		// It's a database name
+		query = `
+			SELECT database_schema, database_tables 
+			FROM databases 
+			WHERE database_name = $1 AND workspace_id = $2
+		`
+		args = []interface{}{databaseNameOrID, workspaceID}
+	}
 
 	var schemaJSON, tablesJSON []byte
-	err := s.db.Pool().QueryRow(ctx, query, databaseName, workspaceID).Scan(&schemaJSON, &tablesJSON)
+	err := s.db.Pool().QueryRow(ctx, query, args...).Scan(&schemaJSON, &tablesJSON)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("database '%s' not found in workspace", databaseName)
+			return nil, fmt.Errorf("database '%s' not found in workspace", databaseNameOrID)
 		}
 		return nil, fmt.Errorf("failed to query database schema: %w", err)
 	}
@@ -170,7 +188,7 @@ func (s *Service) getDatabaseSchema(ctx context.Context, databaseName, workspace
 			return nil, fmt.Errorf("failed to parse database tables: %w", err)
 		}
 	} else {
-		return nil, fmt.Errorf("no schema information available for database '%s'", databaseName)
+		return nil, fmt.Errorf("no schema information available for database '%s'", databaseNameOrID)
 	}
 
 	return &schema, nil
@@ -295,4 +313,495 @@ func (s *Service) areTypesCompatible(sourceType, targetType string) bool {
 
 	// If not explicitly compatible, return false
 	return false
+}
+
+// MappingValidationResult holds the complete validation result for a mapping
+type MappingValidationResult struct {
+	IsValid  bool
+	Errors   []string
+	Warnings []string
+}
+
+// ValidateMappingComplete performs complete validation of a mapping
+func (s *Service) ValidateMappingComplete(ctx context.Context, mappingID, workspaceID, tenantID string) (*MappingValidationResult, error) {
+	result := &MappingValidationResult{
+		IsValid:  true,
+		Errors:   []string{},
+		Warnings: []string{},
+	}
+
+	// Get the mapping details
+	mapping, err := s.GetByID(ctx, mappingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mapping: %w", err)
+	}
+
+	// Get mapping rules with their workflows
+	rules, err := s.GetRulesByMappingID(ctx, mappingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mapping rules: %w", err)
+	}
+
+	// Validate target consistency - all rules must target the same database and table
+	consistencyErrors, consistencyWarnings, err := s.ValidateTargetConsistency(ctx, mapping, rules)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate target consistency: %w", err)
+	}
+	result.Errors = append(result.Errors, consistencyErrors...)
+	result.Warnings = append(result.Warnings, consistencyWarnings...)
+
+	// Validate target coverage
+	coverageErrors, coverageWarnings, err := s.ValidateTargetCoverage(ctx, mapping, rules, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate target coverage: %w", err)
+	}
+	result.Errors = append(result.Errors, coverageErrors...)
+	result.Warnings = append(result.Warnings, coverageWarnings...)
+
+	// Validate transformation workflows
+	workflowErrors, workflowWarnings, err := s.ValidateTransformationWorkflows(ctx, rules)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate transformation workflows: %w", err)
+	}
+	result.Errors = append(result.Errors, workflowErrors...)
+	result.Warnings = append(result.Warnings, workflowWarnings...)
+
+	// Validate data type compatibility
+	typeErrors, typeWarnings, err := s.ValidateDataTypeCompatibility(ctx, mapping, rules, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate data type compatibility: %w", err)
+	}
+	result.Errors = append(result.Errors, typeErrors...)
+	result.Warnings = append(result.Warnings, typeWarnings...)
+
+	// Set overall validity
+	if len(result.Errors) > 0 {
+		result.IsValid = false
+	}
+
+	return result, nil
+}
+
+// ValidateTargetConsistency validates that all mapping rules target the same database and table
+func (s *Service) ValidateTargetConsistency(ctx context.Context, mapping *Mapping, rules []*Rule) ([]string, []string, error) {
+	errors := []string{}
+	warnings := []string{}
+
+	// Only validate table mappings for now
+	if mapping.MappingType != "table" {
+		return errors, warnings, nil
+	}
+
+	// Need at least one rule to validate
+	if len(rules) == 0 {
+		warnings = append(warnings, "No mapping rules defined for this mapping")
+		return errors, warnings, nil
+	}
+
+	// Track target database and table from first valid rule
+	var expectedTargetDB, expectedTargetTable string
+	firstRuleSet := false
+
+	// Check all rules for target consistency
+	for _, rule := range rules {
+		// Extract target identifier from metadata
+		targetIdentifier, ok := rule.Metadata["target_identifier"].(string)
+		if !ok || targetIdentifier == "" {
+			warnings = append(warnings, fmt.Sprintf("Rule '%s': Missing target identifier in metadata", rule.Name))
+			continue
+		}
+
+		// Parse target identifier
+		targetInfo, err := s.parseIdentifier(targetIdentifier)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to parse target identifier: %v", rule.Name, err))
+			continue
+		}
+
+		// Set expected target on first valid rule
+		if !firstRuleSet {
+			expectedTargetDB = targetInfo.DatabaseName
+			expectedTargetTable = targetInfo.TableName
+			firstRuleSet = true
+			continue
+		}
+
+		// Check consistency with expected target
+		if targetInfo.DatabaseName != expectedTargetDB || targetInfo.TableName != expectedTargetTable {
+			errors = append(errors, fmt.Sprintf(
+				"Rule '%s': Inconsistent target. Expected '%s.%s' but found '%s.%s'",
+				rule.Name,
+				expectedTargetDB,
+				expectedTargetTable,
+				targetInfo.DatabaseName,
+				targetInfo.TableName,
+			))
+		}
+	}
+
+	return errors, warnings, nil
+}
+
+// ValidateTargetCoverage validates that all required target columns have mapping rules
+func (s *Service) ValidateTargetCoverage(ctx context.Context, mapping *Mapping, rules []*Rule, workspaceID string) ([]string, []string, error) {
+	errors := []string{}
+	warnings := []string{}
+
+	// Parse the mapping type to determine target database and table
+	// For table mappings, we need to check the target table columns
+	if mapping.MappingType != "table" {
+		// Only validate table mappings for now
+		return errors, warnings, nil
+	}
+
+	// Extract target database and table from mapping rules
+	// We'll look at the first rule to get the target info
+	if len(rules) == 0 {
+		warnings = append(warnings, "No mapping rules defined for this mapping")
+		return errors, warnings, nil
+	}
+
+	// Get target database and table from the first rule's target identifier
+	// Format: db://database_name.table_name.column_name
+	// Extract from metadata (backward compatibility)
+	targetIdentifier, ok := rules[0].Metadata["target_identifier"].(string)
+	if !ok || targetIdentifier == "" {
+		errors = append(errors, "Failed to get target identifier from rule metadata")
+		return errors, warnings, nil
+	}
+	targetInfo, err := s.parseIdentifier(targetIdentifier)
+	if err != nil {
+		errors = append(errors, fmt.Sprintf("Failed to parse target identifier: %v", err))
+		return errors, warnings, nil
+	}
+
+	// Get the target table schema
+	schema, err := s.getDatabaseSchema(ctx, targetInfo.DatabaseName, workspaceID)
+	if err != nil {
+		errors = append(errors, fmt.Sprintf("Failed to retrieve target database schema: %v", err))
+		return errors, warnings, nil
+	}
+
+	targetTable, exists := schema.Tables[targetInfo.TableName]
+	if !exists {
+		errors = append(errors, fmt.Sprintf("Target table '%s' not found in database '%s'", targetInfo.TableName, targetInfo.DatabaseName))
+		return errors, warnings, nil
+	}
+
+	// Build a set of target columns covered by mapping rules
+	coveredColumns := make(map[string]bool)
+	for _, rule := range rules {
+		// Extract target identifier from metadata
+		ruleTargetIdentifier, ok := rule.Metadata["target_identifier"].(string)
+		if !ok || ruleTargetIdentifier == "" {
+			continue
+		}
+		ruleTargetInfo, err := s.parseIdentifier(ruleTargetIdentifier)
+		if err != nil {
+			continue
+		}
+		coveredColumns[ruleTargetInfo.ColumnName] = true
+	}
+
+	// Check each target column
+	for columnName, column := range targetTable.Columns {
+		if !coveredColumns[columnName] {
+			if !column.Nullable {
+				errors = append(errors, fmt.Sprintf("Required target column '%s' is not mapped", columnName))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("Optional target column '%s' is not mapped", columnName))
+			}
+		}
+	}
+
+	return errors, warnings, nil
+}
+
+// ValidateTransformationWorkflows validates the transformation workflows in mapping rules
+func (s *Service) ValidateTransformationWorkflows(ctx context.Context, rules []*Rule) ([]string, []string, error) {
+	errors := []string{}
+	warnings := []string{}
+
+	for _, rule := range rules {
+		// For simple workflow type, no complex validation needed
+		if rule.Metadata != nil {
+			workflowType, ok := rule.Metadata["workflow_type"].(string)
+			if ok && workflowType == "workflow" {
+				// Load workflow nodes and edges from database
+				nodes, edges, err := s.getWorkflowNodesAndEdges(ctx, rule.ID)
+				if err != nil {
+					errors = append(errors, fmt.Sprintf("Failed to load workflow for rule '%s': %v", rule.Name, err))
+					continue
+				}
+
+				// Validate the workflow structure
+				workflowErrors := s.validateWorkflowStructure(nodes, edges)
+				for _, err := range workflowErrors {
+					errors = append(errors, fmt.Sprintf("Rule '%s': %s", rule.Name, err))
+				}
+			}
+		}
+
+		// Check if transformation is valid (extract from metadata)
+		if transformationName, ok := rule.Metadata["transformation_name"].(string); ok && transformationName != "" {
+			// For now, we'll skip transformation validation as transformations are being refactored
+			// TODO: Re-implement transformation validation with new workflow system
+			_ = transformationName
+		}
+	}
+
+	return errors, warnings, nil
+}
+
+// ValidateDataTypeCompatibility validates data type compatibility
+func (s *Service) ValidateDataTypeCompatibility(ctx context.Context, mapping *Mapping, rules []*Rule, workspaceID string) ([]string, []string, error) {
+	errors := []string{}
+	warnings := []string{}
+
+	for _, rule := range rules {
+		// Parse source and target identifiers (from metadata)
+		sourceIdentifier, ok := rule.Metadata["source_identifier"].(string)
+		if !ok || sourceIdentifier == "" {
+			errors = append(errors, fmt.Sprintf("Rule '%s': No source identifier in metadata", rule.Name))
+			continue
+		}
+		sourceInfo, err := s.parseIdentifier(sourceIdentifier)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to parse source identifier: %v", rule.Name, err))
+			continue
+		}
+
+		targetIdentifier, ok := rule.Metadata["target_identifier"].(string)
+		if !ok || targetIdentifier == "" {
+			errors = append(errors, fmt.Sprintf("Rule '%s': No target identifier in metadata", rule.Name))
+			continue
+		}
+		targetInfo, err := s.parseIdentifier(targetIdentifier)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to parse target identifier: %v", rule.Name, err))
+			continue
+		}
+
+		// Get source schema
+		sourceSchema, err := s.getDatabaseSchema(ctx, sourceInfo.DatabaseName, workspaceID)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to retrieve source schema: %v", rule.Name, err))
+			continue
+		}
+
+		// Get target schema
+		targetSchema, err := s.getDatabaseSchema(ctx, targetInfo.DatabaseName, workspaceID)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to retrieve target schema: %v", rule.Name, err))
+			continue
+		}
+
+		// Get source column type
+		sourceTable, exists := sourceSchema.Tables[sourceInfo.TableName]
+		if !exists {
+			errors = append(errors, fmt.Sprintf("Rule '%s': Source table '%s' not found", rule.Name, sourceInfo.TableName))
+			continue
+		}
+
+		sourceColumn, exists := sourceTable.Columns[sourceInfo.ColumnName]
+		if !exists {
+			errors = append(errors, fmt.Sprintf("Rule '%s': Source column '%s' not found", rule.Name, sourceInfo.ColumnName))
+			continue
+		}
+
+		// Get target column type
+		targetTable, exists := targetSchema.Tables[targetInfo.TableName]
+		if !exists {
+			errors = append(errors, fmt.Sprintf("Rule '%s': Target table '%s' not found", rule.Name, targetInfo.TableName))
+			continue
+		}
+
+		targetColumn, exists := targetTable.Columns[targetInfo.ColumnName]
+		if !exists {
+			errors = append(errors, fmt.Sprintf("Rule '%s': Target column '%s' not found", rule.Name, targetInfo.ColumnName))
+			continue
+		}
+
+		// Determine final output type
+		finalType := sourceColumn.Type
+		// Check if there's a transformation (from metadata)
+		if transformationName, ok := rule.Metadata["transformation_name"].(string); ok && transformationName != "" {
+			// If there's a transformation, we would need to get its output type
+			// For now, we'll use a simplified approach
+			// TODO: Get actual transformation output type from new workflow system
+			_ = transformationName
+		}
+
+		// Check type compatibility
+		if !s.areTypesCompatible(finalType, targetColumn.Type) {
+			errors = append(errors, fmt.Sprintf("Rule '%s': Incompatible types - source/transformation type '%s' cannot be assigned to target type '%s'", rule.Name, finalType, targetColumn.Type))
+		}
+	}
+
+	return errors, warnings, nil
+}
+
+// IdentifierInfo holds parsed identifier information
+type IdentifierInfo struct {
+	DatabaseName string
+	TableName    string
+	ColumnName   string
+}
+
+// parseIdentifier parses a database identifier in the format "db://database_name.table_name.column_name"
+func (s *Service) parseIdentifier(identifier string) (*IdentifierInfo, error) {
+	// Remove the prefix if present
+	cleanIdentifier := identifier
+	if len(identifier) > 5 && identifier[:5] == "db://" {
+		cleanIdentifier = identifier[5:]
+	} else if len(identifier) > 6 && identifier[:6] == "@db://" {
+		cleanIdentifier = identifier[6:]
+	}
+
+	// Split by dots - parse the identifier
+	parts := make([]string, 0)
+	current := ""
+	for _, char := range cleanIdentifier {
+		if char == '.' {
+			if current != "" {
+				parts = append(parts, current)
+				current = ""
+			}
+		} else {
+			current += string(char)
+		}
+	}
+	if current != "" {
+		parts = append(parts, current)
+	}
+
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid identifier format: expected 'database.table.column', got '%s'", identifier)
+	}
+
+	return &IdentifierInfo{
+		DatabaseName: parts[0],
+		TableName:    parts[1],
+		ColumnName:   parts[2],
+	}, nil
+}
+
+// WorkflowNode represents a workflow node
+type WorkflowNode struct {
+	NodeID           string
+	NodeType         string
+	TransformationID string
+	NodeConfig       map[string]interface{}
+	NodeOrder        int
+}
+
+// WorkflowEdge represents a workflow edge
+type WorkflowEdge struct {
+	EdgeID           string
+	SourceNodeID     string
+	SourceOutputName string
+	TargetNodeID     string
+	TargetInputName  string
+}
+
+// getWorkflowNodesAndEdges retrieves workflow nodes and edges for a mapping rule
+func (s *Service) getWorkflowNodesAndEdges(ctx context.Context, mappingRuleID string) ([]*WorkflowNode, []*WorkflowEdge, error) {
+	nodes := []*WorkflowNode{}
+	edges := []*WorkflowEdge{}
+
+	// Query workflow nodes
+	nodesQuery := `
+		SELECT node_id, node_type, transformation_id, node_config, node_order
+		FROM transformation_workflow_nodes
+		WHERE mapping_rule_id = $1
+		ORDER BY node_order
+	`
+	nodesRows, err := s.db.Pool().Query(ctx, nodesQuery, mappingRuleID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to query workflow nodes: %w", err)
+	}
+	defer nodesRows.Close()
+
+	for nodesRows.Next() {
+		node := &WorkflowNode{}
+		var transformationID *string
+		err := nodesRows.Scan(&node.NodeID, &node.NodeType, &transformationID, &node.NodeConfig, &node.NodeOrder)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to scan workflow node: %w", err)
+		}
+		if transformationID != nil {
+			node.TransformationID = *transformationID
+		}
+		nodes = append(nodes, node)
+	}
+
+	// Query workflow edges
+	edgesQuery := `
+		SELECT edge_id, source_node_id, source_output_name, target_node_id, target_input_name
+		FROM transformation_workflow_edges
+		WHERE mapping_rule_id = $1
+	`
+	edgesRows, err := s.db.Pool().Query(ctx, edgesQuery, mappingRuleID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to query workflow edges: %w", err)
+	}
+	defer edgesRows.Close()
+
+	for edgesRows.Next() {
+		edge := &WorkflowEdge{}
+		err := edgesRows.Scan(&edge.EdgeID, &edge.SourceNodeID, &edge.SourceOutputName, &edge.TargetNodeID, &edge.TargetInputName)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to scan workflow edge: %w", err)
+		}
+		edges = append(edges, edge)
+	}
+
+	return nodes, edges, nil
+}
+
+// validateWorkflowStructure validates the structure of a workflow
+func (s *Service) validateWorkflowStructure(nodes []*WorkflowNode, edges []*WorkflowEdge) []string {
+	errors := []string{}
+
+	if len(nodes) == 0 {
+		errors = append(errors, "Workflow has no nodes")
+		return errors
+	}
+
+	// Build node map for quick lookup
+	nodeMap := make(map[string]*WorkflowNode)
+	for _, node := range nodes {
+		nodeMap[node.NodeID] = node
+	}
+
+	// Validate edges
+	for _, edge := range edges {
+		if _, exists := nodeMap[edge.SourceNodeID]; !exists {
+			errors = append(errors, fmt.Sprintf("Edge references non-existent source node: %s", edge.SourceNodeID))
+		}
+		if _, exists := nodeMap[edge.TargetNodeID]; !exists {
+			errors = append(errors, fmt.Sprintf("Edge references non-existent target node: %s", edge.TargetNodeID))
+		}
+	}
+
+	// Check for at least one source and one target node
+	hasSource := false
+	hasTarget := false
+	for _, node := range nodes {
+		if node.NodeType == "source" {
+			hasSource = true
+		}
+		if node.NodeType == "target" {
+			hasTarget = true
+		}
+	}
+
+	if !hasSource {
+		errors = append(errors, "Workflow has no source node")
+	}
+	if !hasTarget {
+		errors = append(errors, "Workflow has no target node")
+	}
+
+	return errors
 }

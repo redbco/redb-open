@@ -312,6 +312,7 @@ func (s *Server) setupRoutes() {
 	mappings.HandleFunc("/{mapping_name}/attach-rule", s.mappingHandler.AttachMappingRule).Methods(http.MethodPost)
 	mappings.HandleFunc("/{mapping_name}/detach-rule", s.mappingHandler.DetachMappingRule).Methods(http.MethodPost)
 	mappings.HandleFunc("/{mapping_name}/copy-data", s.mappingHandler.CopyMappingData).Methods(http.MethodPost)
+	mappings.HandleFunc("/{mapping_name}/validate", s.mappingHandler.ValidateMapping).Methods(http.MethodPost)
 
 	// Mapping rule operations within mappings
 	mappings.HandleFunc("/{mapping_name}/rules", s.mappingHandler.ListRulesInMapping).Methods(http.MethodGet)
