@@ -237,22 +237,81 @@ func formatTablesData(tablesJSON string) error {
 	fmt.Println("\nDatabase Tables")
 	fmt.Println(strings.Repeat("=", 50))
 
+	// First pass: calculate maximum widths for each column across all tables
+	maxWidths := map[string]int{
+		"column":       6,  // "Column" header length
+		"type":         4,  // "Type" header length
+		"dataCategory": 13, // "Data Category" header length
+		"privileged":   10, // "Privileged" header length
+		"pk":           3,  // "PK" header length
+		"inc":          3,  // "Inc" header length
+	}
+
 	for _, table := range tablesData.Tables {
-		fmt.Printf("\nTable: %s (Engine: %s, Schema: %s, Type: %s)\n",
-			table.Name, table.Engine, table.Schema, table.TableType)
-		fmt.Printf("Primary Category: %s (Confidence: %.2f)\n",
-			table.PrimaryCategory, table.ClassificationConfidence)
-		fmt.Println(strings.Repeat("-", 80))
+		for _, col := range table.Columns {
+			// Column name
+			if len(col.Name) > maxWidths["column"] {
+				maxWidths["column"] = len(col.Name)
+			}
+
+			// Type
+			dataType := col.Type
+			if col.VarcharLength != nil {
+				dataType = fmt.Sprintf("%s(%d)", dataType, *col.VarcharLength)
+			}
+			if len(dataType) > maxWidths["type"] {
+				maxWidths["type"] = len(dataType)
+			}
+
+			// Data Category (with potential confidence appended)
+			dataCategory := col.DataCategory
+			if col.IsPrivilegedData && col.PrivilegedConfidence > 0 {
+				dataCategory = fmt.Sprintf("%s (%.2f)", col.DataCategory, col.PrivilegedConfidence)
+			}
+			if len(dataCategory) > maxWidths["dataCategory"] {
+				maxWidths["dataCategory"] = len(dataCategory)
+			}
+		}
+	}
+
+	// Second pass: print all tables with fixed widths
+	for _, table := range tablesData.Tables {
+		// Build compact table header with only non-empty fields
+		headerParts := []string{table.Engine}
+		if table.Schema != "" {
+			headerParts = append(headerParts, fmt.Sprintf("schema: %s", table.Schema))
+		}
+		if table.TableType != "" {
+			headerParts = append(headerParts, fmt.Sprintf("type: %s", table.TableType))
+		}
+
+		fmt.Printf("\n%s (%s, %s)\n",
+			table.Name,
+			strings.Join(headerParts, ", "),
+			table.PrimaryCategory)
+		// fmt.Println(strings.Repeat("-", 80))
 
 		if len(table.Columns) == 0 {
 			fmt.Println("No columns found")
 			continue
 		}
 
-		// Create table for columns
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "Column\tType\tData Category\tPrimary Key\tAuto Inc\tPrivileged\tConfidence")
-		fmt.Fprintln(w, "------\t----\t-------------\t-----------\t--------\t----------\t----------")
+		// Print header with fixed widths
+		fmt.Printf("%-*s   %-*s   %-*s   %-*s   %-*s   %-*s\n",
+			maxWidths["column"], "Column",
+			maxWidths["type"], "Type",
+			maxWidths["dataCategory"], "Data Category",
+			maxWidths["privileged"], "Privileged",
+			maxWidths["pk"], "PK",
+			maxWidths["inc"], "Inc")
+
+		fmt.Printf("%s   %s   %s   %s   %s   %s\n",
+			strings.Repeat("-", maxWidths["column"]),
+			strings.Repeat("-", maxWidths["type"]),
+			strings.Repeat("-", maxWidths["dataCategory"]),
+			strings.Repeat("-", maxWidths["privileged"]),
+			strings.Repeat("-", maxWidths["pk"]),
+			strings.Repeat("-", maxWidths["inc"]))
 
 		for _, col := range table.Columns {
 			primaryKey := "No"
@@ -276,32 +335,22 @@ func formatTablesData(tablesJSON string) error {
 				dataType = fmt.Sprintf("%s(%d)", dataType, *col.VarcharLength)
 			}
 
-			confidence := "-"
-			if col.IsPrivilegedData {
-				confidence = fmt.Sprintf("%.2f", col.PrivilegedConfidence)
+			// Append confidence to data category if available
+			dataCategory := col.DataCategory
+			if dataCategory == "" {
+				dataCategory = "standard"
+			}
+			if col.IsPrivilegedData && col.PrivilegedConfidence > 0 {
+				dataCategory = fmt.Sprintf("%s (%.2f)", col.DataCategory, col.PrivilegedConfidence)
 			}
 
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				col.Name,
-				dataType,
-				col.DataCategory,
-				primaryKey,
-				autoInc,
-				privileged,
-				confidence)
-		}
-		_ = w.Flush()
-
-		// Show classification scores if available
-		if len(table.ClassificationScores) > 0 {
-			fmt.Println("\nClassification Scores:")
-			scoreW := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-			fmt.Fprintln(scoreW, "Category\tScore\tReason")
-			fmt.Fprintln(scoreW, "--------\t-----\t------")
-			for _, score := range table.ClassificationScores {
-				fmt.Fprintf(scoreW, "%s\t%.2f\t%s\n", score.Category, score.Score, score.Reason)
-			}
-			_ = scoreW.Flush()
+			fmt.Printf("%-*s   %-*s   %-*s   %-*s   %-*s   %-*s\n",
+				maxWidths["column"], col.Name,
+				maxWidths["type"], dataType,
+				maxWidths["dataCategory"], dataCategory,
+				maxWidths["privileged"], privileged,
+				maxWidths["pk"], primaryKey,
+				maxWidths["inc"], autoInc)
 		}
 		fmt.Println()
 	}
