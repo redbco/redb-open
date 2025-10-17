@@ -5,11 +5,10 @@ reDB is a distributed, policy-driven data mesh that unifies access, mobility, an
 
 ### What's new
 
+- 💻 CLI Interactive mode: Interactive REPL mode to CLI with command history and tab completion
+- 🔏 Data Transformations: Mappings now support built-in data transformations with copy-data, CDC replication and MCP server
+- 🤖 MCP Server: Tables can be represented through mappings as MCP Resources or Tools
 - 🔄 CDC-based Relationships: Real-time database synchronization with logical replication and cross-database change capture
-- ⚙️ Mesh microservice rewritten in Rust for efficiency and correctness (Tokio + Tonic)
-- 🧠 Major upgrades to `pkg/unifiedmodel` and the Unified Model service: richer conversion engine, analytics/metrics, and privacy-aware detection
-- 🧰 Makefile now builds Go services and the Rust mesh; Rust toolchain is required
-- 📄 Documentation structure and content updated
 
 ### Why reDB
 
@@ -52,6 +51,11 @@ After starting, create a profile and authenticate with the CLI:
 # Create your user profile and login
 ./redb-cli profiles create default
 ./redb-cli auth login --profile default
+
+# Alternatively just start the CLI in interactive mode and run commands directly
+./redb-cli
+profiles create default
+auth login --profile default
 ```
 
 ### Database Connectivity
@@ -60,15 +64,15 @@ Connect your databases and explore their structure:
 
 ```bash
 # Connect your databases
-./redb-cli databases connect --string "postgresql://user:password@localhost:5432/testdb1" --name "pg"
-./redb-cli databases connect --string "mysql://user:password@localhost:3307/testdb2" --name "my"
+databases connect --string "postgresql://user:password@localhost:5432/testdb1" --name "pg"
+databases connect --string "mysql://user:password@localhost:3307/testdb2" --name "my"
 
 # Show connected instances and databases
-./redb-cli instances list
-./redb-cli databases list
+instances list
+databases list
 
 # Show the discovered tables and their metadata
-./redb-cli databases show pg --tables
+databases show pg --tables
 ```
 
 ### Schema Management
@@ -77,11 +81,11 @@ Deploy and manage database schemas across different systems:
 
 ```bash
 # Show the repositories and commits
-./redb-cli repos list
-./redb-cli branches show pg/main
+repos list
+branches show pg/main
 
 # Deploy the PostgreSQL testdb1 to a new database in MySQL
-./redb-cli commits deploy-schema pg/main/12345abc --instance my_instance --db-name new
+commits deploy-schema pg/main/12345abc --instance my_instance --db-name new
 ```
 
 ### Schema Mapping
@@ -90,23 +94,23 @@ Map and transform an existing schema to a target
 
 ```bash
 # Create a mapping between tables
-./redb-cli mappings add --scope table --source pg.users --target new.users
+mappings add --scope table --source pg.users --target new.users
 
 # Show the mapping status
-./redb-cli mappings list
-./redb-cli mappings show pg_users_to_new_users
+mappings list
+mappings show pg_users_to_new_users
 
 # Add a new mapping rule
-./redb-cli mappings add-rule --mapping user-mapping --rule email_rule --source pg.users.email --target new.users.email
+mappings add-rule --mapping user-mapping --rule email_rule --source pg.users.email --target new.users.email
 
 # Modify a rule by adding a transformation to it
-./redb-cli mappings modify-rule --mapping user-mapping --rule email_rule --transformation uppercase
+mappings modify-rule --mapping user-mapping --rule email_rule --transformation uppercase
 
 # Remove a mapping rule
-./redb-cli mappings remove-rule --mapping user-mapping --rule email_rule --delete
+mappings remove-rule --mapping user-mapping --rule email_rule --delete
 
 # Validate a mapping
-./redb-cli mappings validate pg_users_to_new_users
+mappings validate pg_users_to_new_users
 ```
 
 ### Data Replication
@@ -116,20 +120,20 @@ Set up data synchronization between databases using mappings and CDC:
 ```bash
 # The data can be copied by either using a one-time data copy, or a continuous CDC replication
 # One-time data copy from PostgreSQL to MySQL
-./redb-cli mappings copy-data pg_users_to_new_users
+mappings copy-data pg_users_to_new_users
 
 # Or set up real-time CDC replication
-./redb-cli relationships add --mapping pg_users_to_new_users --type replication
-./redb-cli relationships start pg_to_new
+relationships add --mapping pg_users_to_new_users --type replication
+relationships start pg_to_new
 
 # Monitor the relationship status
-./redb-cli relationships list
-./redb-cli relationships show pg_to_new
+relationships list
+relationships show pg_to_new
 
 # Manage the relationship lifecycle
-./redb-cli relationships stop pg_to_new    # Pause synchronization
-./redb-cli relationships start pg_to_new   # Resume synchronization
-./redb-cli relationships remove pg_to_new  # Remove completely
+relationships stop pg_to_new    # Pause synchronization
+relationships start pg_to_new   # Resume synchronization
+relationships remove pg_to_new  # Remove completely
 ```
 
 ### MCP Server (AI Integration)
@@ -138,22 +142,22 @@ Expose your data as resources and tools to AI agents using the Model Context Pro
 
 ```bash
 # First, create a mapping for the data you want to expose
-./redb-cli mappings add --scope table --source pg.users --target mcp://users_res
+mappings add --scope table --source pg.users --target mcp://users_res
 
 # Create a virtual MCP server on a specific port
-./redb-cli mcpservers add --name mcp-server --port 9000
+mcpservers add --name mcp-server --port 9000
 
 # Create a resource that exposes data through the mapping
-./redb-cli mcpresources add --name users_res --mapping pg_users_to_mcp_users_res
+mcpresources add --name users_res --mapping pg_users_to_mcp_users_res
 
 # Attach the resource to your MCP server
-./redb-cli mcpresources attach --resource users_res --server mcp-server
+mcpresources attach --resource users_res --server mcp-server
 
 # Create a tool that allows querying the data
-./redb-cli mcptools add --name query_users --mapping pg_users_to_mcp_users_res
+mcptools add --name query_users --mapping pg_users_to_mcp_users_res
 
 # Attach the tool to your MCP server
-./redb-cli mcptools attach --tool query_users --server mcp-server
+mcptools attach --tool query_users --server mcp-server
 ```
 
 Now your MCP server is running and can be used by AI agents like Claude Desktop, Cline, or any MCP-compatible client. For detailed MCP server management, see `docs/MCP_SERVER_MANAGEMENT.md`.
@@ -164,10 +168,10 @@ Create or join a distributed mesh for multi-node deployments:
 
 ```bash
 # Seed a mesh (Node 1)
-./redb-cli mesh seed
+mesh seed
 
 # Join a mesh (Node 2)
-./redb-cli mesh join localhost:10001
+mesh join localhost:10001
 ```
 
 ### Make targets

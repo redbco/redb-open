@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"github.com/redbco/redb-open/cmd/cli/internal/config"
+	"github.com/redbco/redb-open/cmd/cli/internal/interactive"
 	"github.com/spf13/cobra"
 )
 
@@ -44,6 +45,16 @@ var rootCmd = &cobra.Command{
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() {
+	// If no arguments provided (just the binary name), enter interactive mode
+	if len(os.Args) == 1 {
+		err := interactive.StartInteractiveMode(rootCmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	err := rootCmd.Execute()
 	if err != nil {
 		os.Exit(1)

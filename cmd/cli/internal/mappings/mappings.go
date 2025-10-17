@@ -342,12 +342,12 @@ func ListMappings() error {
 	}
 
 	fmt.Println()
-	fmt.Printf("%-20s %-30s %-15s %-10s %-12s\n", "Name", "Description", "Type", "Rules", "Validated")
-	fmt.Println(strings.Repeat("-", 92))
+	fmt.Printf("%-40s %-40s %-15s %-10s %-12s\n", "Name", "Description", "Type", "Rules", "Validated")
+	fmt.Println(strings.Repeat("-", 122))
 	for _, mapping := range mappingsResponse.Mappings {
 		description := mapping.MappingDescription
-		if len(description) > 28 {
-			description = description[:25] + "..."
+		if len(description) > 38 {
+			description = description[:35] + "..."
 		}
 
 		// Determine validation status symbol
@@ -362,7 +362,7 @@ func ListMappings() error {
 			}
 		}
 
-		fmt.Printf("%-20s %-30s %-15s %-10d %-12s\n",
+		fmt.Printf("%-40s %-40s %-15s %-10d %-12s\n",
 			mapping.MappingName,
 			description,
 			mapping.MappingType,
