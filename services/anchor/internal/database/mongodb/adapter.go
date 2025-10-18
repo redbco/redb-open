@@ -200,8 +200,7 @@ func (c *Connection) DataOperations() adapter.DataOperator {
 
 // ReplicationOperations returns the replication operator for MongoDB.
 func (c *Connection) ReplicationOperations() adapter.ReplicationOperator {
-	// MongoDB supports change streams but not through the same interface
-	return adapter.NewUnsupportedReplicationOperator(dbcapabilities.MongoDB)
+	return &ReplicationOps{conn: c}
 }
 
 // MetadataOperations returns the metadata operator for MongoDB.

@@ -201,8 +201,7 @@ func (c *Connection) DataOperations() adapter.DataOperator {
 
 // ReplicationOperations returns the replication operator for CockroachDB.
 func (c *Connection) ReplicationOperations() adapter.ReplicationOperator {
-	// CockroachDB has different replication model (automatic, built-in)
-	return adapter.NewUnsupportedReplicationOperator(dbcapabilities.CockroachDB)
+	return &ReplicationOps{conn: c}
 }
 
 // MetadataOperations returns the metadata operator for CockroachDB.

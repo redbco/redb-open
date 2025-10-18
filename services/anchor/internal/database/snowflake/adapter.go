@@ -143,7 +143,7 @@ func (c *Connection) Config() adapter.ConnectionConfig             { return c.co
 func (c *Connection) Adapter() adapter.DatabaseAdapter             { return c.adapter }
 
 func (c *Connection) ReplicationOperations() adapter.ReplicationOperator {
-	return adapter.NewUnsupportedReplicationOperator(dbcapabilities.Snowflake)
+	return &ReplicationOps{conn: c}
 }
 
 type InstanceConnection struct {

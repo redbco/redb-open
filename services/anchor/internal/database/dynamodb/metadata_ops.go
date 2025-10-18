@@ -2,7 +2,6 @@ package dynamodb
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/redbco/redb-open/pkg/anchor/adapter"
@@ -101,6 +100,5 @@ func (i *InstanceMetadataOps) GetTableCount(ctx context.Context) (int, error) {
 }
 
 func (i *InstanceMetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byte, error) {
-	result := fmt.Sprintf(`{"success": false, "error": "DynamoDB uses AWS SDK, not SQL commands"}`)
-	return []byte(result), nil
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.DynamoDB, "execute_command", "DynamoDB uses AWS SDK, not SQL commands")
 }

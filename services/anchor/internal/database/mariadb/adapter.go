@@ -200,8 +200,7 @@ func (c *Connection) DataOperations() adapter.DataOperator {
 
 // ReplicationOperations returns the replication operator for MariaDB.
 func (c *Connection) ReplicationOperations() adapter.ReplicationOperator {
-	// MariaDB replication is different from PostgreSQL CDC
-	return adapter.NewUnsupportedReplicationOperator(dbcapabilities.MariaDB)
+	return &ReplicationOps{conn: c}
 }
 
 // MetadataOperations returns the metadata operator for MariaDB.
