@@ -12,6 +12,18 @@ GOOS ?= darwin
 GOARCH ?= arm64
 GO_BUILD_FLAGS := -v
 
+# Enterprise build flag
+# Set ENTERPRISE_BUILD=1 to include enterprise database adapters (DB2, Oracle, SAP HANA)
+# These require additional native dependencies and CGO
+ENTERPRISE_BUILD ?= 0
+ifeq ($(ENTERPRISE_BUILD),1)
+	BUILD_TAGS := -tags enterprise
+	ENTERPRISE_SUFFIX := -enterprise
+else
+	BUILD_TAGS :=
+	ENTERPRISE_SUFFIX :=
+endif
+
 # Rust build configuration
 RUST_TARGET_MAP_darwin_amd64 := x86_64-apple-darwin
 RUST_TARGET_MAP_darwin_arm64 := aarch64-apple-darwin
@@ -112,7 +124,7 @@ build-%:
 		-o $(BINARY_DIR)/redb-$* ./cmd/$*/cmd; \
 	elif [ "$*" = "anchor" ]; then \
 		CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
+		go build $(GO_BUILD_FLAGS) $(BUILD_TAGS) -ldflags "$(VERSION_FLAGS)" \
 		-o $(BINARY_DIR)/redb-$* ./services/$*/cmd; \
 	else \
 		CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
@@ -235,19 +247,39 @@ version:
 	@echo "Git commit: $(GIT_COMMIT)"
 	@echo "Build time: $(BUILD_TIME)"
 
+# Enterprise builds (includes DB2, Oracle, SAP HANA support)
+.PHONY: build-enterprise build-enterprise-anchor local-enterprise
+build-enterprise:
+	$(MAKE) ENTERPRISE_BUILD=1 build
+
+build-enterprise-anchor:
+	$(MAKE) ENTERPRISE_BUILD=1 build-anchor
+
+local-enterprise:
+	$(MAKE) ENTERPRISE_BUILD=1 GOOS=$(HOST_OS) GOARCH=$(HOST_ARCH) build
+
 # Help target
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  all        - Clean, generate proto files, build, and test"
-	@echo "  clean      - Remove build artifacts"
-	@echo "  build      - Build all services (cross-compile for Linux)"
-	@echo "  local      - Build for local development (host OS)"
-	@echo "  dev        - Development build (clean, proto, build, test)"
-	@echo "  test       - Run all tests"
-	@echo "  proto      - Generate Protocol Buffer code"
-	@echo "  dev-tools  - Install development tools"
-	@echo "  lint       - Run linter"
-	@echo "  build-all  - Build for multiple platforms"
-	@echo "  install    - Install binaries (Linux only)"
-	@echo "  version    - Show version information"
+	@echo "  all                      - Clean, generate proto files, build, and test"
+	@echo "  clean                    - Remove build artifacts"
+	@echo "  build                    - Build all services (community build, cross-compile for Linux)"
+	@echo "  local                    - Build for local development (community build, host OS)"
+	@echo "  dev                      - Development build (clean, proto, build, test)"
+	@echo "  test                     - Run all tests"
+	@echo "  proto                    - Generate Protocol Buffer code"
+	@echo "  dev-tools                - Install development tools"
+	@echo "  lint                     - Run linter"
+	@echo "  build-all                - Build for multiple platforms"
+	@echo "  install                  - Install binaries (Linux only)"
+	@echo "  version                  - Show version information"
+	@echo ""
+	@echo "Enterprise builds (includes DB2, Oracle, SAP HANA):"
+	@echo "  build-enterprise         - Build all services with enterprise database support"
+	@echo "  build-enterprise-anchor  - Build anchor service only with enterprise support"
+	@echo "  local-enterprise         - Build enterprise version for host OS"
+	@echo ""
+	@echo "Note: Enterprise builds require CGO and native database client libraries."
+	@echo "The anchor binary is always named 'redb-anchor' (no suffix) for both builds."
+	@echo "See docs/ENTERPRISE_DATABASE_SETUP.md for installation instructions."

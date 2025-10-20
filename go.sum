@@ -1,0 +1,4 @@
+github.com/SAP/go-hdb v1.14.6 h1:BJcILau0t6mWVTlK3EzaVTlttO33Sos0LphijFSyD1c=
+github.com/SAP/go-hdb v1.14.6/go.mod h1:7885KsYGqhReH35SkkOQq5KZN5/+r1HgIANrKJQh/Eo=
+golang.org/x/text v0.30.0 h1:yznKA/E9zq54KzlzBEAWn1NXSQ8DIp/NYMy88xJjl4k=
+golang.org/x/text v0.30.0/go.mod h1:yDdHFIX9t+tORqspjENWgzaCVXgk0yYnYuSZ8UzzBVM=

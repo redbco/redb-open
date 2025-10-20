@@ -18,6 +18,7 @@ const (
 	DB2         DatabaseType = "db2"
 	CockroachDB DatabaseType = "cockroach"
 	DuckDB      DatabaseType = "duckdb"
+	HANA        DatabaseType = "hana"
 
 	// NoSQL / Other paradigms
 	Cassandra     DatabaseType = "cassandra"
@@ -465,6 +466,23 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8080,
 		ConnectionStringTemplate: "duckdb://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmRelational},
+	},
+	HANA: {
+		Name:                     "SAP HANA",
+		ID:                       HANA,
+		HasSystemDatabase:        true,
+		SystemDatabases:          []string{"SYSTEMDB"},
+		SupportsCDC:              true,
+		CDCMechanisms:            []string{"sda", "sdi", "triggers"},
+		HasUniqueIdentifier:      true,
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"active-active"},
+		SupportedVendors:         []string{"custom", "sap-cloud"},
+		DefaultPort:              30015,
+		DefaultSSLPort:           30015,
+		ConnectionStringTemplate: "hdb://{username}:{password}@{host}:{port}?database={database}",
+		Paradigms:                []DataParadigm{ParadigmRelational, ParadigmColumnar},
+		Aliases:                  []string{"sap-hana", "hdb", "saphana"},
 	},
 	EdgeDB: {
 		Name:                     "EdgeDB",
