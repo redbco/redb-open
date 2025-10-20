@@ -48,7 +48,7 @@ func (dl *DatabaseLogger) LogConnectionAttempt(ctx DatabaseLogContext) {
 	}
 
 	message := dl.formatConnectionMessage("Attempting connection", ctx)
-	dl.logger.Info(message)
+	dl.logger.Info("%s", message)
 }
 
 // LogConnectionSuccess logs successful database connections
@@ -58,7 +58,7 @@ func (dl *DatabaseLogger) LogConnectionSuccess(ctx DatabaseLogContext) {
 	}
 
 	message := dl.formatConnectionMessage("Connection established", ctx)
-	dl.logger.Info(message)
+	dl.logger.Info("%s", message)
 }
 
 // LogConnectionFailure logs connection failures with appropriate severity
@@ -72,9 +72,9 @@ func (dl *DatabaseLogger) LogConnectionFailure(ctx DatabaseLogContext, err error
 
 	// Internal database failures are errors, client database failures are warnings
 	if ctx.IsInternal {
-		dl.logger.Error(errorDetails)
+		dl.logger.Error("%s", errorDetails)
 	} else {
-		dl.logger.Warn(errorDetails)
+		dl.logger.Warn("%s", errorDetails)
 	}
 }
 
@@ -85,7 +85,7 @@ func (dl *DatabaseLogger) LogDisconnectionAttempt(ctx DatabaseLogContext) {
 	}
 
 	message := dl.formatConnectionMessage("Attempting disconnection", ctx)
-	dl.logger.Info(message)
+	dl.logger.Info("%s", message)
 }
 
 // LogDisconnectionSuccess logs successful disconnections
@@ -95,7 +95,7 @@ func (dl *DatabaseLogger) LogDisconnectionSuccess(ctx DatabaseLogContext) {
 	}
 
 	message := dl.formatConnectionMessage("Disconnection completed", ctx)
-	dl.logger.Info(message)
+	dl.logger.Info("%s", message)
 }
 
 // LogDisconnectionFailure logs disconnection failures
@@ -108,7 +108,7 @@ func (dl *DatabaseLogger) LogDisconnectionFailure(ctx DatabaseLogContext, err er
 	errorDetails := fmt.Sprintf("%s: %v", message, err)
 
 	// All disconnection failures are warnings since service continues
-	dl.logger.Warn(errorDetails)
+	dl.logger.Warn("%s", errorDetails)
 }
 
 // LogOperationAttempt logs when a database operation is starting
@@ -118,7 +118,7 @@ func (dl *DatabaseLogger) LogOperationAttempt(ctx DatabaseLogContext) {
 	}
 
 	message := dl.formatOperationMessage("Operation started", ctx)
-	dl.logger.Debug(message)
+	dl.logger.Debug("%s", message)
 }
 
 // LogOperationSuccess logs successful database operations
@@ -128,7 +128,7 @@ func (dl *DatabaseLogger) LogOperationSuccess(ctx DatabaseLogContext) {
 	}
 
 	message := dl.formatOperationMessage("Operation completed", ctx)
-	dl.logger.Debug(message)
+	dl.logger.Debug("%s", message)
 }
 
 // LogOperationFailure logs operation failures
@@ -142,9 +142,9 @@ func (dl *DatabaseLogger) LogOperationFailure(ctx DatabaseLogContext, err error)
 
 	// Internal database operation failures are errors, client database failures are warnings
 	if ctx.IsInternal {
-		dl.logger.Error(errorDetails)
+		dl.logger.Error("%s", errorDetails)
 	} else {
-		dl.logger.Warn(errorDetails)
+		dl.logger.Warn("%s", errorDetails)
 	}
 }
 
@@ -156,16 +156,16 @@ func (dl *DatabaseLogger) LogHealthCheck(ctx DatabaseLogContext, isHealthy bool,
 
 	if isHealthy {
 		message := dl.formatConnectionMessage("Health check passed", ctx)
-		dl.logger.Debug(message)
+		dl.logger.Debug("%s", message)
 	} else {
 		message := dl.formatConnectionMessage("Health check failed", ctx)
 		errorDetails := fmt.Sprintf("%s: %v", message, err)
 
 		// Internal database health failures are errors, client database failures are warnings
 		if ctx.IsInternal {
-			dl.logger.Error(errorDetails)
+			dl.logger.Error("%s", errorDetails)
 		} else {
-			dl.logger.Warn(errorDetails)
+			dl.logger.Warn("%s", errorDetails)
 		}
 	}
 }
@@ -181,7 +181,7 @@ func (dl *DatabaseLogger) LogReplicationEvent(ctx DatabaseLogContext, event stri
 		message = fmt.Sprintf("%s: %v", message, details)
 	}
 
-	dl.logger.Info(message)
+	dl.logger.Info("%s", message)
 }
 
 // LogReplicationError logs replication errors
@@ -194,7 +194,7 @@ func (dl *DatabaseLogger) LogReplicationError(ctx DatabaseLogContext, err error)
 	errorDetails := fmt.Sprintf("%s: %v", message, err)
 
 	// Replication errors are warnings since they don't stop the service
-	dl.logger.Warn(errorDetails)
+	dl.logger.Warn("%s", errorDetails)
 }
 
 // Helper methods for formatting log messages

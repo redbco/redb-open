@@ -39,6 +39,26 @@ type ConnectionConfig struct {
 	OwnerID           string `json:"ownerId,omitempty"`
 	Enabled           *bool  `json:"enabled,omitempty"`
 
+	// Cloud/Object Storage credentials (S3, GCS, Azure Blob)
+	AccessKeyID     string `json:"accessKeyId,omitempty"`
+	SecretAccessKey string `json:"secretAccessKey,omitempty"`
+	SessionToken    string `json:"sessionToken,omitempty"`
+	Region          string `json:"region,omitempty"`
+	PathStyle       bool   `json:"pathStyle,omitempty"`
+
+	// BigQuery specific
+	ProjectID       string `json:"projectId,omitempty"`
+	CredentialsFile string `json:"credentialsFile,omitempty"`
+	CredentialsJSON string `json:"credentialsJson,omitempty"`
+	Location        string `json:"location,omitempty"`
+
+	// InfluxDB specific
+	Token        string `json:"token,omitempty"`
+	Organization string `json:"organization,omitempty"`
+
+	// Azure specific
+	ConnectionString string `json:"connectionString,omitempty"`
+
 	// Database-specific options (use sparingly)
 	Options map[string]interface{} `json:"options,omitempty"`
 }
@@ -83,6 +103,26 @@ type InstanceConfig struct {
 	ConnectedToNodeID string `json:"connectedToNodeId,omitempty"`
 	OwnerID           string `json:"ownerId,omitempty"`
 	Enabled           *bool  `json:"enabled,omitempty"`
+
+	// Cloud/Object Storage credentials
+	AccessKeyID     string `json:"accessKeyId,omitempty"`
+	SecretAccessKey string `json:"secretAccessKey,omitempty"`
+	SessionToken    string `json:"sessionToken,omitempty"`
+	Region          string `json:"region,omitempty"`
+	PathStyle       bool   `json:"pathStyle,omitempty"`
+
+	// BigQuery specific
+	ProjectID       string `json:"projectId,omitempty"`
+	CredentialsFile string `json:"credentialsFile,omitempty"`
+	CredentialsJSON string `json:"credentialsJson,omitempty"`
+	Location        string `json:"location,omitempty"`
+
+	// InfluxDB specific
+	Token        string `json:"token,omitempty"`
+	Organization string `json:"organization,omitempty"`
+
+	// Azure specific
+	ConnectionString string `json:"connectionString,omitempty"`
 
 	// Database-specific options
 	Options map[string]interface{} `json:"options,omitempty"`

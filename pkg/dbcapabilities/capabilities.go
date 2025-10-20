@@ -27,6 +27,8 @@ const (
 	Redis         DatabaseType = "redis"
 	Neo4j         DatabaseType = "neo4j"
 	Elasticsearch DatabaseType = "elasticsearch"
+	OpenSearch    DatabaseType = "opensearch"
+	Solr          DatabaseType = "solr"
 	CosmosDB      DatabaseType = "cosmosdb"
 
 	// Analytics / Columnar / Cloud warehouses
@@ -48,6 +50,23 @@ const (
 	GCS       DatabaseType = "gcs"
 	AzureBlob DatabaseType = "azure_blob"
 	MinIO     DatabaseType = "minio"
+
+	// Time Series
+	InfluxDB        DatabaseType = "influxdb"
+	TimescaleDB     DatabaseType = "timescaledb"
+	Prometheus      DatabaseType = "prometheus"
+	QuestDB         DatabaseType = "questdb"
+	VictoriaMetrics DatabaseType = "victoriametrics"
+
+	// Cloud Data Warehouses
+	BigQuery DatabaseType = "bigquery"
+	Redshift DatabaseType = "redshift"
+	Synapse  DatabaseType = "synapse"
+
+	// Analytics Platforms
+	Databricks  DatabaseType = "databricks"
+	Druid       DatabaseType = "druid"
+	ApachePinot DatabaseType = "apachepinot"
 )
 
 // DataParadigm enumerates the primary data storage paradigms a database supports.
@@ -343,6 +362,36 @@ var All = map[DatabaseType]Capability{
 		ConnectionStringTemplate: "elasticsearch://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmSearchIndex},
 	},
+	OpenSearch: {
+		Name:                     "OpenSearch",
+		ID:                       OpenSearch,
+		HasSystemDatabase:        false,
+		SupportsCDC:              false,
+		HasUniqueIdentifier:      true, // Unique ID: cluster_uuid.
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"active-active"},
+		SupportedVendors:         []string{"custom", "aws-opensearch"},
+		DefaultPort:              9200,
+		DefaultSSLPort:           9200,
+		ConnectionStringTemplate: "opensearch://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
+		Paradigms:                []DataParadigm{ParadigmSearchIndex},
+		Aliases:                  []string{"opensearch", "aws-opensearch"},
+	},
+	Solr: {
+		Name:                     "Apache Solr",
+		ID:                       Solr,
+		HasSystemDatabase:        false,
+		SupportsCDC:              false,
+		HasUniqueIdentifier:      false,
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"solrcloud"},
+		SupportedVendors:         []string{"custom"},
+		DefaultPort:              8983,
+		DefaultSSLPort:           8983,
+		ConnectionStringTemplate: "http://{host}:{port}/solr/{collection}",
+		Paradigms:                []DataParadigm{ParadigmSearchIndex},
+		Aliases:                  []string{"solr", "apache-solr"},
+	},
 	CosmosDB: {
 		Name:                     "Azure Cosmos DB",
 		ID:                       CosmosDB,
@@ -554,6 +603,187 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           9000,
 		ConnectionStringTemplate: "minio://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmObjectStore},
+	},
+	InfluxDB: {
+		Name:                     "InfluxDB",
+		ID:                       InfluxDB,
+		HasSystemDatabase:        true,
+		SystemDatabases:          []string{"_monitoring", "_tasks"},
+		SupportsCDC:              true,
+		CDCMechanisms:            []string{"tasks", "telegraf"},
+		HasUniqueIdentifier:      true, // Unique ID: instance ID.
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"active-active"},
+		SupportedVendors:         []string{"custom", "influxdata-cloud"},
+		DefaultPort:              8086,
+		DefaultSSLPort:           8086,
+		ConnectionStringTemplate: "http://{host}:{port}?org={org}&bucket={bucket}&token={token}",
+		Paradigms:                []DataParadigm{ParadigmTimeSeries},
+		Aliases:                  []string{"influx"},
+	},
+	TimescaleDB: {
+		Name:                     "TimescaleDB",
+		ID:                       TimescaleDB,
+		HasSystemDatabase:        true,
+		SystemDatabases:          []string{"postgres"},
+		SupportsCDC:              true,
+		CDCMechanisms:            []string{"logical_decoding", "wal2json", "pgoutput"},
+		HasUniqueIdentifier:      true, // Unique ID: PostgreSQL system_identifier.
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"active-passive"},
+		SupportedVendors:         []string{"custom", "timescale-cloud"},
+		DefaultPort:              5432,
+		DefaultSSLPort:           5432,
+		ConnectionStringTemplate: "postgresql://{username}:{password}@{host}:{port}/{database}?sslmode={sslmode}",
+		Paradigms:                []DataParadigm{ParadigmTimeSeries, ParadigmRelational},
+		Aliases:                  []string{"timescale"},
+	},
+	Prometheus: {
+		Name:                     "Prometheus",
+		ID:                       Prometheus,
+		HasSystemDatabase:        false,
+		SupportsCDC:              true,
+		CDCMechanisms:            []string{"federation", "remote_write"},
+		HasUniqueIdentifier:      true, // Unique ID: external labels.
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"active-active"},
+		SupportedVendors:         []string{"custom"},
+		DefaultPort:              9090,
+		DefaultSSLPort:           9090,
+		ConnectionStringTemplate: "http://{host}:{port}",
+		Paradigms:                []DataParadigm{ParadigmTimeSeries},
+		Aliases:                  []string{"prom"},
+	},
+	QuestDB: {
+		Name:                     "QuestDB",
+		ID:                       QuestDB,
+		HasSystemDatabase:        true,
+		SystemDatabases:          []string{"sys"},
+		SupportsCDC:              false,
+		HasUniqueIdentifier:      true, // Unique ID: server ID.
+		SupportsClustering:       false,
+		SupportedVendors:         []string{"custom", "questdb-cloud"},
+		DefaultPort:              8812,
+		DefaultSSLPort:           8812,
+		ConnectionStringTemplate: "postgresql://{username}:{password}@{host}:{port}/{database}?sslmode={sslmode}",
+		Paradigms:                []DataParadigm{ParadigmTimeSeries, ParadigmRelational},
+		Aliases:                  []string{"quest"},
+	},
+	VictoriaMetrics: {
+		Name:                     "VictoriaMetrics",
+		ID:                       VictoriaMetrics,
+		HasSystemDatabase:        false,
+		SupportsCDC:              true,
+		CDCMechanisms:            []string{"remote_write"},
+		HasUniqueIdentifier:      false,
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"active-active"},
+		SupportedVendors:         []string{"custom", "victoriametrics-cloud"},
+		DefaultPort:              8428,
+		DefaultSSLPort:           8428,
+		ConnectionStringTemplate: "http://{host}:{port}",
+		Paradigms:                []DataParadigm{ParadigmTimeSeries},
+		Aliases:                  []string{"vm", "victoria"},
+	},
+	BigQuery: {
+		Name:                     "Google BigQuery",
+		ID:                       BigQuery,
+		HasSystemDatabase:        true,
+		SystemDatabases:          []string{"INFORMATION_SCHEMA"},
+		SupportsCDC:              true,
+		CDCMechanisms:            []string{"change_history", "log_analytics"},
+		HasUniqueIdentifier:      true, // Unique ID: project ID.
+		SupportsClustering:       false,
+		SupportedVendors:         []string{"gcp-bigquery"},
+		DefaultPort:              443,
+		DefaultSSLPort:           443,
+		ConnectionStringTemplate: "bigquery://{project_id}/{dataset}?location={location}",
+		Paradigms:                []DataParadigm{ParadigmColumnar},
+		Aliases:                  []string{"bq"},
+	},
+	Redshift: {
+		Name:                     "Amazon Redshift",
+		ID:                       Redshift,
+		HasSystemDatabase:        true,
+		SystemDatabases:          []string{"dev"},
+		SupportsCDC:              true,
+		CDCMechanisms:            []string{"kinesis", "eventbridge"},
+		HasUniqueIdentifier:      true, // Unique ID: cluster identifier.
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"active-passive"},
+		SupportedVendors:         []string{"aws-redshift"},
+		DefaultPort:              5439,
+		DefaultSSLPort:           5439,
+		ConnectionStringTemplate: "postgresql://{username}:{password}@{host}:{port}/{database}?sslmode={sslmode}",
+		Paradigms:                []DataParadigm{ParadigmColumnar},
+		Aliases:                  []string{"aws-redshift"},
+	},
+	Synapse: {
+		Name:                     "Azure Synapse Analytics",
+		ID:                       Synapse,
+		HasSystemDatabase:        true,
+		SystemDatabases:          []string{"master"},
+		SupportsCDC:              true,
+		CDCMechanisms:            []string{"cdc", "change_tracking"},
+		HasUniqueIdentifier:      true, // Unique ID: workspace ID.
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"active-passive"},
+		SupportedVendors:         []string{"azure-synapse"},
+		DefaultPort:              1433,
+		DefaultSSLPort:           1433,
+		ConnectionStringTemplate: "sqlserver://{username}:{password}@{host}:{port}/{database}?encrypt={encrypt}",
+		Paradigms:                []DataParadigm{ParadigmColumnar},
+		Aliases:                  []string{"azure-synapse"},
+	},
+	Databricks: {
+		Name:                     "Databricks",
+		ID:                       Databricks,
+		HasSystemDatabase:        true,
+		SystemDatabases:          []string{"information_schema"},
+		SupportsCDC:              true,
+		CDCMechanisms:            []string{"delta_cdf"},
+		HasUniqueIdentifier:      true, // Unique ID: workspace ID.
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"active-active"},
+		SupportedVendors:         []string{"databricks-cloud", "aws-databricks", "azure-databricks", "gcp-databricks"},
+		DefaultPort:              443,
+		DefaultSSLPort:           443,
+		ConnectionStringTemplate: "databricks://{host}:{port}?token={token}&http_path={http_path}",
+		Paradigms:                []DataParadigm{ParadigmColumnar, ParadigmObjectStore},
+		Aliases:                  []string{"databricks-sql"},
+	},
+	Druid: {
+		Name:                     "Apache Druid",
+		ID:                       Druid,
+		HasSystemDatabase:        true,
+		SystemDatabases:          []string{"INFORMATION_SCHEMA", "sys"},
+		SupportsCDC:              true,
+		CDCMechanisms:            []string{"kafka_indexing"},
+		HasUniqueIdentifier:      false,
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"active-active"},
+		SupportedVendors:         []string{"custom", "imply-cloud"},
+		DefaultPort:              8888,
+		DefaultSSLPort:           8888,
+		ConnectionStringTemplate: "http://{host}:{port}/druid/v2/sql",
+		Paradigms:                []DataParadigm{ParadigmColumnar, ParadigmTimeSeries},
+		Aliases:                  []string{"druid"},
+	},
+	ApachePinot: {
+		Name:                     "Apache Pinot",
+		ID:                       ApachePinot,
+		HasSystemDatabase:        false,
+		SupportsCDC:              true,
+		CDCMechanisms:            []string{"kafka_stream", "pulsar_stream"},
+		HasUniqueIdentifier:      false,
+		SupportsClustering:       true,
+		ClusteringMechanisms:     []string{"active-active"},
+		SupportedVendors:         []string{"custom", "startree-cloud"},
+		DefaultPort:              8099,
+		DefaultSSLPort:           8099,
+		ConnectionStringTemplate: "http://{host}:{port}",
+		Paradigms:                []DataParadigm{ParadigmColumnar},
+		Aliases:                  []string{"pinot"},
 	},
 }
 
