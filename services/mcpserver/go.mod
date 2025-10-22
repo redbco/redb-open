@@ -1,13 +1,13 @@
 module github.com/redbco/redb-open/services/mcpserver
 
-go 1.23.0
+go 1.24.0
 
-toolchain go1.23.5
+toolchain go1.24.9
 
 require (
 	github.com/redbco/redb-open/api v0.0.0
 	github.com/redbco/redb-open/pkg v0.0.0
-	google.golang.org/grpc v1.74.2
+	google.golang.org/grpc v1.75.1
 )
 
 require (
@@ -23,15 +23,13 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/redis/go-redis/v9 v9.11.0 // indirect
 	github.com/zalando/go-keyring v0.2.6 // indirect
-	go.opentelemetry.io/otel/metric v1.37.0 // indirect
-	go.opentelemetry.io/otel/trace v1.37.0 // indirect
-	golang.org/x/crypto v0.40.0 // indirect
-	golang.org/x/net v0.42.0 // indirect
-	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/sys v0.34.0 // indirect
-	golang.org/x/text v0.27.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250528174236-200df99c418a // indirect
-	google.golang.org/protobuf v1.36.6 // indirect
+	golang.org/x/crypto v0.42.0 // indirect
+	golang.org/x/net v0.44.0 // indirect
+	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/text v0.30.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250908214217-97024824d090 // indirect
+	google.golang.org/protobuf v1.36.9 // indirect
 )
 
 replace github.com/redbco/redb-open/pkg => ../../pkg
