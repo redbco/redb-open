@@ -21,7 +21,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodbstreams v1.26.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.53.1
 	github.com/databricks/databricks-sql-go v1.9.0
-	github.com/denisenkom/go-mssqldb v0.12.3
 	github.com/elastic/go-elasticsearch/v8 v8.18.1
 	github.com/geldata/gel-go v1.3.0
 	github.com/go-sql-driver/mysql v1.9.3

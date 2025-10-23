@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/denisenkom/go-mssqldb"
+	_ "github.com/microsoft/go-mssqldb"
 
 	"github.com/redbco/redb-open/pkg/encryption"
 	"github.com/redbco/redb-open/services/anchor/internal/database/dbclient"

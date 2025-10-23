@@ -123,9 +123,21 @@ build-%:
 		go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
 		-o $(BINARY_DIR)/redb-$* ./cmd/$*/cmd; \
 	elif [ "$*" = "anchor" ]; then \
-		CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build $(GO_BUILD_FLAGS) $(BUILD_TAGS) -ldflags "$(VERSION_FLAGS)" \
-		-o $(BINARY_DIR)/redb-$* ./services/$*/cmd; \
+		if [ "$(ENTERPRISE_BUILD)" = "1" ]; then \
+			CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+			go build $(GO_BUILD_FLAGS) $(BUILD_TAGS) -ldflags "$(VERSION_FLAGS)" \
+			-o $(BINARY_DIR)/redb-$* ./services/$*/cmd; \
+		else \
+			if [ "$(GOOS)" = "darwin" ]; then \
+				CGO_ENABLED=1 CGO_LDFLAGS="-Wl,-undefined,dynamic_lookup" GOOS=$(GOOS) GOARCH=$(GOARCH) \
+				go build $(GO_BUILD_FLAGS) $(BUILD_TAGS) -ldflags "$(VERSION_FLAGS)" \
+				-o $(BINARY_DIR)/redb-$* ./services/$*/cmd; \
+			else \
+				CGO_ENABLED=1 CGO_LDFLAGS="-Wl,--unresolved-symbols=ignore-in-shared-libs" GOOS=$(GOOS) GOARCH=$(GOARCH) \
+				go build $(GO_BUILD_FLAGS) $(BUILD_TAGS) -ldflags "$(VERSION_FLAGS)" \
+				-o $(BINARY_DIR)/redb-$* ./services/$*/cmd; \
+			fi; \
+		fi; \
 	else \
 		CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
@@ -199,10 +211,24 @@ build-all: $(BUILD_DIR)
 					./cmd/cli/cmd; \
 				elif [ "$$service" = "anchor" ]; then \
 					echo "Building $$service for $$os/$$arch..."; \
-					GOOS=$$os GOARCH=$$arch CGO_ENABLED=1 \
-					go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
-					-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
-					./services/$$service/cmd; \
+					if [ "$(ENTERPRISE_BUILD)" = "1" ]; then \
+						GOOS=$$os GOARCH=$$arch CGO_ENABLED=1 \
+						go build $(GO_BUILD_FLAGS) $(BUILD_TAGS) -ldflags "$(VERSION_FLAGS)" \
+						-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
+						./services/$$service/cmd; \
+					else \
+						if [ "$$os" = "darwin" ]; then \
+							CGO_LDFLAGS="-Wl,-undefined,dynamic_lookup" GOOS=$$os GOARCH=$$arch CGO_ENABLED=1 \
+							go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
+							-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
+							./services/$$service/cmd; \
+						else \
+							CGO_LDFLAGS="-Wl,--unresolved-symbols=ignore-in-shared-libs" GOOS=$$os GOARCH=$$arch CGO_ENABLED=1 \
+							go build $(GO_BUILD_FLAGS) -ldflags "$(VERSION_FLAGS)" \
+							-o $(BUILD_DIR)/$$os-$$arch/redb-$$service \
+							./services/$$service/cmd; \
+						fi; \
+					fi; \
 				else \
 					echo "Building $$service for $$os/$$arch..."; \
 					GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 \
