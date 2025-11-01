@@ -85,6 +85,9 @@ type TranslationResult struct {
 	ProcessingTime time.Duration `json:"processing_time"`
 	Success        bool          `json:"success"`
 	ErrorMessage   string        `json:"error_message,omitempty"`
+
+	// Translation context (includes generated mappings, metrics, strategy overrides, etc.)
+	Context *TranslationContext `json:"context,omitempty"`
 }
 
 // TranslationReport provides detailed information about the translation

@@ -397,6 +397,7 @@ func (ut *UnifiedTranslatorImpl) createSuccessResult(request *TranslationRequest
 		UnsupportedFeatures: []UnsupportedFeature{}, // TODO: Extract from context
 		ProcessingTime:      ctx.Metrics.ProcessingTime,
 		Success:             true,
+		Context:             ctx, // Include the full context with all enhanced features
 	}
 }
 

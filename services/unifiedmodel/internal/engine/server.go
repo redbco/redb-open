@@ -99,6 +99,132 @@ func (s *Server) Translate(ctx context.Context, req *pb.TranslationRequest) (*pb
 	}, nil
 }
 
+// TranslateEnhanced performs enhanced translation with sample data and enrichment support
+func (s *Server) TranslateEnhanced(ctx context.Context, req *pb.TranslationEnhancedRequest) (*pb.TranslationEnhancedResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+
+	// Create unified translator
+	translatorFactory := translator.NewTranslatorFactory()
+	unifiedTranslator := translatorFactory.CreateUnifiedTranslator()
+
+	// Parse source database type
+	sourceDB, err := s.parseDBType(req.SourceType)
+	if err != nil {
+		return nil, fmt.Errorf("invalid source database type: %w", err)
+	}
+
+	// Parse target database type
+	targetDB, err := s.parseDBType(req.TargetType)
+	if err != nil {
+		return nil, fmt.Errorf("invalid target database type: %w", err)
+	}
+
+	// Convert protobuf UnifiedModel to Go UnifiedModel
+	sourceUnifiedModel := s.convertProtoToUnifiedModel(req.SourceStructure)
+	if sourceUnifiedModel == nil {
+		return nil, fmt.Errorf("failed to convert source structure")
+	}
+
+	// Convert enrichment data if provided
+	var enrichment *unifiedmodel.UnifiedModelEnrichment
+	if req.Enrichment != nil {
+		enrichment = s.convertProtoToEnrichment(req.Enrichment)
+	}
+
+	// Convert sample data if provided
+	var sampleData *unifiedmodel.UnifiedModelSampleData
+	if req.SampleData != nil {
+		sampleData = s.convertProtoToSampleData(req.SampleData)
+	}
+
+	// Convert preferences
+	preferences := s.convertProtoToPreferences(req.Preferences)
+
+	// Create enhanced translation request
+	translationReq := &core.TranslationRequest{
+		SourceDatabase: sourceDB,
+		SourceSchema:   sourceUnifiedModel,
+		TargetDatabase: targetDB,
+		TargetFormat:   "unified",
+		Enrichment:     enrichment,
+		SampleData:     sampleData,
+		Preferences:    preferences,
+		RequestID:      fmt.Sprintf("translate-enhanced-%d", time.Now().UnixNano()),
+		RequestedAt:    time.Now(),
+	}
+
+	// Perform translation
+	result, err := unifiedTranslator.Translate(ctx, translationReq)
+	if err != nil {
+		return nil, fmt.Errorf("enhanced translation failed: %w", err)
+	}
+
+	if !result.Success {
+		return nil, fmt.Errorf("enhanced translation failed: %s", result.ErrorMessage)
+	}
+
+	// Convert result to protobuf UnifiedModel
+	var targetUnifiedModel *pb.UnifiedModel
+	if result.UnifiedSchema != nil {
+		targetUnifiedModel = s.convertUnifiedModelToProto(result.UnifiedSchema)
+	}
+
+	// Convert warnings to enhanced format
+	warnings := make([]*pb.TranslationWarning, len(result.Warnings))
+	for i, warning := range result.Warnings {
+		warnings[i] = &pb.TranslationWarning{
+			WarningType: string(warning.WarningType),
+			ObjectType:  warning.ObjectType,
+			ObjectName:  warning.ObjectName,
+			Message:     warning.Message,
+			Severity:    warning.Severity,
+			Suggestion:  warning.Suggestion,
+		}
+	}
+
+	// Convert generated mappings if available
+	var generatedMappings []*pb.GeneratedMapping
+	if result.Context != nil && result.Context.HasGeneratedMappings() {
+		generatedMappings = s.convertGeneratedMappingsToProto(result.Context.GetGeneratedMappings())
+	}
+
+	// Convert metrics - use detailed metrics from context
+	var metrics *pb.TranslationMetrics
+	if result.Context != nil {
+		metrics = &pb.TranslationMetrics{
+			ProcessingTimeMs: result.Context.Metrics.ProcessingTime.Milliseconds(),
+			ObjectsProcessed: int32(result.Context.Metrics.ObjectsProcessed),
+			ObjectsConverted: int32(result.Context.Metrics.ObjectsConverted),
+			ObjectsSkipped:   int32(result.Context.Metrics.ObjectsSkipped),
+			ObjectsDropped:   int32(result.Context.Metrics.ObjectsDropped),
+			TypesConverted:   int32(result.Context.Metrics.TypesConverted),
+			LossyConversions: int32(result.Context.Metrics.LossyConversions),
+		}
+	} else {
+		// Fallback to basic metrics
+		metrics = &pb.TranslationMetrics{
+			ProcessingTimeMs: result.ProcessingTime.Milliseconds(),
+		}
+	}
+
+	// Convert user decisions from context (more detailed) or result
+	var userDecisions []*pb.PendingUserDecision
+	if result.Context != nil && result.Context.HasUserDecisions() {
+		userDecisions = s.convertUserDecisionsToProto(result.Context.UserDecisions)
+	} else if len(result.UserDecisions) > 0 {
+		userDecisions = s.convertUserDecisionsToProto(result.UserDecisions)
+	}
+
+	return &pb.TranslationEnhancedResponse{
+		TargetStructure:   targetUnifiedModel,
+		Warnings:          warnings,
+		GeneratedMappings: generatedMappings,
+		Metrics:           metrics,
+		UserDecisions:     userDecisions,
+	}, nil
+}
+
 func (s *Server) Generate(ctx context.Context, req *pb.GenerationRequest) (*pb.GenerationResponse, error) {
 	s.engine.TrackOperation()
 	defer s.engine.UntrackOperation()

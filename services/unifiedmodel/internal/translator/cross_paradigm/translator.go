@@ -6,6 +6,7 @@ import (
 	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
 	"github.com/redbco/redb-open/services/unifiedmodel/internal/translator/core"
+	"github.com/redbco/redb-open/services/unifiedmodel/internal/translator/strategies"
 )
 
 // CrossParadigmTranslatorImpl handles translations between different database paradigms
@@ -14,6 +15,8 @@ type CrossParadigmTranslatorImpl struct {
 	structureTransformer *StructureTransformer
 	relationshipMapper   *RelationshipMapper
 	typeConverter        *unifiedmodel.TypeConverter
+	strategyRegistry     *strategies.StrategyRegistry
+	useStrategySystem    bool // Feature flag to enable/disable new strategy system
 }
 
 // NewCrossParadigmTranslator creates a new cross-paradigm translator
@@ -23,7 +26,14 @@ func NewCrossParadigmTranslator() *CrossParadigmTranslatorImpl {
 		structureTransformer: NewStructureTransformer(),
 		relationshipMapper:   NewRelationshipMapper(),
 		typeConverter:        unifiedmodel.NewTypeConverter(),
+		strategyRegistry:     strategies.GlobalRegistry,
+		useStrategySystem:    true, // Enable strategy system by default
 	}
+}
+
+// SetUseStrategySystem enables or disables the strategy system
+func (cpt *CrossParadigmTranslatorImpl) SetUseStrategySystem(use bool) {
+	cpt.useStrategySystem = use
 }
 
 // Translate performs cross-paradigm translation
@@ -33,6 +43,89 @@ func (cpt *CrossParadigmTranslatorImpl) Translate(ctx *core.TranslationContext) 
 		return fmt.Errorf("cross-paradigm validation failed: %w", err)
 	}
 
+	// Try to use the strategy system if enabled
+	if cpt.useStrategySystem && ctx.Analysis != nil {
+		if len(ctx.Analysis.SourceParadigms) > 0 && len(ctx.Analysis.TargetParadigms) > 0 {
+			sourceParadigm := ctx.Analysis.SourceParadigms[0]
+			targetParadigm := ctx.Analysis.TargetParadigms[0]
+
+			// Try to get strategy from registry
+			if strategy, err := cpt.strategyRegistry.GetStrategy(sourceParadigm, targetParadigm); err == nil {
+				return cpt.translateWithStrategy(ctx, strategy)
+			}
+			// Strategy not found, fall back to legacy approach
+		}
+	}
+
+	// Fallback to legacy translation
+	return cpt.legacyTranslate(ctx)
+}
+
+// translateWithStrategy performs translation using a registered strategy
+func (cpt *CrossParadigmTranslatorImpl) translateWithStrategy(ctx *core.TranslationContext, strategy strategies.ParadigmConversionStrategy) error {
+	// Analyze enrichment data
+	enrichmentContext, err := cpt.enrichmentAnalyzer.AnalyzeEnrichment(ctx)
+	if err != nil {
+		return fmt.Errorf("enrichment analysis failed: %w", err)
+	}
+
+	// Execute strategy conversion
+	result, err := strategy.Convert(ctx, enrichmentContext)
+	if err != nil {
+		return fmt.Errorf("strategy conversion failed: %w", err)
+	}
+
+	// Set target schema
+	ctx.SetTargetSchema(result.TargetSchema)
+
+	// Convert strategy mappings to context mappings
+	if len(result.Mappings) > 0 {
+		contextMappings := make([]core.GeneratedMappingInfo, 0, len(result.Mappings))
+		for _, mapping := range result.Mappings {
+			contextMapping := core.GeneratedMappingInfo{
+				SourceIdentifier: mapping.SourceIdentifier,
+				TargetIdentifier: mapping.TargetIdentifier,
+				MappingType:      mapping.MappingType,
+				MappingRules:     convertMappingRules(mapping.MappingRules),
+				Metadata:         mapping.Metadata,
+			}
+			contextMappings = append(contextMappings, contextMapping)
+		}
+		ctx.SetGeneratedMappings(contextMappings)
+	}
+
+	// Add warnings from strategy
+	for _, warning := range result.Warnings {
+		ctx.AddWarning(warning.WarningType, warning.ObjectType, warning.ObjectName, warning.Message, warning.Severity, warning.Suggestion)
+	}
+
+	return nil
+}
+
+// convertMappingRules converts strategy mapping rules to context mapping rules
+func convertMappingRules(rules []strategies.GeneratedMappingRule) []core.MappingRuleInfo {
+	contextRules := make([]core.MappingRuleInfo, 0, len(rules))
+	for _, rule := range rules {
+		contextRules = append(contextRules, core.MappingRuleInfo{
+			RuleID:                rule.RuleID,
+			SourceField:           rule.SourceField,
+			TargetField:           rule.TargetField,
+			SourceType:            rule.SourceType,
+			TargetType:            rule.TargetType,
+			Cardinality:           rule.Cardinality,
+			TransformationID:      rule.TransformationID,
+			TransformationName:    rule.TransformationName,
+			TransformationOptions: rule.TransformationOptions,
+			IsRequired:            rule.IsRequired,
+			DefaultValue:          rule.DefaultValue,
+			Metadata:              rule.Metadata,
+		})
+	}
+	return contextRules
+}
+
+// legacyTranslate performs translation using the legacy switch-based approach
+func (cpt *CrossParadigmTranslatorImpl) legacyTranslate(ctx *core.TranslationContext) error {
 	// Analyze enrichment data
 	enrichmentContext, err := cpt.enrichmentAnalyzer.AnalyzeEnrichment(ctx)
 	if err != nil {

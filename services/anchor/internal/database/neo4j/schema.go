@@ -163,6 +163,8 @@ func discoverLabelsUnified(ctx context.Context, session neo4j.SessionWithContext
 
 		// Convert properties to unifiedmodel format
 		for propName := range propertySet {
+			// Note: Type inference is available via data_extraction.go InferPropertyType
+			// For now, using "mixed" type. Can be enhanced with sample-based inference.
 			node.Properties[propName] = unifiedmodel.Property{
 				Name: propName,
 				Type: "mixed", // Neo4j properties can be of various types

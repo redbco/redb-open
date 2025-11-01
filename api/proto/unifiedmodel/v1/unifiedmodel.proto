@@ -11,6 +11,7 @@ service UnifiedModelService {
   
   // Translation and generation services
   rpc Translate(TranslationRequest) returns (TranslationResponse) {}
+  rpc TranslateEnhanced(TranslationEnhancedRequest) returns (TranslationEnhancedResponse) {}
   rpc Generate(GenerationRequest) returns (GenerationResponse) {}
   
   // Comparison services
@@ -46,6 +47,174 @@ message TranslationRequest {
 message TranslationResponse {
   UnifiedModel target_structure = 1;
   repeated string warnings = 2;
+}
+
+// Enhanced translation request with sample data and enrichment support
+message TranslationEnhancedRequest {
+  string target_type = 1;
+  string source_type = 2;
+  UnifiedModel source_structure = 3;
+  
+  // NEW: Enhanced translation capabilities
+  UnifiedModelEnrichment enrichment = 4;
+  UnifiedModelSampleData sample_data = 5;
+  TranslationPreferences preferences = 6;
+  
+  // Strategy overrides (optional)
+  map<string, string> strategy_overrides = 7;
+}
+
+// Enhanced translation response with mappings
+message TranslationEnhancedResponse {
+  UnifiedModel target_structure = 1;
+  repeated TranslationWarning warnings = 2;
+  
+  // NEW: Generated mappings for data copy
+  repeated GeneratedMapping generated_mappings = 3;
+  
+  // Translation metrics
+  TranslationMetrics metrics = 4;
+  
+  // User decisions required
+  repeated PendingUserDecision user_decisions = 5;
+}
+
+// Translation preferences
+message TranslationPreferences {
+  bool accept_data_loss = 1;
+  bool optimize_for_performance = 2;
+  bool optimize_for_storage = 3;
+  bool preserve_relationships = 4;
+  bool include_metadata = 5;
+  bool generate_comments = 6;
+  bool include_original_names = 7;
+  bool use_qualified_names = 8;
+  bool preserve_case_style = 9;
+  bool interactive_mode = 10;
+  bool auto_approve_simple = 11;
+  map<string, string> custom_mappings = 12;
+  repeated string exclude_objects = 13;
+}
+
+// Translation warning with severity
+message TranslationWarning {
+  string warning_type = 1;  // data_loss, feature_loss, performance, compatibility, security
+  string object_type = 2;
+  string object_name = 3;
+  string message = 4;
+  string severity = 5;
+  string suggestion = 6;
+}
+
+// Generated mapping from translation
+message GeneratedMapping {
+  string source_identifier = 1;
+  string target_identifier = 2;
+  string mapping_type = 3;  // direct, hybrid_property, transformation, junction, foreign_key
+  repeated MappingRule mapping_rules = 4;
+  map<string, string> metadata = 5;
+}
+
+// Mapping rule for field-level mapping
+message MappingRule {
+  string rule_id = 1;
+  string source_field = 2;
+  string target_field = 3;
+  string source_type = 4;
+  string target_type = 5;
+  string cardinality = 6;  // one-to-one, one-to-many, many-to-one
+  string transformation_id = 7;
+  string transformation_name = 8;
+  map<string, string> transformation_options = 9;
+  bool is_required = 10;
+  string default_value = 11;
+  map<string, string> metadata = 12;
+}
+
+// Translation metrics
+message TranslationMetrics {
+  int64 processing_time_ms = 1;
+  int32 objects_processed = 2;
+  int32 objects_converted = 3;
+  int32 objects_skipped = 4;
+  int32 objects_dropped = 5;
+  int32 types_converted = 6;
+  int32 lossy_conversions = 7;
+}
+
+// Pending user decision
+message PendingUserDecision {
+  string decision_id = 1;
+  string object_type = 2;
+  string object_name = 3;
+  string decision_type = 4;  // configuration, mapping, transformation
+  string context = 5;
+  repeated string options = 6;
+  string recommended = 7;
+}
+
+// Sample data for translation
+message UnifiedModelSampleData {
+  map<string, TableSampleData> table_samples = 1;
+  map<string, CollectionSampleData> collection_samples = 2;
+  map<string, GraphSampleData> graph_samples = 3;
+  map<string, VectorSampleData> vector_samples = 4;
+}
+
+// Table sample data
+message TableSampleData {
+  string table_name = 1;
+  int64 total_rows = 2;
+  int32 sample_count = 3;
+  map<string, ColumnSampleValues> columns = 4;
+}
+
+// Column sample values
+message ColumnSampleValues {
+  string column_name = 1;
+  string data_type = 2;
+  repeated string values = 3;
+  int32 null_count = 4;
+  int64 distinct_count = 5;
+  string min_value = 6;
+  string max_value = 7;
+}
+
+// Collection sample data
+message CollectionSampleData {
+  string collection_name = 1;
+  int64 document_count = 2;
+  int32 sample_count = 3;
+  repeated string documents = 4;  // JSON strings
+}
+
+// Graph sample data
+message GraphSampleData {
+  string graph_name = 1;
+  map<string, NodeSampleData> node_samples = 2;
+  map<string, EdgeSampleData> edge_samples = 3;
+}
+
+// Node sample data
+message NodeSampleData {
+  string node_label = 1;
+  int64 count = 2;
+  repeated string samples = 3;  // JSON strings
+}
+
+// Edge sample data
+message EdgeSampleData {
+  string edge_type = 1;
+  int64 count = 2;
+  repeated string samples = 3;  // JSON strings
+}
+
+// Vector sample data
+message VectorSampleData {
+  string index_name = 1;
+  int32 dimension = 2;
+  int32 sample_count = 3;
+  repeated string samples = 4;  // JSON strings
 }
 
 message GenerationRequest {

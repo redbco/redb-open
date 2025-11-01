@@ -36,8 +36,39 @@ type TranslationContext struct {
 	UserDecisions []PendingUserDecision `json:"user_decisions"`
 	Metrics       TranslationMetrics    `json:"metrics"`
 
+	// NEW: Mapping generation
+	GeneratedMappings []GeneratedMappingInfo `json:"generated_mappings,omitempty"`
+
+	// NEW: Strategy overrides
+	StrategyOverrides map[string]interface{} `json:"strategy_overrides,omitempty"`
+
 	// Context for cancellation and timeouts
 	Context context.Context `json:"-"`
+}
+
+// GeneratedMappingInfo holds information about mappings generated during translation
+type GeneratedMappingInfo struct {
+	SourceIdentifier string                 `json:"source_identifier"`
+	TargetIdentifier string                 `json:"target_identifier"`
+	MappingType      string                 `json:"mapping_type"`
+	MappingRules     []MappingRuleInfo      `json:"mapping_rules"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// MappingRuleInfo holds information about a single mapping rule
+type MappingRuleInfo struct {
+	RuleID                string                 `json:"rule_id"`
+	SourceField           string                 `json:"source_field"`
+	TargetField           string                 `json:"target_field"`
+	SourceType            string                 `json:"source_type"`
+	TargetType            string                 `json:"target_type"`
+	Cardinality           string                 `json:"cardinality"`
+	TransformationID      string                 `json:"transformation_id,omitempty"`
+	TransformationName    string                 `json:"transformation_name,omitempty"`
+	TransformationOptions map[string]interface{} `json:"transformation_options,omitempty"`
+	IsRequired            bool                   `json:"is_required"`
+	DefaultValue          interface{}            `json:"default_value,omitempty"`
+	Metadata              map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // TranslationMetrics tracks metrics during translation
@@ -266,6 +297,43 @@ func (tc *TranslationContext) GetDeadline() (time.Time, bool) {
 	return tc.Context.Deadline()
 }
 
+// SetGeneratedMappings sets the generated mappings
+func (tc *TranslationContext) SetGeneratedMappings(mappings []GeneratedMappingInfo) {
+	tc.GeneratedMappings = mappings
+}
+
+// AddGeneratedMapping adds a generated mapping to the context
+func (tc *TranslationContext) AddGeneratedMapping(mapping GeneratedMappingInfo) {
+	tc.GeneratedMappings = append(tc.GeneratedMappings, mapping)
+}
+
+// GetGeneratedMappings returns the generated mappings
+func (tc *TranslationContext) GetGeneratedMappings() []GeneratedMappingInfo {
+	return tc.GeneratedMappings
+}
+
+// HasGeneratedMappings returns true if mappings were generated
+func (tc *TranslationContext) HasGeneratedMappings() bool {
+	return len(tc.GeneratedMappings) > 0
+}
+
+// GetStrategyOverride gets a strategy override value
+func (tc *TranslationContext) GetStrategyOverride(key string) (interface{}, bool) {
+	if tc.StrategyOverrides == nil {
+		return nil, false
+	}
+	value, exists := tc.StrategyOverrides[key]
+	return value, exists
+}
+
+// SetStrategyOverride sets a strategy override value
+func (tc *TranslationContext) SetStrategyOverride(key string, value interface{}) {
+	if tc.StrategyOverrides == nil {
+		tc.StrategyOverrides = make(map[string]interface{})
+	}
+	tc.StrategyOverrides[key] = value
+}
+
 // Clone creates a copy of the translation context
 func (tc *TranslationContext) Clone() *TranslationContext {
 	clone := *tc
@@ -276,6 +344,10 @@ func (tc *TranslationContext) Clone() *TranslationContext {
 
 	clone.UserDecisions = make([]PendingUserDecision, len(tc.UserDecisions))
 	copy(clone.UserDecisions, tc.UserDecisions)
+
+	// Deep copy generated mappings
+	clone.GeneratedMappings = make([]GeneratedMappingInfo, len(tc.GeneratedMappings))
+	copy(clone.GeneratedMappings, tc.GeneratedMappings)
 
 	// Deep copy preferences
 	clone.Preferences = tc.Preferences
@@ -289,6 +361,14 @@ func (tc *TranslationContext) Clone() *TranslationContext {
 	if tc.Preferences.ExcludeObjects != nil {
 		clone.Preferences.ExcludeObjects = make([]string, len(tc.Preferences.ExcludeObjects))
 		copy(clone.Preferences.ExcludeObjects, tc.Preferences.ExcludeObjects)
+	}
+
+	// Deep copy strategy overrides
+	if tc.StrategyOverrides != nil {
+		clone.StrategyOverrides = make(map[string]interface{})
+		for k, v := range tc.StrategyOverrides {
+			clone.StrategyOverrides[k] = v
+		}
 	}
 
 	return &clone
