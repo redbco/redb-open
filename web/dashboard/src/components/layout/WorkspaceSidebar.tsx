@@ -1,33 +1,29 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { 
   LayoutDashboard, 
   Database,
-  GitBranch,
   Settings, 
   ChevronLeft,
   ChevronRight,
   LogOut,
   User,
   Server,
-  Layers,
   ArrowLeft,
-  Zap,
   ArrowRightLeft,
-  Link as LucideLink
+  Link as LucideLink,
+  GitBranch,
+  Layers
 } from 'lucide-react';
-import { SessionStorage } from '@/lib/auth/storage';
-import { authAPI } from '@/lib/auth/api';
-import { useWorkspace } from '@/lib/workspace';
+import { useAuth } from '@/lib/auth/auth-context';
+import { useWorkspace } from '@/lib/hooks/useWorkspace';
 
 interface WorkspaceSidebarProps {
-  tenantId: string;
   workspaceId: string;
   isOpen: boolean;
   onToggle: () => void;
-  currentPath: string;
 }
 
 interface NavItem {
@@ -37,9 +33,9 @@ interface NavItem {
   description: string;
 }
 
-export const workspaceNavigationItems: NavItem[] = [
+const workspaceNavigationItems: NavItem[] = [
   {
-    name: 'Operations',
+    name: 'Dashboard',
     href: '/dashboard',
     icon: LayoutDashboard,
     description: 'Workspace overview and health'
@@ -60,7 +56,13 @@ export const workspaceNavigationItems: NavItem[] = [
     name: 'Repositories',
     href: '/repositories',
     icon: GitBranch,
-    description: 'Schema version control with git-like features'
+    description: 'Schema repositories and version control'
+  },
+  {
+    name: 'Environments',
+    href: '/environments',
+    icon: Layers,
+    description: 'Deployment environments'
   },
   {
     name: 'Mappings',
@@ -73,18 +75,6 @@ export const workspaceNavigationItems: NavItem[] = [
     href: '/relationships',
     icon: LucideLink,
     description: 'Active data replication and migration'
-  },
-  {
-    name: 'Jobs & Tasks',
-    href: '/jobs',
-    icon: Zap,
-    description: 'Migrations, RAG processes, and tasks'
-  },
-  {
-    name: 'Environments',
-    href: '/environments',
-    icon: Layers,
-    description: 'Database environment classification'
   },
   {
     name: 'MCP Servers',
@@ -100,28 +90,19 @@ export const workspaceNavigationItems: NavItem[] = [
   }
 ];
 
-export function WorkspaceSidebar({ tenantId, workspaceId, isOpen, onToggle, currentPath }: WorkspaceSidebarProps) {
+export function WorkspaceSidebar({ workspaceId, isOpen, onToggle }: WorkspaceSidebarProps) {
   const router = useRouter();
-  const user = SessionStorage.getUser();
-  const { currentWorkspace } = useWorkspace();
+  const pathname = usePathname();
+  const { profile, logout } = useAuth();
+  const { workspace } = useWorkspace(workspaceId);
 
   const handleLogout = async () => {
-    try {
-      const refreshToken = SessionStorage.getRefreshToken();
-      if (refreshToken) {
-        await authAPI.logout(refreshToken, tenantId);
-      }
-    } catch (error) {
-      console.error('Logout error:', error);
-    } finally {
-      SessionStorage.clearSession();
-      router.push(`/${tenantId}/auth/login`);
-    }
+    await logout();
   };
 
   const isActiveRoute = (href: string) => {
-    const fullPath = `/${tenantId}/workspace/${workspaceId}${href}`;
-    return currentPath === fullPath || currentPath.startsWith(fullPath + '/');
+    const fullPath = `/workspaces/${workspaceId}${href}`;
+    return pathname === fullPath || pathname?.startsWith(fullPath + '/');
   };
 
   return (
@@ -134,11 +115,13 @@ export function WorkspaceSidebar({ tenantId, workspaceId, isOpen, onToggle, curr
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
               <span className="text-primary-foreground font-bold text-sm">
-                {(currentWorkspace?.name || workspaceId).charAt(0).toUpperCase()}
+                {(workspace?.workspace_name || workspaceId).charAt(0).toUpperCase()}
               </span>
             </div>
             <div>
-              <h2 className="font-semibold text-foreground">{currentWorkspace?.name || workspaceId}</h2>
+              <h2 className="font-semibold text-foreground text-sm">
+                {workspace?.workspace_name || workspaceId}
+              </h2>
               <p className="text-xs text-muted-foreground">Workspace</p>
             </div>
           </div>
@@ -155,22 +138,22 @@ export function WorkspaceSidebar({ tenantId, workspaceId, isOpen, onToggle, curr
         </button>
       </div>
 
-      {/* Back to Tenant */}
+      {/* Back to Workspaces */}
       {isOpen && (
         <div className="px-4 py-2 border-b border-border">
           <Link
-            href={`/${tenantId}/overview`}
+            href="/workspaces"
             className="flex items-center space-x-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
-            <span>Back to {tenantId}</span>
+            <span>All Workspaces</span>
           </Link>
         </div>
       )}
 
       {/* Navigation */}
-      <nav className="flex-1 p-4">
-        <ul className="space-y-2">
+      <nav className="flex-1 overflow-y-auto p-4">
+        <ul className="space-y-1">
           {workspaceNavigationItems.map((item) => {
             const Icon = item.icon;
             const active = isActiveRoute(item.href);
@@ -178,7 +161,7 @@ export function WorkspaceSidebar({ tenantId, workspaceId, isOpen, onToggle, curr
             return (
               <li key={item.name}>
                 <Link
-                  href={`/${tenantId}/workspace/${workspaceId}${item.href}`}
+                  href={`/workspaces/${workspaceId}${item.href}`}
                   className={`flex items-center space-x-3 px-3 py-2 rounded-md transition-colors group ${
                     active
                       ? 'bg-primary text-primary-foreground'
@@ -189,12 +172,12 @@ export function WorkspaceSidebar({ tenantId, workspaceId, isOpen, onToggle, curr
                   <Icon className={`h-5 w-5 flex-shrink-0 ${active ? 'text-primary-foreground' : ''}`} />
                   {isOpen && (
                     <div className="flex-1 min-w-0">
-                      <span className="font-medium">{item.name}</span>
-                      <p className={`text-xs truncate ${
-                        active ? 'text-primary-foreground/80' : 'text-muted-foreground'
-                      }`}>
+                      <span className="text-sm font-medium">{item.name}</span>
+                      {!active && (
+                        <p className="text-xs truncate text-muted-foreground">
                         {item.description}
                       </p>
+                      )}
                     </div>
                   )}
                 </Link>
@@ -206,21 +189,26 @@ export function WorkspaceSidebar({ tenantId, workspaceId, isOpen, onToggle, curr
 
       {/* User Section */}
       <div className="border-t border-border p-4">
-        {isOpen && user && (
+        {isOpen && profile && (
           <div className="mb-4">
-            <div className="flex items-center space-x-3 px-3 py-2">
+            <Link
+              href="/profile"
+              className="flex items-center space-x-3 px-3 py-2 rounded-md hover:bg-accent transition-colors"
+            >
               <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center">
                 <User className="h-4 w-4 text-muted-foreground" />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-foreground truncate">
-                  {user.name || user.email}
+                  {profile.first_name && profile.last_name 
+                    ? `${profile.first_name} ${profile.last_name}`
+                    : profile.username}
                 </p>
                 <p className="text-xs text-muted-foreground truncate">
-                  {user.email}
+                  {profile.email}
                 </p>
               </div>
-            </div>
+            </Link>
           </div>
         )}
         
@@ -232,7 +220,7 @@ export function WorkspaceSidebar({ tenantId, workspaceId, isOpen, onToggle, curr
           title={!isOpen ? 'Sign out' : undefined}
         >
           <LogOut className="h-5 w-5 flex-shrink-0" />
-          {isOpen && <span>Sign out</span>}
+          {isOpen && <span className="text-sm">Sign out</span>}
         </button>
       </div>
     </div>

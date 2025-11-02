@@ -794,6 +794,19 @@ func (ah *AuthHandlers) writeJSONResponse(w http.ResponseWriter, statusCode int,
 }
 
 func (ah *AuthHandlers) writeErrorResponse(w http.ResponseWriter, statusCode int, message, error string) {
+	// Log error responses for monitoring and debugging
+	if ah.engine.logger != nil {
+		if statusCode >= 500 {
+			// Log 5xx errors as errors
+			ah.engine.logger.Errorf("HTTP %d - %s: %s", statusCode, message, error)
+		} else if statusCode >= 400 {
+			// Log 4xx errors as warnings (excluding 401 which is normal for invalid credentials)
+			if statusCode != http.StatusUnauthorized {
+				ah.engine.logger.Warnf("HTTP %d - %s: %s", statusCode, message, error)
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 

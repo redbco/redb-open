@@ -12,7 +12,9 @@ import {
   Network,
   Shield,
   Plug,
-  Briefcase
+  Briefcase,
+  MapPin,
+  Users
 } from 'lucide-react';
 
 interface IconTenantSidebarProps {
@@ -34,24 +36,35 @@ const tenantNavigationItems: NavItem[] = [
     description: 'Tenant overview and mesh status'
   },
   {
-    name: 'Mesh',
-    href: '/mesh',
-    icon: Network,
-    description: 'Mesh topology and node status (read-only)'
-  },
-  {
     name: 'Workspaces',
     href: '/workspaces',
     icon: Briefcase,
     description: 'Manage and access workspaces'
   },
   {
+    name: 'Mesh',
+    href: '/mesh',
+    icon: Network,
+    description: 'Mesh topology and node status'
+  },
+  {
+    name: 'Regions',
+    href: '/regions',
+    icon: MapPin,
+    description: 'Geographic regions management'
+  },
+  {
+    name: 'Users',
+    href: '/users',
+    icon: Users,
+    description: 'User accounts and permissions'
+  },
+  {
     name: 'Access Management',
     href: '/access',
     icon: Shield,
-    description: 'Users, roles, permissions, and API tokens'
+    description: 'Roles, permissions, and API tokens'
   },
-
   {
     name: 'Integrations',
     href: '/integrations',

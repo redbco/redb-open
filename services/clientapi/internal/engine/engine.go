@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	securityv1 "github.com/redbco/redb-open/api/proto/security/v1"
@@ -20,6 +21,7 @@ import (
 	"github.com/redbco/redb-open/pkg/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 const (
@@ -102,7 +104,24 @@ func (e *Engine) Start(ctx context.Context) error {
 		e.logger.Infof("Connecting to core service at: %s", coreAddr)
 	}
 
-	coreConn, err := grpc.Dial(coreAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Create connection with proper keepalive and connection pool settings
+	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	coreDialOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(), // Wait for connection to be established
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                10 * time.Second, // Send keepalive pings every 10 seconds
+			Timeout:             3 * time.Second,  // Wait 3 seconds for ping ack before considering connection dead
+			PermitWithoutStream: true,             // Send keepalive pings even when there are no active streams
+		}),
+		grpc.WithDefaultCallOptions(
+			grpc.WaitForReady(true), // Wait for connection to be ready before sending RPCs
+		),
+	}
+
+	coreConn, err := grpc.DialContext(dialCtx, coreAddr, coreDialOpts...)
 	if err != nil {
 		if e.logger != nil {
 			e.logger.Errorf("Failed to connect to core service at %s: %v", coreAddr, err)
@@ -150,7 +169,25 @@ func (e *Engine) Start(ctx context.Context) error {
 		e.logger.Infof("Connecting to security service at: %s", securityAddr)
 	}
 
-	securityConn, err := grpc.Dial(securityAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Create connection with proper keepalive and connection pool settings
+	// This is critical for handling concurrent authentication requests
+	securityDialCtx, securityCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer securityCancel()
+
+	securityDialOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(), // Wait for connection to be established
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                10 * time.Second, // Send keepalive pings every 10 seconds
+			Timeout:             3 * time.Second,  // Wait 3 seconds for ping ack before considering connection dead
+			PermitWithoutStream: true,             // Send keepalive pings even when there are no active streams
+		}),
+		grpc.WithDefaultCallOptions(
+			grpc.WaitForReady(true), // Wait for connection to be ready before sending RPCs
+		),
+	}
+
+	securityConn, err := grpc.DialContext(securityDialCtx, securityAddr, securityDialOpts...)
 	if err != nil {
 		if e.logger != nil {
 			e.logger.Errorf("Failed to connect to security service at %s: %v", securityAddr, err)

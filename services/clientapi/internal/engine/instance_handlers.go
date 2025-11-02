@@ -769,6 +769,17 @@ func (ih *InstanceHandlers) writeJSONResponse(w http.ResponseWriter, statusCode 
 
 // writeErrorResponse writes an error response
 func (ih *InstanceHandlers) writeErrorResponse(w http.ResponseWriter, statusCode int, message, details string) {
+	// Log error responses for monitoring and debugging
+	if ih.engine.logger != nil {
+		if statusCode >= 500 {
+			// Log 5xx errors as errors
+			ih.engine.logger.Errorf("HTTP %d - %s: %s", statusCode, message, details)
+		} else if statusCode >= 400 {
+			// Log 4xx errors as warnings
+			ih.engine.logger.Warnf("HTTP %d - %s: %s", statusCode, message, details)
+		}
+	}
+
 	response := ErrorResponse{
 		Error:   message,
 		Message: details,

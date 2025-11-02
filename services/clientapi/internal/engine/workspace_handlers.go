@@ -452,6 +452,17 @@ func (wh *WorkspaceHandlers) writeJSONResponse(w http.ResponseWriter, statusCode
 
 // writeErrorResponse writes an error response
 func (wh *WorkspaceHandlers) writeErrorResponse(w http.ResponseWriter, statusCode int, message, error string) {
+	// Log error responses for monitoring and debugging
+	if wh.engine.logger != nil {
+		if statusCode >= 500 {
+			// Log 5xx errors as errors
+			wh.engine.logger.Errorf("HTTP %d - %s: %s", statusCode, message, error)
+		} else if statusCode >= 400 {
+			// Log 4xx errors as warnings
+			wh.engine.logger.Warnf("HTTP %d - %s: %s", statusCode, message, error)
+		}
+	}
+
 	response := ErrorResponse{
 		Error:   error,
 		Message: message,

@@ -1074,6 +1074,17 @@ func (dh *DatabaseHandlers) writeJSONResponse(w http.ResponseWriter, statusCode 
 }
 
 func (dh *DatabaseHandlers) writeErrorResponse(w http.ResponseWriter, statusCode int, message, details string) {
+	// Log error responses for monitoring and debugging
+	if dh.engine.logger != nil {
+		if statusCode >= 500 {
+			// Log 5xx errors as errors
+			dh.engine.logger.Errorf("HTTP %d - %s: %s", statusCode, message, details)
+		} else if statusCode >= 400 {
+			// Log 4xx errors as warnings
+			dh.engine.logger.Warnf("HTTP %d - %s: %s", statusCode, message, details)
+		}
+	}
+
 	response := ErrorResponse{
 		Error:   message,
 		Message: details,

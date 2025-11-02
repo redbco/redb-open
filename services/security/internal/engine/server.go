@@ -9,6 +9,7 @@ import (
 	"fmt"
 	mathrand "math/rand"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -23,12 +24,14 @@ import (
 
 type SecurityServer struct {
 	securityv1.UnimplementedSecurityServiceServer
-	engine *Engine
+	engine        *Engine
+	secretManager *TenantJWTSecretManager
 }
 
 func NewSecurityServer(engine *Engine) *SecurityServer {
 	return &SecurityServer{
-		engine: engine,
+		engine:        engine,
+		secretManager: NewTenantJWTSecretManager(),
 	}
 }
 
@@ -64,6 +67,8 @@ const (
 type TenantJWTSecretManager struct {
 	keyringManager *keyring.KeyringManager
 	keyPrefix      string
+	cache          map[string][]byte // In-memory cache for secrets
+	cacheMu        sync.RWMutex      // Protects the cache
 }
 
 // NewTenantJWTSecretManager creates a new tenant JWT secret manager
@@ -76,6 +81,7 @@ func NewTenantJWTSecretManager() *TenantJWTSecretManager {
 	return &TenantJWTSecretManager{
 		keyringManager: km,
 		keyPrefix:      JWTSecretKeyPrefix,
+		cache:          make(map[string][]byte),
 	}
 }
 
@@ -90,6 +96,18 @@ func (tjsm *TenantJWTSecretManager) GetTenantSecret(tenantID string) ([]byte, er
 		return nil, errors.New("tenant ID is required")
 	}
 
+	// Check cache first (with read lock)
+	tjsm.cacheMu.RLock()
+	if cachedSecret, exists := tjsm.cache[tenantID]; exists {
+		tjsm.cacheMu.RUnlock()
+		// Return a copy to avoid external modifications
+		secretCopy := make([]byte, len(cachedSecret))
+		copy(secretCopy, cachedSecret)
+		return secretCopy, nil
+	}
+	tjsm.cacheMu.RUnlock()
+
+	// Not in cache, load from keyring
 	secretKey := tjsm.getTenantSecretKey(tenantID)
 
 	// Try to get existing secret from keyring
@@ -104,7 +122,15 @@ func (tjsm *TenantJWTSecretManager) GetTenantSecret(tenantID string) ([]byte, er
 		return nil, fmt.Errorf("failed to decode tenant secret: %w", err)
 	}
 
-	return secretBytes, nil
+	// Store in cache (with write lock)
+	tjsm.cacheMu.Lock()
+	tjsm.cache[tenantID] = secretBytes
+	tjsm.cacheMu.Unlock()
+
+	// Return a copy to avoid external modifications
+	secretCopy := make([]byte, len(secretBytes))
+	copy(secretCopy, secretBytes)
+	return secretCopy, nil
 }
 
 // CreateTenantSecret generates and stores a new JWT secret for a tenant
@@ -135,6 +161,11 @@ func (tjsm *TenantJWTSecretManager) CreateTenantSecret(tenantID string) ([]byte,
 		return nil, fmt.Errorf("failed to store tenant secret: %w", err)
 	}
 
+	// Update cache
+	tjsm.cacheMu.Lock()
+	tjsm.cache[tenantID] = secretBytes
+	tjsm.cacheMu.Unlock()
+
 	return secretBytes, nil
 }
 
@@ -160,6 +191,11 @@ func (tjsm *TenantJWTSecretManager) RotateTenantSecret(tenantID string) ([]byte,
 		return nil, fmt.Errorf("failed to rotate tenant secret: %w", err)
 	}
 
+	// Update cache
+	tjsm.cacheMu.Lock()
+	tjsm.cache[tenantID] = secretBytes
+	tjsm.cacheMu.Unlock()
+
 	return secretBytes, nil
 }
 
@@ -182,6 +218,11 @@ func (tjsm *TenantJWTSecretManager) SetTenantSecret(tenantID string, secret []by
 		return fmt.Errorf("failed to set tenant secret: %w", err)
 	}
 
+	// Update cache
+	tjsm.cacheMu.Lock()
+	tjsm.cache[tenantID] = secret
+	tjsm.cacheMu.Unlock()
+
 	return nil
 }
 
@@ -193,6 +234,12 @@ func (tjsm *TenantJWTSecretManager) DeleteTenantSecret(tenantID string) error {
 
 	secretKey := tjsm.getTenantSecretKey(tenantID)
 	err := tjsm.keyringManager.Delete(KeyringService, secretKey)
+	
+	// Remove from cache
+	tjsm.cacheMu.Lock()
+	delete(tjsm.cache, tenantID)
+	tjsm.cacheMu.Unlock()
+	
 	// Note: file-based keyring doesn't return "not found" errors the same way
 	// so we'll just ignore any errors here
 	return err
@@ -226,11 +273,8 @@ func (s *SecurityServer) getTenantJWTSecret(tenantID string) ([]byte, error) {
 		return nil, errors.New("tenant ID is required")
 	}
 
-	// Initialize tenant secret manager
-	secretManager := NewTenantJWTSecretManager()
-
-	// Try to get secret from keyring
-	secret, err := secretManager.GetTenantSecret(tenantID)
+	// Use the cached secret manager
+	secret, err := s.secretManager.GetTenantSecret(tenantID)
 	if err != nil {
 		s.engine.logger.Error("Failed to get tenant JWT secret from keyring")
 		return nil, fmt.Errorf("tenant JWT secret not found for tenant %s", tenantID)
@@ -682,8 +726,7 @@ func (s *SecurityServer) GetTenantJWTSecrets(ctx context.Context, req *securityv
 	}
 
 	// Get tenant secret
-	secretManager := NewTenantJWTSecretManager()
-	secret, err := secretManager.GetTenantSecret(req.TenantId)
+	secret, err := s.secretManager.GetTenantSecret(req.TenantId)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return &securityv1.GetTenantJWTSecretsResponse{
@@ -755,8 +798,7 @@ func (s *SecurityServer) SetTenantJWTSecrets(ctx context.Context, req *securityv
 	}
 
 	// Store the secret
-	secretManager := NewTenantJWTSecretManager()
-	err = secretManager.SetTenantSecret(req.TenantId, secretBytes)
+	err = s.secretManager.SetTenantSecret(req.TenantId, secretBytes)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return &securityv1.SetTenantJWTSecretsResponse{
@@ -789,8 +831,7 @@ func (s *SecurityServer) RotateTenantJWTSecrets(ctx context.Context, req *securi
 	}
 
 	// Rotate tenant secret
-	secretManager := NewTenantJWTSecretManager()
-	_, err := secretManager.RotateTenantSecret(req.TenantId)
+	_, err := s.secretManager.RotateTenantSecret(req.TenantId)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return &securityv1.RotateTenantJWTSecretsResponse{
@@ -823,8 +864,7 @@ func (s *SecurityServer) DeleteTenantJWTSecrets(ctx context.Context, req *securi
 	}
 
 	// Delete tenant secret
-	secretManager := NewTenantJWTSecretManager()
-	err := secretManager.DeleteTenantSecret(req.TenantId)
+	err := s.secretManager.DeleteTenantSecret(req.TenantId)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return &securityv1.DeleteTenantJWTSecretsResponse{

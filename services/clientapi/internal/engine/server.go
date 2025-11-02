@@ -413,6 +413,9 @@ func (s *Server) handleInitialSetup(w http.ResponseWriter, r *http.Request) {
 	// Call the engine to perform initial setup
 	response, err := s.engine.PerformInitialSetup(ctx, req)
 	if err != nil {
+		if s.engine.logger != nil {
+			s.engine.logger.Errorf("HTTP 500 - Initial setup failed: %v", err)
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -458,6 +461,9 @@ func (s *Server) handleUserSetup(w http.ResponseWriter, r *http.Request) {
 	// Call the engine to perform user setup
 	response, err := s.engine.PerformUserSetup(ctx, tenantURL, req)
 	if err != nil {
+		if s.engine.logger != nil {
+			s.engine.logger.Errorf("HTTP 500 - User setup failed: %v", err)
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -478,6 +484,9 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	// Call the engine to get node status
 	response, err := s.engine.GetNodeStatus(ctx)
 	if err != nil {
+		if s.engine.logger != nil {
+			s.engine.logger.Errorf("HTTP 500 - Get node status failed: %v", err)
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -515,6 +524,9 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Call core service through engine
 	response, err := s.engine.Query(ctx, req)
 	if err != nil {
+		if s.engine.logger != nil {
+			s.engine.logger.Errorf("HTTP 500 - Query failed: %v", err)
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -421,7 +421,7 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 				var commitMessage string
 				for _, change := range compareResp.Changes {
 					w.logInfo("Schema change: %s", change)
-					commitMessage += change
+					commitMessage += change + "\n"
 				}
 
 				// Store the schema changes in the internal database
@@ -512,7 +512,7 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 					var commitMessage string
 					for _, change := range compareResp.Changes {
 						w.logInfo("Schema change: %s", change)
-						commitMessage += change
+						commitMessage += change + "\n"
 					}
 
 					// Store the schema changes in the internal database

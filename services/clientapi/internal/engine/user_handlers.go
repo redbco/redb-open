@@ -455,6 +455,17 @@ func (uh *UserHandlers) writeJSONResponse(w http.ResponseWriter, statusCode int,
 
 // writeErrorResponse writes an error response
 func (uh *UserHandlers) writeErrorResponse(w http.ResponseWriter, statusCode int, message, error string) {
+	// Log error responses for monitoring and debugging
+	if uh.engine.logger != nil {
+		if statusCode >= 500 {
+			// Log 5xx errors as errors
+			uh.engine.logger.Errorf("HTTP %d - %s: %s", statusCode, message, error)
+		} else if statusCode >= 400 {
+			// Log 4xx errors as warnings
+			uh.engine.logger.Warnf("HTTP %d - %s: %s", statusCode, message, error)
+		}
+	}
+
 	response := ErrorResponse{
 		Error:   error,
 		Message: message,

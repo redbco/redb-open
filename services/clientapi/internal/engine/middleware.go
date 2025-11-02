@@ -299,6 +299,17 @@ func (m *Middleware) extractBearerToken(r *http.Request) string {
 
 // writeErrorResponse writes an error response in JSON format
 func (m *Middleware) writeErrorResponse(w http.ResponseWriter, statusCode int, message, error string) {
+	// Log error responses for monitoring and debugging
+	if m.engine.logger != nil {
+		if statusCode >= 500 {
+			// Log 5xx errors as errors
+			m.engine.logger.Errorf("HTTP %d - %s: %s", statusCode, message, error)
+		} else if statusCode >= 400 {
+			// Log 4xx errors as warnings
+			m.engine.logger.Warnf("HTTP %d - %s: %s", statusCode, message, error)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 
