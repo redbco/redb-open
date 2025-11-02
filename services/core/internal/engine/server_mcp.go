@@ -509,18 +509,48 @@ func (s *Server) AddMCPResource(ctx context.Context, req *corev1.AddMCPResourceR
 		return nil, status.Errorf(codes.NotFound, "workspace not found: %v", err)
 	}
 
-	// Get mapping details (including source identifier and target type)
+	// Get mapping details and its first rule to determine source/target
 	var mappingID string
-	var mappingSourceType string
-	var mappingSourceIdentifier string
-	var mappingTargetType string
+	var mappingType string
 	err = s.engine.db.Pool().QueryRow(ctx,
-		"SELECT mapping_id, mapping_source_type, mapping_source_identifier, mapping_target_type FROM mappings WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_name = $3",
-		req.TenantId, workspaceID, req.MappingName).Scan(&mappingID, &mappingSourceType, &mappingSourceIdentifier, &mappingTargetType)
+		"SELECT mapping_id, mapping_type FROM mappings WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_name = $3",
+		req.TenantId, workspaceID, req.MappingName).Scan(&mappingID, &mappingType)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.NotFound, "mapping not found: %v", err)
 	}
+
+	// Get the first mapping rule to extract source database and table information
+	var sourceResourceURI string
+	var targetResourceURI string
+	err = s.engine.db.Pool().QueryRow(ctx, `
+		SELECT 
+			mr.mapping_rule_metadata->>'source_resource_uri',
+			mr.mapping_rule_metadata->>'target_resource_uri'
+		FROM mapping_rules mr
+		JOIN mapping_rule_mappings mrm ON mr.mapping_rule_id = mrm.mapping_rule_id
+		WHERE mrm.mapping_id = $1
+		ORDER BY mrm.mapping_rule_order
+		LIMIT 1`,
+		mappingID).Scan(&sourceResourceURI, &targetResourceURI)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get mapping rule: %v", err)
+	}
+
+	// Parse the source resource URI to extract database ID and table name
+	// Format: redb:/data/database/{database_id}/table/{table_name}/column/{column_name}
+	var sourceDatabaseID, sourceTableName string
+	if mappingType == "table" {
+		sourceDatabaseID, sourceTableName, err = parseResourceURIForMCP(sourceResourceURI)
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.InvalidArgument, "invalid source URI format: %v", err)
+		}
+	}
+
+	// Check if target is MCP (virtual table)
+	isMCPTarget := strings.HasPrefix(targetResourceURI, "mcp_virtual://")
 
 	// Start with the provided config or an empty map
 	configMap := make(map[string]interface{})
@@ -530,30 +560,21 @@ func (s *Server) AddMCPResource(ctx context.Context, req *corev1.AddMCPResourceR
 
 	// Auto-populate config from mapping if not already specified
 	if _, hasType := configMap["type"]; !hasType {
-		// For MCP mappings (target_type = "mcp"), use mapped_table to apply transformations
-		if mappingTargetType == "mcp" {
+		// For MCP mappings (target is mcp_virtual), use mapped_table to apply transformations
+		if isMCPTarget {
 			configMap["type"] = "mapped_table"
 		} else {
 			configMap["type"] = "direct_table"
 		}
 	}
 
-	// Parse the source identifier to extract database and table names
-	if mappingSourceType == "table" {
-		// Format: "database_name.table_name"
-		parts := strings.Split(mappingSourceIdentifier, ".")
-		if len(parts) == 2 {
-			if _, hasDB := configMap["database_id"]; !hasDB {
-				configMap["database_id"] = parts[0]
-			}
-			if _, hasTable := configMap["table_name"]; !hasTable {
-				configMap["table_name"] = parts[1]
-			}
-		}
-	} else if mappingSourceType == "database" {
-		// Format: "database_name"
+	// Populate database_id and table_name from parsed source URI
+	if mappingType == "table" {
 		if _, hasDB := configMap["database_id"]; !hasDB {
-			configMap["database_id"] = mappingSourceIdentifier
+			configMap["database_id"] = sourceDatabaseID
+		}
+		if _, hasTable := configMap["table_name"]; !hasTable {
+			configMap["table_name"] = sourceTableName
 		}
 	}
 
@@ -1005,16 +1026,41 @@ func (s *Server) AddMCPTool(ctx context.Context, req *corev1.AddMCPToolRequest) 
 		return nil, status.Errorf(codes.NotFound, "workspace not found: %v", err)
 	}
 
-	// Get mapping details (including source identifier)
+	// Get mapping details and its first rule to determine source
 	var mappingID string
-	var mappingSourceType string
-	var mappingSourceIdentifier string
+	var mappingType string
 	err = s.engine.db.Pool().QueryRow(ctx,
-		"SELECT mapping_id, mapping_source_type, mapping_source_identifier FROM mappings WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_name = $3",
-		req.TenantId, workspaceID, req.MappingName).Scan(&mappingID, &mappingSourceType, &mappingSourceIdentifier)
+		"SELECT mapping_id, mapping_type FROM mappings WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_name = $3",
+		req.TenantId, workspaceID, req.MappingName).Scan(&mappingID, &mappingType)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.NotFound, "mapping not found: %v", err)
+	}
+
+	// Get the first mapping rule to extract source database and table information
+	var sourceResourceURI string
+	err = s.engine.db.Pool().QueryRow(ctx, `
+		SELECT mr.mapping_rule_metadata->>'source_resource_uri'
+		FROM mapping_rules mr
+		JOIN mapping_rule_mappings mrm ON mr.mapping_rule_id = mrm.mapping_rule_id
+		WHERE mrm.mapping_id = $1
+		ORDER BY mrm.mapping_rule_order
+		LIMIT 1`,
+		mappingID).Scan(&sourceResourceURI)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get mapping rule: %v", err)
+	}
+
+	// Parse the source resource URI to extract database ID and table name
+	// Format: redb:/data/database/{database_id}/table/{table_name}/column/{column_name}
+	var sourceDatabaseID, sourceTableName string
+	if mappingType == "table" {
+		sourceDatabaseID, sourceTableName, err = parseResourceURIForMCP(sourceResourceURI)
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.InvalidArgument, "invalid source URI format: %v", err)
+		}
 	}
 
 	// Start with the provided config or an empty map
@@ -1028,22 +1074,13 @@ func (s *Server) AddMCPTool(ctx context.Context, req *corev1.AddMCPToolRequest) 
 		configMap["operation"] = "query_database"
 	}
 
-	// Parse the source identifier to extract database and table names
-	if mappingSourceType == "table" {
-		// Format: "database_name.table_name"
-		parts := strings.Split(mappingSourceIdentifier, ".")
-		if len(parts) == 2 {
-			if _, hasDB := configMap["database_id"]; !hasDB {
-				configMap["database_id"] = parts[0]
-			}
-			if _, hasTable := configMap["table_name"]; !hasTable {
-				configMap["table_name"] = parts[1]
-			}
-		}
-	} else if mappingSourceType == "database" {
-		// Format: "database_name"
+	// Populate database_id and table_name from parsed source URI
+	if mappingType == "table" {
 		if _, hasDB := configMap["database_id"]; !hasDB {
-			configMap["database_id"] = mappingSourceIdentifier
+			configMap["database_id"] = sourceDatabaseID
+		}
+		if _, hasTable := configMap["table_name"]; !hasTable {
+			configMap["table_name"] = sourceTableName
 		}
 	}
 
@@ -1404,6 +1441,55 @@ func (s *Server) DetachMCPPrompt(ctx context.Context, req *corev1.DetachMCPPromp
 // ============================================================================
 // Helper Methods
 // ============================================================================
+
+// parseResourceURIForMCP parses a resource URI and extracts database ID and table name
+// Format: redb:/data/database/{database_id}/table/{table_name}/column/{column_name}
+func parseResourceURIForMCP(uri string) (databaseID, tableName string, err error) {
+	// Check if it starts with redb:/
+	if !strings.HasPrefix(uri, "redb:/") {
+		return "", "", fmt.Errorf("URI must start with 'redb:/' (got: %s)", uri)
+	}
+
+	// Remove the protocol prefix
+	path := strings.TrimPrefix(uri, "redb:/")
+	
+	// Split by /
+	parts := strings.Split(path, "/")
+	
+	// Expected format: data/database/{id}/table/{name}/column/{col}
+	// parts[0] = "data" (scope)
+	// parts[1] = "database" (resource type)
+	// parts[2] = database ID
+	// parts[3] = "table" (object type)
+	// parts[4] = table name
+	// parts[5] = "column" (segment type)
+	// parts[6] = column name
+	
+	if len(parts) < 7 {
+		return "", "", fmt.Errorf("invalid URI format, expected: redb:/data/database/{id}/table/{name}/column/{col}")
+	}
+	
+	if parts[0] != "data" {
+		return "", "", fmt.Errorf("expected scope 'data', got: %s", parts[0])
+	}
+	
+	if parts[1] != "database" {
+		return "", "", fmt.Errorf("expected resource type 'database', got: %s", parts[1])
+	}
+	
+	if parts[3] != "table" {
+		return "", "", fmt.Errorf("expected object type 'table', got: %s", parts[3])
+	}
+	
+	if parts[5] != "column" {
+		return "", "", fmt.Errorf("expected segment type 'column', got: %s", parts[5])
+	}
+	
+	databaseID = parts[2]
+	tableName = parts[4]
+	
+	return databaseID, tableName, nil
+}
 
 func (s *Server) convertStatusStringToEnum(statusStr string) commonv1.Status {
 	switch statusStr {

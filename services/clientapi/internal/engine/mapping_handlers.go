@@ -649,6 +649,9 @@ func (mh *MappingHandlers) DeleteMapping(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Check for optional keep_rules query parameter
+	keepRules := r.URL.Query().Get("keep_rules") == "true"
+
 	// Get tenant_id from authenticated profile
 	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
 	if !ok || profile == nil {
@@ -658,7 +661,7 @@ func (mh *MappingHandlers) DeleteMapping(w http.ResponseWriter, r *http.Request)
 
 	// Log request
 	if mh.engine.logger != nil {
-		mh.engine.logger.Infof("Delete mapping request for mapping: %s, workspace: %s, tenant: %s", mappingName, workspaceName, profile.TenantId)
+		mh.engine.logger.Infof("Delete mapping request for mapping: %s, workspace: %s, tenant: %s (keep_rules=%v)", mappingName, workspaceName, profile.TenantId, keepRules)
 	}
 
 	// Create context with timeout
@@ -670,6 +673,7 @@ func (mh *MappingHandlers) DeleteMapping(w http.ResponseWriter, r *http.Request)
 		TenantId:      profile.TenantId,
 		WorkspaceName: workspaceName,
 		MappingName:   mappingName,
+		KeepRules:     &keepRules,
 	}
 
 	grpcResp, err := mh.engine.mappingClient.DeleteMapping(ctx, grpcReq)
@@ -1351,6 +1355,51 @@ func (mh *MappingHandlers) parseSourceTarget(input string) (database, table stri
 	}
 }
 
+// convertToResourceURI converts database.table.column format to redb:// URI format
+// Input format: database_name.table_name.column_name
+// Output format: redb://data/database/{database_id}/table/{table_name}/column/{column_name}
+func (mh *MappingHandlers) convertToResourceURI(ctx context.Context, tenantID, workspaceName, identifier string) (string, error) {
+	// Parse the identifier
+	parts := strings.Split(identifier, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid identifier format '%s': expected 'database.table.column'", identifier)
+	}
+
+	databaseName := parts[0]
+	tableName := parts[1]
+	columnName := parts[2]
+
+	// Get database information to retrieve database ID
+	listReq := &corev1.ListDatabasesRequest{
+		TenantId:      tenantID,
+		WorkspaceName: workspaceName,
+	}
+
+	listResp, err := mh.engine.databaseClient.ListDatabases(ctx, listReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to list databases: %w", err)
+	}
+
+	// Find the database by name
+	var databaseID string
+	for _, db := range listResp.Databases {
+		if db.DatabaseName == databaseName {
+			databaseID = db.DatabaseId
+			break
+		}
+	}
+
+	if databaseID == "" {
+		return "", fmt.Errorf("database '%s' not found", databaseName)
+	}
+
+	// Build the resource URI with correct format:
+	// redb:/data/database/{id}/table/{name}/column/{col}
+	// Note: Only ONE slash after colon (redb:/ not redb://)
+	resourceURI := fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s", databaseID, tableName, columnName)
+	return resourceURI, nil
+}
+
 // ensureUniqueMappingName ensures the mapping name is unique by appending a number if needed
 func (mh *MappingHandlers) ensureUniqueMappingName(ctx context.Context, tenantID, workspaceName, proposedName string) (string, error) {
 	// First, try the proposed name as-is
@@ -1581,14 +1630,33 @@ func (mh *MappingHandlers) AddRuleToMapping(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
+	// Convert source and target from database.table.column format to redb:// URI format
+	sourceURI, err := mh.convertToResourceURI(ctx, profile.TenantId, workspaceName, req.Source)
+	if err != nil {
+		if mh.engine.logger != nil {
+			mh.engine.logger.Errorf("Failed to convert source identifier to URI: %v", err)
+		}
+		mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid source format", err.Error())
+		return
+	}
+
+	targetURI, err := mh.convertToResourceURI(ctx, profile.TenantId, workspaceName, req.Target)
+	if err != nil {
+		if mh.engine.logger != nil {
+			mh.engine.logger.Errorf("Failed to convert target identifier to URI: %v", err)
+		}
+		mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid target format", err.Error())
+		return
+	}
+
 	// Step 1: Create the mapping rule
 	addRuleReq := &corev1.AddMappingRuleRequest{
 		TenantId:                         profile.TenantId,
 		WorkspaceName:                    workspaceName,
 		MappingRuleName:                  req.RuleName,
 		MappingRuleDescription:           fmt.Sprintf("Rule for %s mapping", mappingName),
-		MappingRuleSource:                req.Source,
-		MappingRuleTarget:                req.Target,
+		MappingRuleSource:                sourceURI,
+		MappingRuleTarget:                targetURI,
 		MappingRuleTransformationName:    req.Transformation,
 		MappingRuleTransformationOptions: "",
 		OwnerId:                          profile.UserId,
@@ -1678,13 +1746,39 @@ func (mh *MappingHandlers) ModifyRuleInMapping(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
+	// Convert source and target if provided (from database.table.column format to redb:// URI format)
+	var sourceURI, targetURI *string
+	if req.Source != nil {
+		convertedSource, err := mh.convertToResourceURI(ctx, profile.TenantId, workspaceName, *req.Source)
+		if err != nil {
+			if mh.engine.logger != nil {
+				mh.engine.logger.Errorf("Failed to convert source identifier to URI: %v", err)
+			}
+			mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid source format", err.Error())
+			return
+		}
+		sourceURI = &convertedSource
+	}
+
+	if req.Target != nil {
+		convertedTarget, err := mh.convertToResourceURI(ctx, profile.TenantId, workspaceName, *req.Target)
+		if err != nil {
+			if mh.engine.logger != nil {
+				mh.engine.logger.Errorf("Failed to convert target identifier to URI: %v", err)
+			}
+			mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid target format", err.Error())
+			return
+		}
+		targetURI = &convertedTarget
+	}
+
 	// Modify the mapping rule
 	modifyReq := &corev1.ModifyMappingRuleRequest{
 		TenantId:                      profile.TenantId,
 		WorkspaceName:                 workspaceName,
 		MappingRuleName:               ruleName,
-		MappingRuleSource:             req.Source,
-		MappingRuleTarget:             req.Target,
+		MappingRuleSource:             sourceURI,
+		MappingRuleTarget:             targetURI,
 		MappingRuleTransformationName: req.Transformation,
 	}
 

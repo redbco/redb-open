@@ -233,20 +233,28 @@ func (r *CDCEventRouter) parseMappingRules(mappingRulesJSON []byte) error {
 			rule.TransformationType = adapter.TransformDirect
 		}
 
-		// Extract source and target tables from identifiers in metadata
+		// Extract source and target tables from URIs in metadata
 		if hasMetadata {
-			// Parse source identifier (format: "database_name.table_name.column_name")
-			if sourceIdentifier, ok := metadata["source_identifier"].(string); ok {
-				parts := splitIdentifier(sourceIdentifier)
-				if len(parts) >= 2 {
-					rule.SourceTable = parts[1] // table name
+			// Parse source URI (format: "redb://database_id/dbname/table/table_name/column/column_name")
+			if sourceURI, ok := metadata["source_resource_uri"].(string); ok {
+				parts := splitIdentifier(sourceURI)
+				// Look for table name in the URI path
+				for i, part := range parts {
+					if part == "table" && i+1 < len(parts) {
+						rule.SourceTable = parts[i+1]
+						break
+					}
 				}
 			}
-			// Parse target identifier (format: "database_name.table_name.column_name")
-			if targetIdentifier, ok := metadata["target_identifier"].(string); ok {
-				parts := splitIdentifier(targetIdentifier)
-				if len(parts) >= 2 {
-					rule.TargetTable = parts[1] // table name
+			// Parse target URI (format: "redb://database_id/dbname/table/table_name/column/column_name")
+			if targetURI, ok := metadata["target_resource_uri"].(string); ok {
+				parts := splitIdentifier(targetURI)
+				// Look for table name in the URI path
+				for i, part := range parts {
+					if part == "table" && i+1 < len(parts) {
+						rule.TargetTable = parts[i+1]
+						break
+					}
 				}
 			}
 		}

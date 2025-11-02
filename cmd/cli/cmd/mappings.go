@@ -179,6 +179,28 @@ Examples:
 	},
 }
 
+// removeMappingCmd represents the remove command
+var removeMappingCmd = &cobra.Command{
+	Use:   "remove [mapping-name]",
+	Short: "Remove a mapping",
+	Long: `Remove a mapping and optionally delete associated mapping rules.
+
+By default, mapping rules that are not used by other mappings will be deleted.
+Use --keep-rules to preserve all rules (only the association is removed).
+
+Examples:
+  # Remove mapping and delete unused rules
+  redb mappings remove user-mapping
+  
+  # Remove mapping but keep all rules
+  redb mappings remove user-mapping --keep-rules`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		keepRules, _ := cmd.Flags().GetBool("keep-rules")
+		return mappings.RemoveMapping(args[0], keepRules)
+	},
+}
+
 // listRulesCmd represents the list-rules command
 var listRulesCmd = &cobra.Command{
 	Use:   "list-rules",
@@ -265,6 +287,9 @@ func init() {
 	removeRuleCmd.MarkFlagRequired("mapping")
 	removeRuleCmd.MarkFlagRequired("rule")
 
+	// Add flags to removeMappingCmd
+	removeMappingCmd.Flags().Bool("keep-rules", false, "Keep rules after removing mapping (default: false)")
+
 	// Add flags to listRulesCmd
 	listRulesCmd.Flags().String("mapping", "", "Mapping name (required)")
 	listRulesCmd.MarkFlagRequired("mapping")
@@ -278,5 +303,6 @@ func init() {
 	mappingsCmd.AddCommand(modifyRuleCmd)
 	mappingsCmd.AddCommand(addRuleCmd)
 	mappingsCmd.AddCommand(removeRuleCmd)
+	mappingsCmd.AddCommand(removeMappingCmd)
 	mappingsCmd.AddCommand(listRulesCmd)
 }

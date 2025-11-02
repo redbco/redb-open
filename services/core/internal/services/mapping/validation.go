@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/redbco/redb-open/pkg/unifiedmodel/resource"
 )
 
 // DatabaseSchema represents the structure of a database schema
@@ -102,14 +103,14 @@ func (s *Service) ValidateTargetColumn(ctx context.Context, databaseName, tableN
 }
 
 // CheckColumnNotMapped checks if a column is already mapped in the same mapping
-// NOTE: Updated for new workflow-based schema - checks metadata for source_identifier
+// NOTE: Updated for new workflow-based schema - checks metadata for source_resource_uri
 func (s *Service) CheckColumnNotMapped(ctx context.Context, mappingID, sourceColumn, excludeRuleID string) (*ValidationResult, error) {
 	query := `
 		SELECT COUNT(*) 
 		FROM mapping_rules mr
 		JOIN mapping_rule_mappings mrm ON mr.mapping_rule_id = mrm.mapping_rule_id
 		WHERE mrm.mapping_id = $1 
-		  AND mr.mapping_rule_metadata->>'source_identifier' = $2
+		  AND mr.mapping_rule_metadata->>'source_resource_uri' = $2
 		  AND mr.mapping_rule_id != $3
 	`
 
@@ -404,36 +405,36 @@ func (s *Service) ValidateTargetConsistency(ctx context.Context, mapping *Mappin
 
 	// Check all rules for target consistency
 	for _, rule := range rules {
-		// Extract target identifier from metadata
-		targetIdentifier, ok := rule.Metadata["target_identifier"].(string)
-		if !ok || targetIdentifier == "" {
-			warnings = append(warnings, fmt.Sprintf("Rule '%s': Missing target identifier in metadata", rule.Name))
+		// Extract target URI from metadata
+		targetURI, ok := rule.Metadata["target_resource_uri"].(string)
+		if !ok || targetURI == "" {
+			warnings = append(warnings, fmt.Sprintf("Rule '%s': Missing target_resource_uri in metadata", rule.Name))
 			continue
 		}
 
-		// Parse target identifier
-		targetInfo, err := s.parseIdentifier(targetIdentifier)
+		// Parse target URI
+		targetInfo, err := s.parseResourceURI(targetURI)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to parse target identifier: %v", rule.Name, err))
+			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to parse target URI: %v", rule.Name, err))
 			continue
 		}
 
 		// Set expected target on first valid rule
 		if !firstRuleSet {
-			expectedTargetDB = targetInfo.DatabaseName
+			expectedTargetDB = targetInfo.DatabaseID
 			expectedTargetTable = targetInfo.TableName
 			firstRuleSet = true
 			continue
 		}
 
 		// Check consistency with expected target
-		if targetInfo.DatabaseName != expectedTargetDB || targetInfo.TableName != expectedTargetTable {
+		if targetInfo.DatabaseID != expectedTargetDB || targetInfo.TableName != expectedTargetTable {
 			errors = append(errors, fmt.Sprintf(
 				"Rule '%s': Inconsistent target. Expected '%s.%s' but found '%s.%s'",
 				rule.Name,
 				expectedTargetDB,
 				expectedTargetTable,
-				targetInfo.DatabaseName,
+				targetInfo.DatabaseID,
 				targetInfo.TableName,
 			))
 		}
@@ -461,22 +462,22 @@ func (s *Service) ValidateTargetCoverage(ctx context.Context, mapping *Mapping, 
 		return errors, warnings, nil
 	}
 
-	// Get target database and table from the first rule's target identifier
-	// Format: db://database_name.table_name.column_name
-	// Extract from metadata (backward compatibility)
-	targetIdentifier, ok := rules[0].Metadata["target_identifier"].(string)
-	if !ok || targetIdentifier == "" {
-		errors = append(errors, "Failed to get target identifier from rule metadata")
+	// Get target database and table from the first rule's target URI
+	// Format: redb://database_id/dbname/table/tablename/column/columnname
+	// Extract from metadata
+	targetURI, ok := rules[0].Metadata["target_resource_uri"].(string)
+	if !ok || targetURI == "" {
+		errors = append(errors, "Failed to get target_resource_uri from rule metadata")
 		return errors, warnings, nil
 	}
-	targetInfo, err := s.parseIdentifier(targetIdentifier)
+	targetInfo, err := s.parseResourceURI(targetURI)
 	if err != nil {
-		errors = append(errors, fmt.Sprintf("Failed to parse target identifier: %v", err))
+		errors = append(errors, fmt.Sprintf("Failed to parse target URI: %v", err))
 		return errors, warnings, nil
 	}
 
 	// Get the target table schema
-	schema, err := s.getDatabaseSchema(ctx, targetInfo.DatabaseName, workspaceID)
+	schema, err := s.getDatabaseSchema(ctx, targetInfo.DatabaseID, workspaceID)
 	if err != nil {
 		errors = append(errors, fmt.Sprintf("Failed to retrieve target database schema: %v", err))
 		return errors, warnings, nil
@@ -484,19 +485,19 @@ func (s *Service) ValidateTargetCoverage(ctx context.Context, mapping *Mapping, 
 
 	targetTable, exists := schema.Tables[targetInfo.TableName]
 	if !exists {
-		errors = append(errors, fmt.Sprintf("Target table '%s' not found in database '%s'", targetInfo.TableName, targetInfo.DatabaseName))
+		errors = append(errors, fmt.Sprintf("Target table '%s' not found in database '%s'", targetInfo.TableName, targetInfo.DatabaseID))
 		return errors, warnings, nil
 	}
 
 	// Build a set of target columns covered by mapping rules
 	coveredColumns := make(map[string]bool)
 	for _, rule := range rules {
-		// Extract target identifier from metadata
-		ruleTargetIdentifier, ok := rule.Metadata["target_identifier"].(string)
-		if !ok || ruleTargetIdentifier == "" {
+		// Extract target URI from metadata
+		ruleTargetURI, ok := rule.Metadata["target_resource_uri"].(string)
+		if !ok || ruleTargetURI == "" {
 			continue
 		}
-		ruleTargetInfo, err := s.parseIdentifier(ruleTargetIdentifier)
+		ruleTargetInfo, err := s.parseResourceURI(ruleTargetURI)
 		if err != nil {
 			continue
 		}
@@ -559,38 +560,38 @@ func (s *Service) ValidateDataTypeCompatibility(ctx context.Context, mapping *Ma
 	warnings := []string{}
 
 	for _, rule := range rules {
-		// Parse source and target identifiers (from metadata)
-		sourceIdentifier, ok := rule.Metadata["source_identifier"].(string)
-		if !ok || sourceIdentifier == "" {
-			errors = append(errors, fmt.Sprintf("Rule '%s': No source identifier in metadata", rule.Name))
+		// Parse source and target URIs (from metadata)
+		sourceURI, ok := rule.Metadata["source_resource_uri"].(string)
+		if !ok || sourceURI == "" {
+			errors = append(errors, fmt.Sprintf("Rule '%s': No source_resource_uri in metadata", rule.Name))
 			continue
 		}
-		sourceInfo, err := s.parseIdentifier(sourceIdentifier)
+		sourceInfo, err := s.parseResourceURI(sourceURI)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to parse source identifier: %v", rule.Name, err))
+			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to parse source URI: %v", rule.Name, err))
 			continue
 		}
 
-		targetIdentifier, ok := rule.Metadata["target_identifier"].(string)
-		if !ok || targetIdentifier == "" {
-			errors = append(errors, fmt.Sprintf("Rule '%s': No target identifier in metadata", rule.Name))
+		targetURI, ok := rule.Metadata["target_resource_uri"].(string)
+		if !ok || targetURI == "" {
+			errors = append(errors, fmt.Sprintf("Rule '%s': No target_resource_uri in metadata", rule.Name))
 			continue
 		}
-		targetInfo, err := s.parseIdentifier(targetIdentifier)
+		targetInfo, err := s.parseResourceURI(targetURI)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to parse target identifier: %v", rule.Name, err))
+			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to parse target URI: %v", rule.Name, err))
 			continue
 		}
 
 		// Get source schema
-		sourceSchema, err := s.getDatabaseSchema(ctx, sourceInfo.DatabaseName, workspaceID)
+		sourceSchema, err := s.getDatabaseSchema(ctx, sourceInfo.DatabaseID, workspaceID)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to retrieve source schema: %v", rule.Name, err))
 			continue
 		}
 
 		// Get target schema
-		targetSchema, err := s.getDatabaseSchema(ctx, targetInfo.DatabaseName, workspaceID)
+		targetSchema, err := s.getDatabaseSchema(ctx, targetInfo.DatabaseID, workspaceID)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("Rule '%s': Failed to retrieve target schema: %v", rule.Name, err))
 			continue
@@ -643,47 +644,47 @@ func (s *Service) ValidateDataTypeCompatibility(ctx context.Context, mapping *Ma
 
 // IdentifierInfo holds parsed identifier information
 type IdentifierInfo struct {
-	DatabaseName string
-	TableName    string
-	ColumnName   string
+	DatabaseID string
+	TableName  string
+	ColumnName string
 }
 
-// parseIdentifier parses a database identifier in the format "db://database_name.table_name.column_name"
-func (s *Service) parseIdentifier(identifier string) (*IdentifierInfo, error) {
-	// Remove the prefix if present
-	cleanIdentifier := identifier
-	if len(identifier) > 5 && identifier[:5] == "db://" {
-		cleanIdentifier = identifier[5:]
-	} else if len(identifier) > 6 && identifier[:6] == "@db://" {
-		cleanIdentifier = identifier[6:]
+// parseResourceURI parses a resource URI and extracts database identifier info
+func (s *Service) parseResourceURI(uri string) (*IdentifierInfo, error) {
+	// Parse the resource URI
+	addr, err := resource.ParseResourceURI(uri)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse resource URI: %w", err)
 	}
 
-	// Split by dots - parse the identifier
-	parts := make([]string, 0)
-	current := ""
-	for _, char := range cleanIdentifier {
-		if char == '.' {
-			if current != "" {
-				parts = append(parts, current)
-				current = ""
-			}
-		} else {
-			current += string(char)
-		}
-	}
-	if current != "" {
-		parts = append(parts, current)
+	// Validate it's a database resource
+	if !addr.IsDatabase() {
+		return nil, fmt.Errorf("URI must be a database resource (redb://), got: %s", addr.Protocol)
 	}
 
-	if len(parts) != 3 {
-		return nil, fmt.Errorf("invalid identifier format: expected 'database.table.column', got '%s'", identifier)
+	// Extract database components
+	info := &IdentifierInfo{
+		DatabaseID: addr.DatabaseID,
 	}
 
-	return &IdentifierInfo{
-		DatabaseName: parts[0],
-		TableName:    parts[1],
-		ColumnName:   parts[2],
-	}, nil
+	// Extract table name from ObjectName
+	if addr.ObjectType == resource.ObjectTypeTable {
+		info.TableName = addr.ObjectName
+	} else {
+		return nil, fmt.Errorf("expected table object type, got: %s", addr.ObjectType)
+	}
+
+	// Extract column name from PathSegments
+	if len(addr.PathSegments) > 0 && addr.PathSegments[0].Type == resource.SegmentTypeColumn {
+		info.ColumnName = addr.PathSegments[0].Name
+	} else if len(addr.PathSegments) == 0 {
+		// Column is optional for some operations
+		info.ColumnName = ""
+	} else {
+		return nil, fmt.Errorf("expected column path segment, got: %s", addr.PathSegments[0].Type)
+	}
+
+	return info, nil
 }
 
 // WorkflowNode represents a workflow node

@@ -78,32 +78,22 @@ func AddRelationship(mappingName string, relationshipType string) error {
 	}
 
 	// Extract source and target from the first rule
-	// Format is: db://<database_id>.<table_name>.<column_name>
+	// New format is: redb:/data/database/{database_id}/table/{table_name}/column/{column_name}
 	firstRule := mappingResp.Mapping.MappingRules[0]
 
 	// Parse source identifier
-	sourceIdentifier := strings.TrimPrefix(firstRule.MappingRuleSource, "db://")
-	sourceParts := strings.Split(sourceIdentifier, ".")
-
-	if len(sourceParts) < 3 {
-		return fmt.Errorf("invalid source identifier: %s (expected format: db://<database_id>.<table>.<column>)",
-			firstRule.MappingRuleSource)
+	sourceIdentifier := firstRule.MappingRuleSource
+	sourceDatabaseID, sourceTableName, err := parseResourceURI(sourceIdentifier)
+	if err != nil {
+		return fmt.Errorf("invalid source identifier: %s (%v)", sourceIdentifier, err)
 	}
 
 	// Parse target identifier
-	targetIdentifier := strings.TrimPrefix(firstRule.MappingRuleTarget, "db://")
-	targetParts := strings.Split(targetIdentifier, ".")
-
-	if len(targetParts) < 3 {
-		return fmt.Errorf("invalid target identifier: %s (expected format: db://<database_id>.<table>.<column>)",
-			firstRule.MappingRuleTarget)
+	targetIdentifier := firstRule.MappingRuleTarget
+	targetDatabaseID, targetTableName, err := parseResourceURI(targetIdentifier)
+	if err != nil {
+		return fmt.Errorf("invalid target identifier: %s (%v)", targetIdentifier, err)
 	}
-
-	// Extract database IDs and table names directly from the identifiers
-	sourceDatabaseID := sourceParts[0]
-	sourceTableName := sourceParts[1]
-	targetDatabaseID := targetParts[0]
-	targetTableName := targetParts[1]
 
 	// Get database names for generating relationship name
 	sourceDatabaseName, err := getDatabaseNameByID(client, profileInfo, sourceDatabaseID)
@@ -673,4 +663,53 @@ func getDatabaseNameByID(client *httpclient.ProfileHTTPClient, profileInfo *comm
 	}
 
 	return "", fmt.Errorf("database with ID '%s' not found", databaseID)
+}
+
+// parseResourceURI parses the new resource URI format and extracts database ID and table name
+// Format: redb:/data/database/{database_id}/table/{table_name}/column/{column_name}
+func parseResourceURI(uri string) (databaseID, tableName string, err error) {
+	// Check if it starts with redb:/
+	if !strings.HasPrefix(uri, "redb:/") {
+		return "", "", fmt.Errorf("URI must start with 'redb:/' (got: %s)", uri)
+	}
+
+	// Remove the protocol prefix
+	path := strings.TrimPrefix(uri, "redb:/")
+	
+	// Split by /
+	parts := strings.Split(path, "/")
+	
+	// Expected format: data/database/{id}/table/{name}/column/{col}
+	// parts[0] = "data" (scope)
+	// parts[1] = "database" (resource type)
+	// parts[2] = database ID
+	// parts[3] = "table" (object type)
+	// parts[4] = table name
+	// parts[5] = "column" (segment type)
+	// parts[6] = column name
+	
+	if len(parts) < 7 {
+		return "", "", fmt.Errorf("invalid URI format, expected: redb:/data/database/{id}/table/{name}/column/{col}")
+	}
+	
+	if parts[0] != "data" {
+		return "", "", fmt.Errorf("expected scope 'data', got: %s", parts[0])
+	}
+	
+	if parts[1] != "database" {
+		return "", "", fmt.Errorf("expected resource type 'database', got: %s", parts[1])
+	}
+	
+	if parts[3] != "table" {
+		return "", "", fmt.Errorf("expected object type 'table', got: %s", parts[3])
+	}
+	
+	if parts[5] != "column" {
+		return "", "", fmt.Errorf("expected segment type 'column', got: %s", parts[5])
+	}
+	
+	databaseID = parts[2]
+	tableName = parts[4]
+	
+	return databaseID, tableName, nil
 }

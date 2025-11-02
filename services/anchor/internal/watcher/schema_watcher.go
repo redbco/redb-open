@@ -323,7 +323,7 @@ func (w *SchemaWatcher) logDebug(msg string, args ...interface{}) {
 		if len(args) > 0 {
 			w.logger.Debugf(msg, args...)
 		} else {
-			w.logger.Debug(msg)
+			w.logger.Debug("%s", msg)
 		}
 	}
 }
@@ -333,7 +333,7 @@ func (w *SchemaWatcher) logInfo(msg string, args ...interface{}) {
 		if len(args) > 0 {
 			w.logger.Infof(msg, args...)
 		} else {
-			w.logger.Info(msg)
+			w.logger.Info("%s", msg)
 		}
 	}
 }
@@ -343,7 +343,7 @@ func (w *SchemaWatcher) logError(msg string, args ...interface{}) {
 		if len(args) > 0 {
 			w.logger.Errorf(msg, args...)
 		} else {
-			w.logger.Error(msg)
+			w.logger.Error("%s", msg)
 		}
 	}
 }
@@ -353,7 +353,7 @@ func (w *SchemaWatcher) logWarn(msg string, args ...interface{}) {
 		if len(args) > 0 {
 			w.logger.Warnf(msg, args...)
 		} else {
-			w.logger.Warn(msg)
+			w.logger.Warn("%s", msg)
 		}
 	}
 }
@@ -559,13 +559,13 @@ func (w *SchemaWatcher) invalidateMappingsForDatabase(ctx context.Context, works
 			SELECT DISTINCT mrm.mapping_id
 			FROM mapping_rule_mappings mrm
 			JOIN mapping_rules mr ON mrm.mapping_rule_id = mr.mapping_rule_id
-			WHERE mr.mapping_rule_metadata->>'target_identifier' LIKE $2
+			WHERE mr.mapping_rule_metadata->>'target_resource_uri' LIKE $2
 		)
 	`
 
-	// The target identifier format is: db://database_id.table_name.column_name
+	// The target URI format is: redb://database_id/dbname/table/table_name/column/column_name
 	// We want to match any target in this database
-	targetPattern := fmt.Sprintf("db://%s.%%", databaseID)
+	targetPattern := fmt.Sprintf("redb://%s/%%", databaseID)
 
 	result, err := w.db.Pool().Exec(ctx, query, workspaceID, targetPattern)
 	if err != nil {

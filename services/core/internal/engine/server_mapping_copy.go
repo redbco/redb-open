@@ -140,7 +140,7 @@ func (s *Server) CopyMappingData(req *corev1.CopyMappingDataRequest, stream core
 		if err != nil {
 			errMsg := fmt.Sprintf("Failed to copy data for table pair %s: %v", currentTable, err)
 			allErrors = append(allErrors, errMsg)
-			s.engine.logger.Errorf(errMsg)
+			s.engine.logger.Errorf("%s", errMsg)
 			continue
 		}
 
@@ -191,41 +191,41 @@ func (s *Server) groupMappingRulesByTables(rules []*mapping.Rule) []TablePair {
 	tableMap := make(map[string]TablePair)
 
 	for _, rule := range rules {
-		// Extract identifiers from metadata (backward compatibility)
-		sourceIdentifier, ok := rule.Metadata["source_identifier"].(string)
-		if !ok || sourceIdentifier == "" {
-			s.engine.logger.Warnf("Failed to get source identifier from rule metadata")
+		// Extract identifiers from metadata
+		sourceURI, ok := rule.Metadata["source_resource_uri"].(string)
+		if !ok || sourceURI == "" {
+			s.engine.logger.Warnf("Failed to get source_resource_uri from rule metadata")
 			continue
 		}
 
-		targetIdentifier, ok := rule.Metadata["target_identifier"].(string)
-		if !ok || targetIdentifier == "" {
-			s.engine.logger.Warnf("Failed to get target identifier from rule metadata")
+		targetURI, ok := rule.Metadata["target_resource_uri"].(string)
+		if !ok || targetURI == "" {
+			s.engine.logger.Warnf("Failed to get target_resource_uri from rule metadata")
 			continue
 		}
 
-		// Parse source and target identifiers
-		sourceInfo, err := s.parseDatabaseIdentifier(sourceIdentifier)
+		// Parse source and target URIs
+		sourceInfo, err := s.parseResourceIdentifier(sourceURI)
 		if err != nil {
-			s.engine.logger.Warnf("Failed to parse source identifier '%s': %v", sourceIdentifier, err)
+			s.engine.logger.Warnf("Failed to parse source URI '%s': %v", sourceURI, err)
 			continue
 		}
 
-		targetInfo, err := s.parseDatabaseIdentifier(targetIdentifier)
+		targetInfo, err := s.parseResourceIdentifier(targetURI)
 		if err != nil {
-			s.engine.logger.Warnf("Failed to parse target identifier '%s': %v", targetIdentifier, err)
+			s.engine.logger.Warnf("Failed to parse target URI '%s': %v", targetURI, err)
 			continue
 		}
 
 		// Create table pair key
-		pairKey := fmt.Sprintf("%s.%s -> %s.%s", sourceInfo.DatabaseName, sourceInfo.TableName, targetInfo.DatabaseName, targetInfo.TableName)
+		pairKey := fmt.Sprintf("%s.%s -> %s.%s", sourceInfo.DatabaseID, sourceInfo.TableName, targetInfo.DatabaseID, targetInfo.TableName)
 
 		// Get or create table pair
 		tablePair, exists := tableMap[pairKey]
 		if !exists {
 			tablePair = TablePair{
-				SourceTable: fmt.Sprintf("%s.%s", sourceInfo.DatabaseName, sourceInfo.TableName),
-				TargetTable: fmt.Sprintf("%s.%s", targetInfo.DatabaseName, targetInfo.TableName),
+				SourceTable: fmt.Sprintf("%s.%s", sourceInfo.DatabaseID, sourceInfo.TableName),
+				TargetTable: fmt.Sprintf("%s.%s", targetInfo.DatabaseID, targetInfo.TableName),
 				Rules:       []*mapping.Rule{},
 			}
 		}
@@ -301,13 +301,13 @@ func (s *Server) copyTableData(ctx context.Context, tablePair TablePair, batchSi
 	// Get specific columns from mapping rules
 	sourceColumns := make([]string, len(tablePair.Rules))
 	for i, rule := range tablePair.Rules {
-		// Extract source identifier from metadata
-		sourceIdentifier, ok := rule.Metadata["source_identifier"].(string)
-		if !ok || sourceIdentifier == "" {
+		// Extract source URI from metadata
+		sourceURI, ok := rule.Metadata["source_resource_uri"].(string)
+		if !ok || sourceURI == "" {
 			continue
 		}
 
-		sourceInfo, err := s.parseDatabaseIdentifier(sourceIdentifier)
+		sourceInfo, err := s.parseResourceIdentifier(sourceURI)
 		if err != nil {
 			continue
 		}

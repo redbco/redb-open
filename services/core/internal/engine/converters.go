@@ -512,15 +512,15 @@ func (s *Server) mappingToProto(m *mapping.Mapping) (*corev1.Mapping, error) {
 // Helper function to convert mapping rule to protobuf
 func (s *Server) mappingRuleToProto(m *mapping.Rule) (*corev1.MappingRule, error) {
 	// Extract values from metadata (backward compatibility)
-	var sourceIdentifier, targetIdentifier, transformationID, transformationName string
+	var sourceURI, targetURI, transformationID, transformationName string
 	var transformationOptions map[string]interface{}
 
 	if m.Metadata != nil {
-		if v, ok := m.Metadata["source_identifier"].(string); ok {
-			sourceIdentifier = v
+		if v, ok := m.Metadata["source_resource_uri"].(string); ok {
+			sourceURI = v
 		}
-		if v, ok := m.Metadata["target_identifier"].(string); ok {
-			targetIdentifier = v
+		if v, ok := m.Metadata["target_resource_uri"].(string); ok {
+			targetURI = v
 		}
 		if v, ok := m.Metadata["transformation_name"].(string); ok {
 			transformationName = v
@@ -558,8 +558,8 @@ func (s *Server) mappingRuleToProto(m *mapping.Rule) (*corev1.MappingRule, error
 		MappingRuleId:                    m.ID,
 		MappingRuleName:                  m.Name,
 		MappingRuleDescription:           m.Description,
-		MappingRuleSource:                sourceIdentifier,
-		MappingRuleTarget:                targetIdentifier,
+		MappingRuleSource:                sourceURI,
+		MappingRuleTarget:                targetURI,
 		MappingRuleTransformationId:      transformationID,
 		MappingRuleTransformationName:    transformationName,
 		MappingRuleTransformationOptions: transformationOptionsJSON,

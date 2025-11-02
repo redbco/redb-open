@@ -348,8 +348,8 @@ func (s *Server) AddTableMapping(ctx context.Context, req *corev1.AddTableMappin
 							fmt.Sprintf("Auto-generated rule for %s.%s.%s -> %s.%s.%s",
 								req.MappingSourceDatabaseName, tableMatch.SourceTable, columnMatch.SourceColumn,
 								req.MappingTargetDatabaseName, tableMatch.TargetTable, columnMatch.TargetColumn),
-							fmt.Sprintf("db://%s.%s.%s", sourceDB.ID, tableMatch.SourceTable, columnMatch.SourceColumn),
-							fmt.Sprintf("db://%s.%s.%s", targetDB.ID, tableMatch.TargetTable, columnMatch.TargetColumn),
+							fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s", sourceDB.ID, tableMatch.SourceTable, columnMatch.SourceColumn),
+							fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s", targetDB.ID, tableMatch.TargetTable, columnMatch.TargetColumn),
 							"direct_mapping", // Default transformation
 							transformationOptions,
 							metadata,
@@ -563,8 +563,8 @@ func (s *Server) AddDatabaseMapping(ctx context.Context, req *corev1.AddDatabase
 							fmt.Sprintf("Auto-generated rule for %s.%s.%s -> %s.%s.%s",
 								req.MappingSourceDatabaseName, tableMatch.SourceTable, columnMatch.SourceColumn,
 								req.MappingTargetDatabaseName, tableMatch.TargetTable, columnMatch.TargetColumn),
-							fmt.Sprintf("db://%s.%s.%s", sourceDB.ID, tableMatch.SourceTable, columnMatch.SourceColumn),
-							fmt.Sprintf("db://%s.%s.%s", targetDB.ID, tableMatch.TargetTable, columnMatch.TargetColumn),
+							fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s", sourceDB.ID, tableMatch.SourceTable, columnMatch.SourceColumn),
+							fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s", targetDB.ID, tableMatch.TargetTable, columnMatch.TargetColumn),
 							"direct_mapping", // Default transformation
 							transformationOptions,
 							metadata,
@@ -713,8 +713,14 @@ func (s *Server) DeleteMapping(ctx context.Context, req *corev1.DeleteMappingReq
 	// Get mapping service
 	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
 
+	// Determine keep_rules value (default to false if not provided)
+	keepRules := false
+	if req.KeepRules != nil {
+		keepRules = *req.KeepRules
+	}
+
 	// Delete the mapping
-	err = mappingService.Delete(ctx, req.TenantId, workspaceID, req.MappingName)
+	err = mappingService.Delete(ctx, req.TenantId, workspaceID, req.MappingName, keepRules)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to delete mapping: %v", err)
@@ -937,75 +943,39 @@ func (s *Server) AddMappingRule(ctx context.Context, req *corev1.AddMappingRuleR
 		}
 	}
 
-	// Convert source and target identifiers from "database_name.table.column" to "db://database_id.table.column"
-	// Also extract table and column names for metadata
-	databaseService := database.NewService(s.engine.db, s.engine.logger)
+	// Expect resource URIs in new format (redb://...)
+	sourceURI := req.MappingRuleSource
+	targetURI := req.MappingRuleTarget
 
-	var sourceTable, sourceColumn, targetTable, targetColumn string
-
-	formattedSource := req.MappingRuleSource
-	if req.MappingRuleSource != "" && !strings.HasPrefix(req.MappingRuleSource, "db://") {
-		// Parse source: database_name.table.column
-		sourceParts := strings.Split(req.MappingRuleSource, ".")
-		if len(sourceParts) == 3 {
-			sourceDB, err := databaseService.Get(ctx, req.TenantId, workspaceID, sourceParts[0])
-			if err != nil {
-				s.engine.IncrementErrors()
-				return nil, status.Errorf(codes.NotFound, "source database '%s' not found: %v", sourceParts[0], err)
-			}
-			sourceTable = sourceParts[1]
-			sourceColumn = sourceParts[2]
-			formattedSource = fmt.Sprintf("db://%s.%s.%s", sourceDB.ID, sourceTable, sourceColumn)
-			s.engine.logger.Infof("Converted source identifier from '%s' to '%s'", req.MappingRuleSource, formattedSource)
-		}
-	} else if formattedSource != "" {
-		// Already in db:// format, extract table and column
-		cleanIdentifier := strings.TrimPrefix(formattedSource, "db://")
-		parts := strings.Split(cleanIdentifier, ".")
-		if len(parts) >= 3 {
-			sourceTable = parts[1]
-			sourceColumn = parts[2]
-		}
+	if sourceURI == "" {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "source resource URI is required")
 	}
 
-	formattedTarget := req.MappingRuleTarget
-	if req.MappingRuleTarget != "" && !strings.HasPrefix(req.MappingRuleTarget, "db://") {
-		// Parse target: database_name.table.column
-		targetParts := strings.Split(req.MappingRuleTarget, ".")
-		if len(targetParts) == 3 {
-			targetDB, err := databaseService.Get(ctx, req.TenantId, workspaceID, targetParts[0])
-			if err != nil {
-				s.engine.IncrementErrors()
-				return nil, status.Errorf(codes.NotFound, "target database '%s' not found: %v", targetParts[0], err)
-			}
-			targetTable = targetParts[1]
-			targetColumn = targetParts[2]
-			formattedTarget = fmt.Sprintf("db://%s.%s.%s", targetDB.ID, targetTable, targetColumn)
-			s.engine.logger.Infof("Converted target identifier from '%s' to '%s'", req.MappingRuleTarget, formattedTarget)
-		}
-	} else if formattedTarget != "" {
-		// Already in db:// format, extract table and column
-		cleanIdentifier := strings.TrimPrefix(formattedTarget, "db://")
-		parts := strings.Split(cleanIdentifier, ".")
-		if len(parts) >= 3 {
-			targetTable = parts[1]
-			targetColumn = parts[2]
-		}
+	if targetURI == "" {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "target resource URI is required")
 	}
 
-	// Add extracted table and column names to metadata for consistency with auto-generated rules
-	if sourceTable != "" {
-		metadata["source_table"] = sourceTable
+	// Parse and validate source URI
+	sourceInfo, err := s.parseResourceIdentifier(sourceURI)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "invalid source URI: %v", err)
 	}
-	if sourceColumn != "" {
-		metadata["source_column"] = sourceColumn
+
+	// Parse and validate target URI
+	targetInfo, err := s.parseResourceIdentifier(targetURI)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.InvalidArgument, "invalid target URI: %v", err)
 	}
-	if targetTable != "" {
-		metadata["target_table"] = targetTable
-	}
-	if targetColumn != "" {
-		metadata["target_column"] = targetColumn
-	}
+
+	// Add extracted table and column names to metadata for consistency
+	metadata["source_table"] = sourceInfo.TableName
+	metadata["source_column"] = sourceInfo.ColumnName
+	metadata["target_table"] = targetInfo.TableName
+	metadata["target_column"] = targetInfo.ColumnName
 
 	// Mark as user-defined rule
 	metadata["match_type"] = "user_defined"
@@ -1048,38 +1018,38 @@ func (s *Server) AddMappingRule(ctx context.Context, req *corev1.AddMappingRuleR
 				switch transformationType {
 				case "generator":
 					// Generator transformations should not have a source
-					if formattedSource != "" {
+					if sourceURI != "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a generator type and should not have a source column", transformationName)
 					}
 					// Generator transformations must have a target
-					if formattedTarget == "" {
+					if targetURI == "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a generator type and requires a target column", transformationName)
 					}
 				case "null_returning":
 					// Null-returning transformations should not have a target
-					if formattedTarget != "" {
+					if targetURI != "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a null-returning type and should not have a target column", transformationName)
 					}
 					// Null-returning transformations must have a source
-					if formattedSource == "" {
+					if sourceURI == "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a null-returning type and requires a source column", transformationName)
 					}
 				case "passthrough":
 					// Passthrough transformations require both source and target
-					if formattedSource == "" {
+					if sourceURI == "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a passthrough type and requires a source column", transformationName)
 					}
-					if formattedTarget == "" {
+					if targetURI == "" {
 						s.engine.IncrementErrors()
 						return nil, status.Errorf(codes.InvalidArgument,
 							"transformation '%s' is a passthrough type and requires a target column", transformationName)
@@ -1091,8 +1061,8 @@ func (s *Server) AddMappingRule(ctx context.Context, req *corev1.AddMappingRuleR
 		}
 	}
 
-	// Create the mapping rule (use formatted identifiers with database IDs)
-	createdRule, err := mappingService.CreateMappingRule(ctx, req.TenantId, workspaceID, req.MappingRuleName, req.MappingRuleDescription, formattedSource, formattedTarget, req.MappingRuleTransformationName, transformationOptions, metadata, req.OwnerId)
+	// Create the mapping rule using new URI format
+	createdRule, err := mappingService.CreateMappingRule(ctx, req.TenantId, workspaceID, req.MappingRuleName, req.MappingRuleDescription, sourceURI, targetURI, req.MappingRuleTransformationName, transformationOptions, metadata, req.OwnerId)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to create mapping rule: %v", err)
@@ -1171,13 +1141,13 @@ func (s *Server) ModifyMappingRule(ctx context.Context, req *corev1.ModifyMappin
 				transformationType := metadataResp.Metadata.Type
 
 				// Determine final source and target (use existing if not being updated)
-				// Extract from metadata (backward compatibility)
+				// Extract from metadata
 				var finalSource, finalTarget string
 				if existingRule.Metadata != nil {
-					if src, ok := existingRule.Metadata["source_identifier"].(string); ok {
+					if src, ok := existingRule.Metadata["source_resource_uri"].(string); ok {
 						finalSource = src
 					}
-					if tgt, ok := existingRule.Metadata["target_identifier"].(string); ok {
+					if tgt, ok := existingRule.Metadata["target_resource_uri"].(string); ok {
 						finalTarget = tgt
 					}
 				}
@@ -1303,15 +1273,15 @@ func (s *Server) ModifyMappingRule(ctx context.Context, req *corev1.ModifyMappin
 		}
 	}
 
-	// Update source identifier in metadata if provided
+	// Update source URI in metadata if provided
 	if req.MappingRuleSource != nil {
-		updatedMetadata["source_identifier"] = *req.MappingRuleSource
+		updatedMetadata["source_resource_uri"] = *req.MappingRuleSource
 		needsMetadataUpdate = true
 	}
 
-	// Update target identifier in metadata if provided
+	// Update target URI in metadata if provided
 	if req.MappingRuleTarget != nil {
-		updatedMetadata["target_identifier"] = *req.MappingRuleTarget
+		updatedMetadata["target_resource_uri"] = *req.MappingRuleTarget
 		needsMetadataUpdate = true
 	}
 
@@ -1849,13 +1819,20 @@ func (s *Server) addDatabaseMappingUnified(ctx context.Context, req *corev1.AddM
 					// Create empty transformation options
 					transformationOptions := map[string]interface{}{}
 
-					// Create the mapping rule
+					// Create the mapping rule with correct resource URI format:
+					// redb:/data/database/{id}/table/{name}/column/{col}
+					// Note: Only ONE slash after colon (redb:/ not redb://)
+					sourceURI := fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s",
+						sourceDBObj.ID, tableMatch.SourceTable, columnMatch.SourceColumn)
+					targetURI := fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s",
+						targetDBObj.ID, tableMatch.TargetTable, columnMatch.TargetColumn)
+
 					_, err = mappingService.CreateMappingRule(ctx, req.TenantId, workspaceID, ruleName,
 						fmt.Sprintf("Auto-generated rule for %s.%s.%s -> %s.%s.%s",
 							sourceDB, tableMatch.SourceTable, columnMatch.SourceColumn,
 							targetDB, tableMatch.TargetTable, columnMatch.TargetColumn),
-						fmt.Sprintf("db://%s.%s.%s", sourceDBObj.ID, tableMatch.SourceTable, columnMatch.SourceColumn),
-						fmt.Sprintf("db://%s.%s.%s", targetDBObj.ID, tableMatch.TargetTable, columnMatch.TargetColumn),
+						sourceURI,
+						targetURI,
 						"direct_mapping", // Default transformation
 						transformationOptions,
 						metadata,
@@ -2102,9 +2079,11 @@ func (s *Server) autoGenerateMCPMappingRules(ctx context.Context, tenantID, work
 			counter++
 		}
 
-		// Build source and target identifiers
-		sourceIdentifier := fmt.Sprintf("db://%s.%s.%s", sourceDBObj.ID, sourceTableName, columnName)
-		targetIdentifier := fmt.Sprintf("mcp_virtual://%s.%s.%s", mappingName, virtualTableName, columnName)
+		// Build source and target URIs with correct format:
+		// redb:/data/database/{id}/table/{name}/column/{col}
+		// Note: Only ONE slash after colon (redb:/ not redb://)
+		sourceURI := fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s", sourceDBObj.ID, sourceTableName, columnName)
+		targetURI := fmt.Sprintf("mcp_virtual://%s.%s.%s", mappingName, virtualTableName, columnName)
 
 		// Create metadata for the mapping rule (additional fields beyond source/target identifiers)
 		metadata := map[string]interface{}{
@@ -2123,7 +2102,7 @@ func (s *Server) autoGenerateMCPMappingRules(ctx context.Context, tenantID, work
 		transformationOptions := map[string]interface{}{}
 
 		// Create the mapping rule
-		_, err := mappingService.CreateMappingRule(ctx, tenantID, workspaceID, ruleName, fmt.Sprintf("Auto-generated rule for %s.%s", sourceTableName, columnName), sourceIdentifier, targetIdentifier, "direct_mapping", transformationOptions, metadata, ownerID)
+		_, err := mappingService.CreateMappingRule(ctx, tenantID, workspaceID, ruleName, fmt.Sprintf("Auto-generated rule for %s.%s", sourceTableName, columnName), sourceURI, targetURI, "direct_mapping", transformationOptions, metadata, ownerID)
 		if err != nil {
 			s.engine.logger.Warnf("Failed to create mapping rule %s: %v", ruleName, err)
 			continue

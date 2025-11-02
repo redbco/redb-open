@@ -405,9 +405,9 @@ func (s *Service) Update(ctx context.Context, tenantID, workspaceID, mappingName
 	return &mapping, nil
 }
 
-// Delete deletes a mapping
-func (s *Service) Delete(ctx context.Context, tenantID, workspaceID, mappingName string) error {
-	s.logger.Infof("Deleting mapping with name: %s", mappingName)
+// Delete deletes a mapping and optionally deletes associated mapping rules
+func (s *Service) Delete(ctx context.Context, tenantID, workspaceID, mappingName string, keepRules bool) error {
+	s.logger.Infof("Deleting mapping with name: %s (keepRules=%v)", mappingName, keepRules)
 
 	// Check if mapping exists
 	mapping, err := s.Get(ctx, tenantID, workspaceID, mappingName)
@@ -437,7 +437,34 @@ func (s *Service) Delete(ctx context.Context, tenantID, workspaceID, mappingName
 		return errors.New("cannot delete mapping that is being used by MCP resources")
 	}
 
-	// Delete mapping
+	// If keepRules is false, get all rule IDs attached to this mapping before deletion
+	var ruleIDsToCheck []string
+	if !keepRules {
+		query := `
+			SELECT mapping_rule_id 
+			FROM mapping_rule_mappings 
+			WHERE mapping_id = $1
+		`
+		rows, err := s.db.Pool().Query(ctx, query, mapping.ID)
+		if err != nil {
+			return fmt.Errorf("failed to query mapping rules: %w", err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var ruleID string
+			if err := rows.Scan(&ruleID); err != nil {
+				return fmt.Errorf("failed to scan rule ID: %w", err)
+			}
+			ruleIDsToCheck = append(ruleIDsToCheck, ruleID)
+		}
+
+		if err = rows.Err(); err != nil {
+			return fmt.Errorf("error iterating rule IDs: %w", err)
+		}
+	}
+
+	// Delete mapping (this will cascade delete mapping_rule_mappings entries)
 	result, err := s.db.Pool().Exec(ctx, "DELETE FROM mappings WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_name = $3",
 		tenantID, workspaceID, mappingName)
 	if err != nil {
@@ -446,6 +473,29 @@ func (s *Service) Delete(ctx context.Context, tenantID, workspaceID, mappingName
 
 	if result.RowsAffected() == 0 {
 		return errors.New("mapping not found")
+	}
+
+	// If keepRules is false, delete rules that are no longer attached to any mapping
+	if !keepRules && len(ruleIDsToCheck) > 0 {
+		for _, ruleID := range ruleIDsToCheck {
+			// Check if this rule is still attached to any mappings
+			var attachmentCount int
+			err = s.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM mapping_rule_mappings WHERE mapping_rule_id = $1", ruleID).Scan(&attachmentCount)
+			if err != nil {
+				s.logger.Warnf("Failed to check attachments for rule %s: %v", ruleID, err)
+				continue
+			}
+
+			// If no remaining attachments, delete the rule
+			if attachmentCount == 0 {
+				_, err = s.db.Pool().Exec(ctx, "DELETE FROM mapping_rules WHERE mapping_rule_id = $1", ruleID)
+				if err != nil {
+					s.logger.Warnf("Failed to delete orphaned rule %s: %v", ruleID, err)
+				} else {
+					s.logger.Infof("Deleted orphaned mapping rule: %s", ruleID)
+				}
+			}
+		}
 	}
 
 	return nil
@@ -710,12 +760,12 @@ func (s *Service) CreateMappingRule(ctx context.Context, tenantID, workspaceID, 
 		return nil, errors.New("mapping rule with this name already exists in the workspace")
 	}
 
-	// Store the old-style mapping information in metadata for backward compatibility
+	// Store the resource URIs in metadata
 	if metadata == nil {
 		metadata = make(map[string]interface{})
 	}
-	metadata["source_identifier"] = sourceIdentifier
-	metadata["target_identifier"] = targetIdentifier
+	metadata["source_resource_uri"] = sourceIdentifier // Note: parameter name is sourceIdentifier for backward compat, but stores as source_resource_uri
+	metadata["target_resource_uri"] = targetIdentifier // Note: parameter name is targetIdentifier for backward compat, but stores as target_resource_uri
 	metadata["transformation_name"] = transformationName
 	if transformationOptions != nil {
 		metadata["transformation_options"] = transformationOptions
@@ -1195,12 +1245,12 @@ func (s *Service) InvalidateMappingsByTarget(ctx context.Context, workspaceID, d
 			SELECT DISTINCT mrm.mapping_id
 			FROM mapping_rule_mappings mrm
 			JOIN mapping_rules mr ON mrm.mapping_rule_id = mr.mapping_rule_id
-			WHERE mr.mapping_rule_metadata->>'target_identifier' LIKE $2
+			WHERE mr.mapping_rule_metadata->>'target_resource_uri' LIKE $2
 		)
 	`
 
-	// The target identifier format is: db://database_id.table_name.column_name
-	targetPattern := fmt.Sprintf("db://%s.%s.%%", databaseID, tableName)
+	// The target URI format is: redb://database_id/dbname/table/table_name/column/%
+	targetPattern := fmt.Sprintf("redb://%s/%%/table/%s/%%", databaseID, tableName)
 
 	result, err := s.db.Pool().Exec(ctx, query, workspaceID, targetPattern)
 	if err != nil {

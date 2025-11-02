@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	anchorv1 "github.com/redbco/redb-open/api/proto/anchor/v1"
@@ -834,40 +833,40 @@ func (s *Server) TransformData(ctx context.Context, req *corev1.TransformDataReq
 	// All rules should have the same source and target databases/tables
 	firstRule := mappingRules[0]
 
-	// Extract identifiers from metadata (backward compatibility)
-	sourceIdentifier, ok := firstRule.Metadata["source_identifier"].(string)
-	if !ok || sourceIdentifier == "" {
+	// Extract identifiers from metadata
+	sourceURI, ok := firstRule.Metadata["source_resource_uri"].(string)
+	if !ok || sourceURI == "" {
 		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.InvalidArgument, "source identifier not found in rule metadata")
+		return nil, status.Errorf(codes.InvalidArgument, "source_resource_uri not found in rule metadata")
 	}
 
-	targetIdentifier, ok := firstRule.Metadata["target_identifier"].(string)
-	if !ok || targetIdentifier == "" {
+	targetURI, ok := firstRule.Metadata["target_resource_uri"].(string)
+	if !ok || targetURI == "" {
 		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.InvalidArgument, "target identifier not found in rule metadata")
+		return nil, status.Errorf(codes.InvalidArgument, "target_resource_uri not found in rule metadata")
 	}
 
-	sourceInfo, err := s.parseDatabaseIdentifier(sourceIdentifier)
+	sourceInfo, err := s.parseResourceIdentifier(sourceURI)
 	if err != nil {
 		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.InvalidArgument, "invalid source identifier: %v", err)
+		return nil, status.Errorf(codes.InvalidArgument, "invalid source URI: %v", err)
 	}
 
-	targetInfo, err := s.parseDatabaseIdentifier(targetIdentifier)
+	targetInfo, err := s.parseResourceIdentifier(targetURI)
 	if err != nil {
 		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.InvalidArgument, "invalid target identifier: %v", err)
+		return nil, status.Errorf(codes.InvalidArgument, "invalid target URI: %v", err)
 	}
 
 	// Get source database by ID
-	sourceDB, err := databaseService.GetByID(ctx, sourceInfo.DatabaseName)
+	sourceDB, err := databaseService.GetByID(ctx, sourceInfo.DatabaseID)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.NotFound, "source database not found: %v", err)
 	}
 
 	// Get target database by ID
-	targetDB, err := databaseService.GetByID(ctx, targetInfo.DatabaseName)
+	targetDB, err := databaseService.GetByID(ctx, targetInfo.DatabaseID)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.NotFound, "target database not found: %v", err)
@@ -1015,9 +1014,9 @@ func (s *Server) TransformData(ctx context.Context, req *corev1.TransformDataReq
 		Message:            "Data transformation completed successfully",
 		Success:            true,
 		Status:             commonv1.Status_STATUS_SUCCESS,
-		SourceDatabaseName: sourceInfo.DatabaseName,
+		SourceDatabaseName: sourceInfo.DatabaseID,
 		SourceTableName:    sourceInfo.TableName,
-		TargetDatabaseName: targetInfo.DatabaseName,
+		TargetDatabaseName: targetInfo.DatabaseID,
 		TargetTableName:    targetInfo.TableName,
 		RowsProcessed:      insertResp.RowsAffected,
 		RowsTransformed:    insertResp.RowsAffected,
@@ -1064,40 +1063,40 @@ func (s *Server) TransformDataStream(req *corev1.TransformDataStreamRequest, str
 	// All rules should have the same source and target databases/tables
 	firstRule := mappingRules[0]
 
-	// Extract identifiers from metadata (backward compatibility)
-	sourceIdentifier, ok := firstRule.Metadata["source_identifier"].(string)
-	if !ok || sourceIdentifier == "" {
+	// Extract identifiers from metadata
+	sourceURI, ok := firstRule.Metadata["source_resource_uri"].(string)
+	if !ok || sourceURI == "" {
 		s.engine.IncrementErrors()
-		return status.Errorf(codes.InvalidArgument, "source identifier not found in rule metadata")
+		return status.Errorf(codes.InvalidArgument, "source_resource_uri not found in rule metadata")
 	}
 
-	targetIdentifier, ok := firstRule.Metadata["target_identifier"].(string)
-	if !ok || targetIdentifier == "" {
+	targetURI, ok := firstRule.Metadata["target_resource_uri"].(string)
+	if !ok || targetURI == "" {
 		s.engine.IncrementErrors()
-		return status.Errorf(codes.InvalidArgument, "target identifier not found in rule metadata")
+		return status.Errorf(codes.InvalidArgument, "target_resource_uri not found in rule metadata")
 	}
 
-	sourceInfo, err := s.parseDatabaseIdentifier(sourceIdentifier)
+	sourceInfo, err := s.parseResourceIdentifier(sourceURI)
 	if err != nil {
 		s.engine.IncrementErrors()
-		return status.Errorf(codes.InvalidArgument, "invalid source identifier: %v", err)
+		return status.Errorf(codes.InvalidArgument, "invalid source URI: %v", err)
 	}
 
-	targetInfo, err := s.parseDatabaseIdentifier(targetIdentifier)
+	targetInfo, err := s.parseResourceIdentifier(targetURI)
 	if err != nil {
 		s.engine.IncrementErrors()
-		return status.Errorf(codes.InvalidArgument, "invalid target identifier: %v", err)
+		return status.Errorf(codes.InvalidArgument, "invalid target URI: %v", err)
 	}
 
 	// Get source database by ID
-	sourceDB, err := databaseService.GetByID(ctx, sourceInfo.DatabaseName)
+	sourceDB, err := databaseService.GetByID(ctx, sourceInfo.DatabaseID)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return status.Errorf(codes.NotFound, "source database not found: %v", err)
 	}
 
 	// Get target database by ID
-	targetDB, err := databaseService.GetByID(ctx, targetInfo.DatabaseName)
+	targetDB, err := databaseService.GetByID(ctx, targetInfo.DatabaseID)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return status.Errorf(codes.NotFound, "target database not found: %v", err)
@@ -1224,9 +1223,9 @@ func (s *Server) TransformDataStream(req *corev1.TransformDataStreamRequest, str
 			Message:            "Data chunk processed successfully",
 			Success:            true,
 			Status:             commonv1.Status_STATUS_SUCCESS,
-			SourceDatabaseName: sourceInfo.DatabaseName,
+			SourceDatabaseName: sourceInfo.DatabaseID,
 			SourceTableName:    sourceInfo.TableName,
-			TargetDatabaseName: targetInfo.DatabaseName,
+			TargetDatabaseName: targetInfo.DatabaseID,
 			TargetTableName:    targetInfo.TableName,
 			RowsProcessed:      totalRowsProcessed,
 			RowsTransformed:    totalRowsTransformed,
@@ -1244,9 +1243,9 @@ func (s *Server) TransformDataStream(req *corev1.TransformDataStreamRequest, str
 		Message:            "Data transformation completed successfully",
 		Success:            true,
 		Status:             commonv1.Status_STATUS_SUCCESS,
-		SourceDatabaseName: sourceInfo.DatabaseName,
+		SourceDatabaseName: sourceInfo.DatabaseID,
 		SourceTableName:    sourceInfo.TableName,
-		TargetDatabaseName: targetInfo.DatabaseName,
+		TargetDatabaseName: targetInfo.DatabaseID,
 		TargetTableName:    targetInfo.TableName,
 		RowsProcessed:      totalRowsProcessed,
 		RowsTransformed:    totalRowsTransformed,
@@ -1258,59 +1257,30 @@ func (s *Server) TransformDataStream(req *corev1.TransformDataStreamRequest, str
 }
 
 // convertMappingRulesToTransformationRules converts mapping rules to transformation rules format
-// DatabaseIdentifierInfo contains parsed database identifier information
-type DatabaseIdentifierInfo struct {
-	DatabaseName string
-	TableName    string
-	ColumnName   string
-}
-
-// parseDatabaseIdentifier parses a database identifier in the format "@db://database_id.table.column"
-func (s *Server) parseDatabaseIdentifier(identifier string) (*DatabaseIdentifierInfo, error) {
-	// Remove the "@db://" prefix if present
-	cleanIdentifier := identifier
-	if strings.HasPrefix(identifier, "@db://") {
-		cleanIdentifier = strings.TrimPrefix(identifier, "@db://")
-	} else if strings.HasPrefix(identifier, "db://") {
-		cleanIdentifier = strings.TrimPrefix(identifier, "db://")
-	}
-
-	// Split by dots to get database_id, table, and column
-	parts := strings.Split(cleanIdentifier, ".")
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid identifier format: expected '@db://database_id.table.column' or 'db://database_id.table.column', got '%s'", identifier)
-	}
-
-	return &DatabaseIdentifierInfo{
-		DatabaseName: parts[0], // This is actually the database_id
-		TableName:    parts[1],
-		ColumnName:   parts[2],
-	}, nil
-}
 
 func (s *Server) convertMappingRulesToTransformationRules(mappingRules []*mapping.Rule) []map[string]interface{} {
 	var transformationRules []map[string]interface{}
 
 	for _, rule := range mappingRules {
-		// Extract identifiers from metadata (backward compatibility)
-		sourceIdentifier, ok := rule.Metadata["source_identifier"].(string)
-		if !ok || sourceIdentifier == "" {
+		// Extract identifiers from metadata
+		sourceURI, ok := rule.Metadata["source_resource_uri"].(string)
+		if !ok || sourceURI == "" {
 			continue
 		}
 
-		targetIdentifier, ok := rule.Metadata["target_identifier"].(string)
-		if !ok || targetIdentifier == "" {
+		targetURI, ok := rule.Metadata["target_resource_uri"].(string)
+		if !ok || targetURI == "" {
 			continue
 		}
 
-		// Parse source and target identifiers using the proper parser
-		sourceInfo, err := s.parseDatabaseIdentifier(sourceIdentifier)
+		// Parse source and target URIs using the new parser
+		sourceInfo, err := s.parseResourceIdentifier(sourceURI)
 		if err != nil {
 			// Skip this rule if parsing fails
 			continue
 		}
 
-		targetInfo, err := s.parseDatabaseIdentifier(targetIdentifier)
+		targetInfo, err := s.parseResourceIdentifier(targetURI)
 		if err != nil {
 			// Skip this rule if parsing fails
 			continue

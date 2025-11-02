@@ -2145,6 +2145,7 @@ message DeleteMappingRequest {
     string tenant_id = 1;
     string workspace_name = 2;
     string mapping_name = 3;
+    optional bool keep_rules = 4;  // Default: false (delete orphaned rules)
 }
 
 // Delete a mapping response

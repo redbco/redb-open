@@ -850,6 +850,44 @@ func RemoveMappingRule(mappingName, ruleName string, deleteRule bool) error {
 	return nil
 }
 
+// RemoveMapping removes a mapping and optionally deletes associated rules
+func RemoveMapping(mappingName string, keepRules bool) error {
+	if mappingName == "" {
+		return fmt.Errorf("mapping name is required")
+	}
+
+	profileInfo, err := common.GetActiveProfileInfo()
+	if err != nil {
+		return err
+	}
+
+	client, err := common.GetProfileClient()
+	if err != nil {
+		return err
+	}
+
+	url, err := common.BuildWorkspaceAPIURL(profileInfo, fmt.Sprintf("/mappings/%s", mappingName))
+	if err != nil {
+		return err
+	}
+
+	// Add keep_rules query parameter if requested
+	if keepRules {
+		url += "?keep_rules=true"
+	}
+
+	if err := client.Delete(url); err != nil {
+		return fmt.Errorf("failed to remove mapping: %v", err)
+	}
+
+	if keepRules {
+		fmt.Printf("Successfully removed mapping '%s' (rules preserved)\n", mappingName)
+	} else {
+		fmt.Printf("Successfully removed mapping '%s' (unused rules deleted)\n", mappingName)
+	}
+	return nil
+}
+
 // ListMappingRules lists all mapping rules in a mapping
 func ListMappingRules(mappingName string) error {
 	if mappingName == "" {
