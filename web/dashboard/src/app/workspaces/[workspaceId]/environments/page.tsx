@@ -61,11 +61,10 @@ export default function EnvironmentsPage({ params }: EnvironmentsPageProps) {
         <div className="flex items-center space-x-3">
           <button
             onClick={handleRefresh}
-            className="inline-flex items-center px-4 py-2 bg-background border border-border text-foreground rounded-md hover:bg-accent transition-colors"
+            className="inline-flex items-center px-3 py-2 border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
             disabled={isLoading}
           >
-            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-            Refresh
+            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
           <button
             onClick={() => setShowCreateDialog(true)}

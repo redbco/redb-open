@@ -111,6 +111,15 @@ export interface ConnectDatabaseRequest {
   instance_description?: string;
 }
 
+export interface ConnectDatabaseStringRequest {
+  connection_string: string;
+  database_name: string;
+  database_description?: string;
+  node_id?: string;
+  environment_id?: string;
+  enabled?: boolean;
+}
+
 export interface ConnectDatabaseResponse {
   message: string;
   success: boolean;

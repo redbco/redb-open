@@ -52,13 +52,9 @@ export function DatabaseCard({ database, workspaceId, onUpdate }: DatabaseCardPr
           {database.status}
         </div>
       </div>
-
-      {database.database_description && (
-        <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
-          {database.database_description}
-        </p>
-      )}
-
+      <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
+        {database.database_description || <span className="text-muted-foreground italic">No description</span>}
+      </p>
       <div className="space-y-3">
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground flex items-center">

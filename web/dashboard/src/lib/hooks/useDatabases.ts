@@ -5,7 +5,8 @@ import { api } from '@/lib/api/endpoints';
 import { ApiClientError } from '@/lib/api/client';
 import type { 
   Database, 
-  ConnectDatabaseRequest, 
+  ConnectDatabaseRequest,
+  ConnectDatabaseStringRequest,
   ModifyDatabaseRequest,
   DisconnectDatabaseRequest,
   DatabaseSchema
@@ -90,7 +91,22 @@ export function useConnectDatabase(workspaceName: string) {
     }
   };
 
-  return { connect, isLoading, error };
+  const connectString = async (request: ConnectDatabaseStringRequest) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const response = await api.databases.connectString(workspaceName, request);
+      return response;
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error('Failed to connect database');
+      setError(error);
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return { connect, connectString, isLoading, error };
 }
 
 export function useModifyDatabase(workspaceName: string, databaseName: string) {

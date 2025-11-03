@@ -113,7 +113,7 @@ export default function DatabasesPage({ params }: DatabasesPageProps) {
             },
             {
               title: 'Connected',
-              value: databases.filter(d => d.status === 'healthy').length.toString(),
+              value: databases.filter(d => d.status?.toLowerCase() === 'healthy' || d.status?.toLowerCase() === 'connected').length.toString(),
               change: 'Active connections',
               icon: Server,
               color: 'text-green-600 dark:text-green-400'

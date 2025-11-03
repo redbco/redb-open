@@ -5,6 +5,7 @@ import type {
   ListDatabasesResponse,
   ShowDatabaseResponse,
   ConnectDatabaseRequest,
+  ConnectDatabaseStringRequest,
   ConnectDatabaseResponse,
   ModifyDatabaseRequest,
   DisconnectDatabaseRequest,
@@ -124,6 +125,9 @@ export const databaseEndpoints = {
 
   connect: (workspaceName: string, request: ConnectDatabaseRequest) =>
     apiClient.post<ConnectDatabaseResponse>(`api/v1/workspaces/${workspaceName}/databases/connect`, request),
+
+  connectString: (workspaceName: string, request: ConnectDatabaseStringRequest) =>
+    apiClient.post<ConnectDatabaseResponse>(`api/v1/workspaces/${workspaceName}/databases/connect-string`, request),
 
   modify: (workspaceName: string, databaseName: string, request: ModifyDatabaseRequest) =>
     apiClient.put<{ success: boolean; message: string; database: any }>(
