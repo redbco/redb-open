@@ -12,8 +12,8 @@ export default function Home() {
   useEffect(() => {
     if (!isLoading) {
       if (isAuthenticated) {
-        // Always go to workspace selection page
-        router.push('/workspaces');
+        // Always go to system overview page
+        router.push('/overview');
       } else {
         router.push('/auth/login');
       }

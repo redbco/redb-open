@@ -15,10 +15,15 @@ type Relationship struct {
 	RelationshipTargetDatabaseID string `json:"relationship_target_database_id"`
 	RelationshipTargetTableName  string `json:"relationship_target_table_name"`
 	MappingID                    string `json:"mapping_id"`
+	MappingName                  string `json:"mapping_name,omitempty"`
 	PolicyID                     string `json:"policy_id"`
 	StatusMessage                string `json:"status_message"`
 	Status                       Status `json:"status"`
 	OwnerID                      string `json:"owner_id"`
+	RelationshipSourceDatabaseName string `json:"relationship_source_database_name,omitempty"`
+	RelationshipTargetDatabaseName string `json:"relationship_target_database_name,omitempty"`
+	RelationshipSourceDatabaseType string `json:"relationship_source_database_type,omitempty"`
+	RelationshipTargetDatabaseType string `json:"relationship_target_database_type,omitempty"`
 }
 
 type ListRelationshipsResponse struct {

@@ -994,12 +994,12 @@ func (i *Initializer) createDatabaseSchema(ctx context.Context, creds *DatabaseC
 func (i *Initializer) createUlidDomainSafely(ctx context.Context, conn *pgx.Conn) error {
 	ulidDomainSQL := `CREATE DOMAIN ulid AS TEXT
 CHECK (
-    -- Check overall format
-    VALUE ~ '^[a-z]{2,10}_[0-9A-HJKMNP-TV-Z]{26}$'
+    -- Check overall format (hex-based format to match generate_ulid function)
+    VALUE ~ '^[a-z]{2,10}_[0-9A-F]{26}$'
     AND
     -- Ensure prefix is from allowed list
     substring(VALUE from '^([a-z]+)_') IN (
-        'mesh', 'node', 'route', 'region', 'tenant', 'user', 'group', 'role', 'perm', 'pol', 'ws', 'env', 'instance', 'db', 'repo', 'branch', 'commit', 'map', 'maprule','rel', 'transform', 'mcpserver', 'mcpres', 'mcptool', 'mcpprompt', 'audit', 'satellite', 'anchor', 'template', 'apitoken', 'cdcs', 'integration', 'intjob'
+        'mesh', 'node', 'route', 'region', 'tenant', 'user', 'group', 'role', 'perm', 'pol', 'ws', 'env', 'instance', 'db', 'repo', 'branch', 'commit', 'map', 'maprule','rel', 'transform', 'mcpserver', 'mcpres', 'mcptool', 'mcpprompt', 'audit', 'satellite', 'anchor', 'template', 'apitoken', 'cdcs', 'integration', 'intjob', 'container', 'item'
     )
 );`
 

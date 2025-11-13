@@ -1450,11 +1450,21 @@ func parseResourceURIForMCP(uri string) (databaseID, tableName string, err error
 		return "", "", fmt.Errorf("URI must start with 'redb:/' (got: %s)", uri)
 	}
 
-	// Remove the protocol prefix
-	path := strings.TrimPrefix(uri, "redb:/")
+	// Remove the protocol prefix (support both old and new formats)
+	path := strings.TrimPrefix(uri, "redb://")
+	if path == uri {
+		// Try old format for backward compatibility
+		path = strings.TrimPrefix(uri, "redb:/")
+	}
 	
-	// Split by /
-	parts := strings.Split(path, "/")
+	// Split by / and filter out empty strings (in case of double slash)
+	allParts := strings.Split(path, "/")
+	var parts []string
+	for _, p := range allParts {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
 	
 	// Expected format: data/database/{id}/table/{name}/column/{col}
 	// parts[0] = "data" (scope)
@@ -1466,7 +1476,7 @@ func parseResourceURIForMCP(uri string) (databaseID, tableName string, err error
 	// parts[6] = column name
 	
 	if len(parts) < 7 {
-		return "", "", fmt.Errorf("invalid URI format, expected: redb:/data/database/{id}/table/{name}/column/{col}")
+		return "", "", fmt.Errorf("invalid URI format, expected: redb://data/database/{id}/table/{name}/column/{col}")
 	}
 	
 	if parts[0] != "data" {

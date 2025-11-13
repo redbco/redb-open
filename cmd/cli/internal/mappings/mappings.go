@@ -51,7 +51,7 @@ type Mapping struct {
 }
 
 // AddMapping creates a new mapping with specified scope
-func AddMapping(scope, source, target, name, description, policyID string) error {
+func AddMapping(scope, source, target, name, description, policyID string, clean bool) error {
 	// Validate scope
 	if scope != "database" && scope != "table" {
 		return fmt.Errorf("invalid scope '%s': must be 'database' or 'table'", scope)
@@ -115,6 +115,7 @@ func AddMapping(scope, source, target, name, description, policyID string) error
 		Source             string `json:"source"`
 		Target             string `json:"target"`
 		PolicyID           string `json:"policy_id,omitempty"`
+		GenerateRules      bool   `json:"generate_rules"`
 	}{
 		MappingName:        name,
 		MappingDescription: description,
@@ -122,6 +123,7 @@ func AddMapping(scope, source, target, name, description, policyID string) error
 		Source:             source,
 		Target:             target,
 		PolicyID:           policyID,
+		GenerateRules:      !clean, // If clean is true, don't generate rules
 	}
 
 	profileInfo, err := common.GetActiveProfileInfo()

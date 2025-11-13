@@ -35,6 +35,9 @@ service AnchorService {
     rpc InsertDataStream(InsertDataStreamRequest) returns (stream InsertDataStreamResponse) {}
     rpc InsertDataFromCache(InsertDataFromCacheRequest) returns (InsertDataFromCacheResponse) {}
     rpc WipeDatabase(WipeDatabaseRequest) returns (WipeDatabaseResponse) {}
+    rpc WipeTable(WipeTableRequest) returns (WipeTableResponse) {}
+    rpc DropTable(DropTableRequest) returns (DropTableResponse) {}
+    rpc UpdateTableData(UpdateTableDataRequest) returns (UpdateTableDataResponse) {}
 
     // Data copying endpoints
     rpc StreamTableData(StreamTableDataRequest) returns (stream StreamTableDataResponse) {}
@@ -345,6 +348,54 @@ message WipeDatabaseResponse {
     bool success = 2;
     redbco.redbopen.common.v1.Status status = 3;
     string database_id = 4;
+}
+
+message WipeTableRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+}
+
+message WipeTableResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    int64 rows_affected = 6;
+}
+
+message DropTableRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+}
+
+message DropTableResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+}
+
+message UpdateTableDataRequest {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string table_name = 4;
+    bytes updates = 5;  // JSON encoded array of update operations: [{where: {...}, set: {...}}]
+}
+
+message UpdateTableDataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    string table_name = 5;
+    int64 rows_affected = 6;
 }
 
 // Data transformation endpoints

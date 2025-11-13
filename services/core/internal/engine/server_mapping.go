@@ -12,6 +12,7 @@ import (
 	transformationv1 "github.com/redbco/redb-open/api/proto/transformation/v1"
 	unifiedmodelv1 "github.com/redbco/redb-open/api/proto/unifiedmodel/v1"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
+	"github.com/redbco/redb-open/pkg/unifiedmodel/resource"
 	"github.com/redbco/redb-open/services/core/internal/services/database"
 	"github.com/redbco/redb-open/services/core/internal/services/mapping"
 	"github.com/redbco/redb-open/services/core/internal/services/workspace"
@@ -49,7 +50,7 @@ func (s *Server) ListMappings(ctx context.Context, req *corev1.ListMappingsReque
 	// Convert to protobuf format
 	protoMappings := make([]*corev1.Mapping, len(mappings))
 	for i, m := range mappings {
-		protoMapping, err := s.mappingToProto(m)
+		protoMapping, err := s.mappingToProtoWithContext(ctx, m)
 		if err != nil {
 			s.engine.IncrementErrors()
 			return nil, status.Errorf(codes.Internal, "failed to convert mapping: %v", err)
@@ -85,6 +86,14 @@ func (s *Server) ShowMapping(ctx context.Context, req *corev1.ShowMappingRequest
 		return nil, status.Errorf(codes.NotFound, "mapping not found: %v", err)
 	}
 
+	// Get filters for this mapping
+	filters, err := mappingService.GetMappingFilters(ctx, m.ID)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get filters for mapping %s: %v", req.MappingName, err)
+		filters = []*mapping.MappingFilter{}
+	}
+	m.Filters = filters
+
 	// Get mapping rules for this mapping
 	mappingRules, err := mappingService.GetMappingRulesForMapping(ctx, req.TenantId, workspaceID, req.MappingName)
 	if err != nil {
@@ -92,8 +101,127 @@ func (s *Server) ShowMapping(ctx context.Context, req *corev1.ShowMappingRequest
 		mappingRules = []*mapping.Rule{}
 	}
 
+	// Load source/target items for each rule
+	for _, rule := range mappingRules {
+		// Load source items
+		sourceItems, err := mappingService.GetRuleSourceItems(ctx, rule.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to get source items for rule %s: %v", rule.Name, err)
+		} else {
+			rule.SourceItems = sourceItems
+		}
+
+		// Load target items
+		targetItems, err := mappingService.GetRuleTargetItems(ctx, rule.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to get target items for rule %s: %v", rule.Name, err)
+		} else {
+			rule.TargetItems = targetItems
+		}
+	}
+
+	// Fetch all container items for source and target containers
+	// This allows the dashboard to show which columns are unmapped
+	var sourceContainerItems []*mapping.ResourceItem
+	var targetContainerItems []*mapping.ResourceItem
+
+	if m.SourceContainerID != nil && *m.SourceContainerID != "" {
+		items, err := mappingService.GetContainerItems(ctx, *m.SourceContainerID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to get source container items for mapping %s: %v", req.MappingName, err)
+		} else {
+			sourceContainerItems = items
+		}
+	}
+
+	if m.TargetContainerID != nil && *m.TargetContainerID != "" {
+		items, err := mappingService.GetContainerItems(ctx, *m.TargetContainerID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to get target container items for mapping %s: %v", req.MappingName, err)
+		} else {
+			targetContainerItems = items
+		}
+	}
+
+	// Add container items to mapping object for serialization
+	if len(sourceContainerItems) > 0 || len(targetContainerItems) > 0 {
+		if m.MappingObject == nil {
+			m.MappingObject = make(map[string]interface{})
+		}
+
+		// Convert source container items to JSON-friendly format
+		if len(sourceContainerItems) > 0 {
+			sourceItemsData := make([]map[string]interface{}, len(sourceContainerItems))
+			for i, item := range sourceContainerItems {
+				sourceItemsData[i] = map[string]interface{}{
+					"item_id":                   item.ItemID,
+					"container_id":              item.ContainerID,
+					"resource_uri":              item.ResourceURI,
+					"item_type":                 item.ItemType,
+					"item_name":                 item.ItemName,
+					"item_display_name":         item.ItemDisplayName,
+					"item_path":                 item.ItemPath,
+					"data_type":                 item.DataType,
+					"unified_data_type":         item.UnifiedDataType,
+					"is_nullable":               item.IsNullable,
+					"is_primary_key":            item.IsPrimaryKey,
+					"is_unique":                 item.IsUnique,
+					"is_indexed":                item.IsIndexed,
+					"is_required":               item.IsRequired,
+					"is_array":                  item.IsArray,
+					"array_dimensions":          item.ArrayDimensions,
+					"default_value":             item.DefaultValue,
+					"max_length":                item.MaxLength,
+					"precision":                 item.Precision,
+					"scale":                     item.Scale,
+					"description":               item.Description,
+					"is_privileged":             item.IsPrivileged,
+					"privileged_classification": item.PrivilegedClassification,
+					"detection_confidence":      item.DetectionConfidence,
+					"detection_method":          item.DetectionMethod,
+				}
+			}
+			m.MappingObject["source_container_items"] = sourceItemsData
+		}
+
+		// Convert target container items to JSON-friendly format
+		if len(targetContainerItems) > 0 {
+			targetItemsData := make([]map[string]interface{}, len(targetContainerItems))
+			for i, item := range targetContainerItems {
+				targetItemsData[i] = map[string]interface{}{
+					"item_id":                   item.ItemID,
+					"container_id":              item.ContainerID,
+					"resource_uri":              item.ResourceURI,
+					"item_type":                 item.ItemType,
+					"item_name":                 item.ItemName,
+					"item_display_name":         item.ItemDisplayName,
+					"item_path":                 item.ItemPath,
+					"data_type":                 item.DataType,
+					"unified_data_type":         item.UnifiedDataType,
+					"is_nullable":               item.IsNullable,
+					"is_primary_key":            item.IsPrimaryKey,
+					"is_unique":                 item.IsUnique,
+					"is_indexed":                item.IsIndexed,
+					"is_required":               item.IsRequired,
+					"is_array":                  item.IsArray,
+					"array_dimensions":          item.ArrayDimensions,
+					"default_value":             item.DefaultValue,
+					"max_length":                item.MaxLength,
+					"precision":                 item.Precision,
+					"scale":                     item.Scale,
+					"description":               item.Description,
+					"is_privileged":             item.IsPrivileged,
+					"privileged_classification": item.PrivilegedClassification,
+					"detection_confidence":      item.DetectionConfidence,
+					"detection_method":          item.DetectionMethod,
+				}
+			}
+			m.MappingObject["target_container_items"] = targetItemsData
+		}
+	}
+
 	// Convert to protobuf format
-	protoMapping, err := s.mappingToProto(m)
+	protoMapping, err := s.mappingToProtoWithContext(ctx, m)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to convert mapping: %v", err)
@@ -102,11 +230,23 @@ func (s *Server) ShowMapping(ctx context.Context, req *corev1.ShowMappingRequest
 	// Convert mapping rules to protobuf format
 	protoMappingRules := make([]*corev1.MappingRule, len(mappingRules))
 	for i, rule := range mappingRules {
-		protoRule, err := s.mappingRuleToProto(rule)
+		protoRule, err := s.mappingRuleToProtoWithItems(rule)
 		if err != nil {
 			s.engine.logger.Warnf("Failed to convert mapping rule: %v", err)
 			continue
 		}
+
+		// Populate cardinality and item URIs from loaded data
+		protoRule.MappingRuleCardinality = rule.Cardinality
+		protoRule.SourceItemUris = make([]string, len(rule.SourceItems))
+		for j, item := range rule.SourceItems {
+			protoRule.SourceItemUris[j] = item.ResourceURI
+		}
+		protoRule.TargetItemUris = make([]string, len(rule.TargetItems))
+		for j, item := range rule.TargetItems {
+			protoRule.TargetItemUris[j] = item.ResourceURI
+		}
+
 		protoMappingRules[i] = protoRule
 	}
 
@@ -164,9 +304,9 @@ func (s *Server) AddMapping(ctx context.Context, req *corev1.AddMappingRequest) 
 	// Route to appropriate handler based on scope
 	switch req.Scope {
 	case "database":
-		return s.addDatabaseMappingUnified(ctx, req, sourceDB, targetDB)
+		return s.addDatabaseMappingUnified(ctx, req, sourceDB, targetDB, req.GenerateRules)
 	case "table":
-		return s.addTableMappingUnified(ctx, req, sourceDB, sourceTable, targetDB, targetTable)
+		return s.addTableMappingUnified(ctx, req, sourceDB, sourceTable, targetDB, targetTable, req.GenerateRules)
 	default:
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported scope: %s", req.Scope)
@@ -206,8 +346,26 @@ func (s *Server) AddTableMapping(ctx context.Context, req *corev1.AddTableMappin
 	// Get mapping service
 	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
 
+	// Build resource URIs and mapping type
+	sourceType := "table"
+	targetType := "table"
+	sourceIdentifier := s.buildResourceURI("table", sourceDB.ID, req.MappingSourceTableName, "")
+	targetIdentifier := s.buildResourceURI("table", targetDB.ID, req.MappingTargetTableName, "")
+	mappingType := s.buildMappingType(sourceType, targetType)
+
+	// Build mapping object with human-readable names
+	mappingObject := map[string]interface{}{
+		"source_database_name": sourceDB.Name,
+		"source_database_id":   sourceDB.ID,
+		"source_table_name":    req.MappingSourceTableName,
+		"target_database_name": targetDB.Name,
+		"target_database_id":   targetDB.ID,
+		"target_table_name":    req.MappingTargetTableName,
+	}
+
 	// Create the mapping
-	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, "table", req.MappingName, req.MappingDescription, req.OwnerId)
+	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, mappingType, req.MappingName, req.MappingDescription, req.OwnerId,
+		sourceType, targetType, sourceIdentifier, targetIdentifier, mappingObject)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to create mapping: %v", err)
@@ -330,26 +488,34 @@ func (s *Server) AddTableMapping(ctx context.Context, req *corev1.AddTableMappin
 
 						// Create metadata based on the match
 						metadata := map[string]interface{}{
-							"source_table":    tableMatch.SourceTable,
-							"source_column":   columnMatch.SourceColumn,
-							"target_table":    tableMatch.TargetTable,
-							"target_column":   columnMatch.TargetColumn,
-							"match_score":     columnMatch.Score,
-							"type_compatible": columnMatch.IsTypeCompatible,
-							"match_type":      "auto_generated",
-							"generated_at":    time.Now().Format(time.RFC3339),
+							"source_table":         tableMatch.SourceTable,
+							"source_column":        columnMatch.SourceColumn,
+							"source_database_name": sourceDB.Name,
+							"source_database_id":   sourceDB.ID,
+							"target_table":         tableMatch.TargetTable,
+							"target_column":        columnMatch.TargetColumn,
+							"target_database_name": targetDB.Name,
+							"target_database_id":   targetDB.ID,
+							"match_score":          columnMatch.Score,
+							"type_compatible":      columnMatch.IsTypeCompatible,
+							"match_type":           "auto_generated",
+							"generated_at":         time.Now().Format(time.RFC3339),
 						}
 
 						// Create empty transformation options (as requested)
 						transformationOptions := map[string]interface{}{}
+
+						// Build proper resource URIs
+						sourceURI := s.buildResourceURI("column", sourceDB.ID, tableMatch.SourceTable, columnMatch.SourceColumn)
+						targetURI := s.buildResourceURI("column", targetDB.ID, tableMatch.TargetTable, columnMatch.TargetColumn)
 
 						// Create the mapping rule
 						_, err = mappingService.CreateMappingRule(ctx, req.TenantId, workspaceID, ruleName,
 							fmt.Sprintf("Auto-generated rule for %s.%s.%s -> %s.%s.%s",
 								req.MappingSourceDatabaseName, tableMatch.SourceTable, columnMatch.SourceColumn,
 								req.MappingTargetDatabaseName, tableMatch.TargetTable, columnMatch.TargetColumn),
-							fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s", sourceDB.ID, tableMatch.SourceTable, columnMatch.SourceColumn),
-							fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s", targetDB.ID, tableMatch.TargetTable, columnMatch.TargetColumn),
+							sourceURI,
+							targetURI,
 							"direct_mapping", // Default transformation
 							transformationOptions,
 							metadata,
@@ -427,8 +593,24 @@ func (s *Server) AddDatabaseMapping(ctx context.Context, req *corev1.AddDatabase
 	// Get mapping service
 	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
 
+	// Build resource URIs and mapping type
+	sourceType := "database"
+	targetType := "database"
+	sourceIdentifier := s.buildResourceURI("database", sourceDB.ID, "", "")
+	targetIdentifier := s.buildResourceURI("database", targetDB.ID, "", "")
+	mappingType := s.buildMappingType(sourceType, targetType)
+
+	// Build mapping object with human-readable names
+	mappingObject := map[string]interface{}{
+		"source_database_name": sourceDB.Name,
+		"source_database_id":   sourceDB.ID,
+		"target_database_name": targetDB.Name,
+		"target_database_id":   targetDB.ID,
+	}
+
 	// Create the mapping
-	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, "database", req.MappingName, req.MappingDescription, req.OwnerId)
+	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, mappingType, req.MappingName, req.MappingDescription, req.OwnerId,
+		sourceType, targetType, sourceIdentifier, targetIdentifier, mappingObject)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to create mapping: %v", err)
@@ -545,26 +727,34 @@ func (s *Server) AddDatabaseMapping(ctx context.Context, req *corev1.AddDatabase
 
 						// Create metadata based on the match
 						metadata := map[string]interface{}{
-							"source_table":    tableMatch.SourceTable,
-							"source_column":   columnMatch.SourceColumn,
-							"target_table":    tableMatch.TargetTable,
-							"target_column":   columnMatch.TargetColumn,
-							"match_score":     columnMatch.Score,
-							"type_compatible": columnMatch.IsTypeCompatible,
-							"match_type":      "auto_generated",
-							"generated_at":    time.Now().Format(time.RFC3339),
+							"source_table":         tableMatch.SourceTable,
+							"source_column":        columnMatch.SourceColumn,
+							"source_database_name": sourceDB.Name,
+							"source_database_id":   sourceDB.ID,
+							"target_table":         tableMatch.TargetTable,
+							"target_column":        columnMatch.TargetColumn,
+							"target_database_name": targetDB.Name,
+							"target_database_id":   targetDB.ID,
+							"match_score":          columnMatch.Score,
+							"type_compatible":      columnMatch.IsTypeCompatible,
+							"match_type":           "auto_generated",
+							"generated_at":         time.Now().Format(time.RFC3339),
 						}
 
 						// Create empty transformation options (as requested)
 						transformationOptions := map[string]interface{}{}
+
+						// Build proper resource URIs
+						sourceURI := s.buildResourceURI("column", sourceDB.ID, tableMatch.SourceTable, columnMatch.SourceColumn)
+						targetURI := s.buildResourceURI("column", targetDB.ID, tableMatch.TargetTable, columnMatch.TargetColumn)
 
 						// Create the mapping rule
 						_, err = mappingService.CreateMappingRule(ctx, req.TenantId, workspaceID, ruleName,
 							fmt.Sprintf("Auto-generated rule for %s.%s.%s -> %s.%s.%s",
 								req.MappingSourceDatabaseName, tableMatch.SourceTable, columnMatch.SourceColumn,
 								req.MappingTargetDatabaseName, tableMatch.TargetTable, columnMatch.TargetColumn),
-							fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s", sourceDB.ID, tableMatch.SourceTable, columnMatch.SourceColumn),
-							fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s", targetDB.ID, tableMatch.TargetTable, columnMatch.TargetColumn),
+							sourceURI,
+							targetURI,
 							"direct_mapping", // Default transformation
 							transformationOptions,
 							metadata,
@@ -625,8 +815,10 @@ func (s *Server) AddEmptyMapping(ctx context.Context, req *corev1.AddEmptyMappin
 	// Get mapping service
 	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
 
-	// Create the mapping
-	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, "undefined", req.MappingName, req.MappingDescription, req.OwnerId)
+	// Create the mapping with empty/undefined type information
+	// These can be filled in later when the mapping is fully defined
+	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, "undefined", req.MappingName, req.MappingDescription, req.OwnerId,
+		"", "", "", "", map[string]interface{}{})
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to create mapping: %v", err)
@@ -943,44 +1135,38 @@ func (s *Server) AddMappingRule(ctx context.Context, req *corev1.AddMappingRuleR
 		}
 	}
 
-	// Expect resource URIs in new format (redb://...)
-	sourceURI := req.MappingRuleSource
-	targetURI := req.MappingRuleTarget
+	// Determine source and target URIs from new or legacy fields
+	var sourceURIs []string
+	var targetURIs []string
 
-	if sourceURI == "" {
-		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.InvalidArgument, "source resource URI is required")
+	// Use new multi-item fields if provided, otherwise fall back to legacy single fields
+	if len(req.SourceItemUris) > 0 {
+		sourceURIs = req.SourceItemUris
+	} else if req.MappingRuleSource != "" {
+		sourceURIs = []string{req.MappingRuleSource}
 	}
 
-	if targetURI == "" {
-		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.InvalidArgument, "target resource URI is required")
+	if len(req.TargetItemUris) > 0 {
+		targetURIs = req.TargetItemUris
+	} else if req.MappingRuleTarget != "" {
+		targetURIs = []string{req.MappingRuleTarget}
 	}
 
-	// Parse and validate source URI
-	sourceInfo, err := s.parseResourceIdentifier(sourceURI)
-	if err != nil {
-		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.InvalidArgument, "invalid source URI: %v", err)
+	// Determine cardinality
+	cardinality := req.MappingRuleCardinality
+	if cardinality == "" {
+		cardinality = inferCardinality(len(sourceURIs), len(targetURIs))
+		s.engine.logger.Infof("Inferred cardinality: %s (sources: %d, targets: %d)", cardinality, len(sourceURIs), len(targetURIs))
 	}
 
-	// Parse and validate target URI
-	targetInfo, err := s.parseResourceIdentifier(targetURI)
-	if err != nil {
+	// Validate cardinality
+	if err := validateCardinality(cardinality, len(sourceURIs), len(targetURIs)); err != nil {
 		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.InvalidArgument, "invalid target URI: %v", err)
+		return nil, status.Errorf(codes.InvalidArgument, "invalid cardinality: %v", err)
 	}
-
-	// Add extracted table and column names to metadata for consistency
-	metadata["source_table"] = sourceInfo.TableName
-	metadata["source_column"] = sourceInfo.ColumnName
-	metadata["target_table"] = targetInfo.TableName
-	metadata["target_column"] = targetInfo.ColumnName
-
-	// Mark as user-defined rule
-	metadata["match_type"] = "user_defined"
 
 	// Validate transformation if provided
+	var transformationType string
 	if req.MappingRuleTransformationName != "" {
 		transformationName := req.MappingRuleTransformationName
 		s.engine.logger.Infof("Validating transformation: %s", transformationName)
@@ -992,80 +1178,106 @@ func (s *Server) AddMappingRule(ctx context.Context, req *corev1.AddMappingRuleR
 			return nil, status.Errorf(codes.Unavailable, "failed to connect to transformation service: %v", err)
 		}
 
-		{
-			// Call GetTransformationMetadata to validate transformation exists
-			metadataReq := &transformationv1.GetTransformationMetadataRequest{
-				TransformationName: transformationName,
-			}
-
-			metadataResp, err := transformationClient.GetTransformationMetadata(ctx, metadataReq)
-			if err != nil {
-				s.engine.IncrementErrors()
-				return nil, status.Errorf(codes.InvalidArgument, "transformation '%s' does not exist or is invalid: %v", transformationName, err)
-			}
-
-			// Check if transformation was found (check Status field)
-			if metadataResp.Status != commonv1.Status_STATUS_SUCCESS || metadataResp.Metadata == nil {
-				s.engine.IncrementErrors()
-				return nil, status.Errorf(codes.InvalidArgument, "transformation '%s' does not exist: %s", transformationName, metadataResp.StatusMessage)
-			}
-
-			// Validate transformation requirements based on type
-			if metadataResp.Metadata != nil {
-				transformationType := metadataResp.Metadata.Type
-
-				// Validate based on transformation type (use formatted identifiers)
-				switch transformationType {
-				case "generator":
-					// Generator transformations should not have a source
-					if sourceURI != "" {
-						s.engine.IncrementErrors()
-						return nil, status.Errorf(codes.InvalidArgument,
-							"transformation '%s' is a generator type and should not have a source column", transformationName)
-					}
-					// Generator transformations must have a target
-					if targetURI == "" {
-						s.engine.IncrementErrors()
-						return nil, status.Errorf(codes.InvalidArgument,
-							"transformation '%s' is a generator type and requires a target column", transformationName)
-					}
-				case "null_returning":
-					// Null-returning transformations should not have a target
-					if targetURI != "" {
-						s.engine.IncrementErrors()
-						return nil, status.Errorf(codes.InvalidArgument,
-							"transformation '%s' is a null-returning type and should not have a target column", transformationName)
-					}
-					// Null-returning transformations must have a source
-					if sourceURI == "" {
-						s.engine.IncrementErrors()
-						return nil, status.Errorf(codes.InvalidArgument,
-							"transformation '%s' is a null-returning type and requires a source column", transformationName)
-					}
-				case "passthrough":
-					// Passthrough transformations require both source and target
-					if sourceURI == "" {
-						s.engine.IncrementErrors()
-						return nil, status.Errorf(codes.InvalidArgument,
-							"transformation '%s' is a passthrough type and requires a source column", transformationName)
-					}
-					if targetURI == "" {
-						s.engine.IncrementErrors()
-						return nil, status.Errorf(codes.InvalidArgument,
-							"transformation '%s' is a passthrough type and requires a target column", transformationName)
-					}
-				}
-
-				s.engine.logger.Infof("Transformation '%s' validated successfully (type: %s)", transformationName, transformationType)
-			}
+		// Call GetTransformationMetadata to validate transformation exists
+		metadataReq := &transformationv1.GetTransformationMetadataRequest{
+			TransformationName: transformationName,
 		}
+
+		metadataResp, err := transformationClient.GetTransformationMetadata(ctx, metadataReq)
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.InvalidArgument, "transformation '%s' does not exist or is invalid: %v", transformationName, err)
+		}
+
+		// Check if transformation was found
+		if metadataResp.Status != commonv1.Status_STATUS_SUCCESS || metadataResp.Metadata == nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.InvalidArgument, "transformation '%s' does not exist: %s", transformationName, metadataResp.StatusMessage)
+		}
+
+		transformationType = metadataResp.Metadata.Type
+
+		// Validate transformation supports the cardinality
+		if err := validateTransformationCardinality(transformationType, cardinality); err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+		}
+
+		s.engine.logger.Infof("Transformation '%s' validated successfully (type: %s, cardinality: %s)",
+			transformationName, transformationType, cardinality)
 	}
 
-	// Create the mapping rule using new URI format
-	createdRule, err := mappingService.CreateMappingRule(ctx, req.TenantId, workspaceID, req.MappingRuleName, req.MappingRuleDescription, sourceURI, targetURI, req.MappingRuleTransformationName, transformationOptions, metadata, req.OwnerId)
+	// Resolve source URIs to item IDs
+	sourceItemIDs := make([]string, len(sourceURIs))
+	sourceOrders := make([]int, len(sourceURIs))
+	for i, uri := range sourceURIs {
+		item, err := mappingService.GetItemByURI(ctx, uri)
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.NotFound, "source item not found for URI '%s': %v", uri, err)
+		}
+		sourceItemIDs[i] = item.ItemID
+		sourceOrders[i] = i
+	}
+
+	// Resolve target URIs to item IDs
+	targetItemIDs := make([]string, len(targetURIs))
+	targetOrders := make([]int, len(targetURIs))
+	for i, uri := range targetURIs {
+		item, err := mappingService.GetItemByURI(ctx, uri)
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.NotFound, "target item not found for URI '%s': %v", uri, err)
+		}
+		targetItemIDs[i] = item.ItemID
+		targetOrders[i] = i
+	}
+
+	// Add metadata
+	metadata["match_type"] = "user_defined"
+	metadata["source_uris"] = sourceURIs
+	metadata["target_uris"] = targetURIs
+
+	// Create the mapping rule with cardinality
+	// For backward compatibility, use the first source/target URI for the legacy fields
+	legacySource := ""
+	legacyTarget := ""
+	if len(sourceURIs) > 0 {
+		legacySource = sourceURIs[0]
+	}
+	if len(targetURIs) > 0 {
+		legacyTarget = targetURIs[0]
+	}
+
+	createdRule, err := mappingService.CreateMappingRule(
+		ctx, req.TenantId, workspaceID, req.MappingRuleName, req.MappingRuleDescription,
+		legacySource, legacyTarget, req.MappingRuleTransformationName,
+		transformationOptions, metadata, req.OwnerId)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to create mapping rule: %v", err)
+	}
+
+	// Update the rule's cardinality in the database
+	if err := mappingService.UpdateMappingRuleCardinality(ctx, createdRule.ID, cardinality); err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to set cardinality: %v", err)
+	}
+
+	// Attach source items to the rule
+	if len(sourceItemIDs) > 0 {
+		if err := mappingService.AttachSourceItems(ctx, createdRule.ID, sourceItemIDs, sourceOrders); err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.Internal, "failed to attach source items: %v", err)
+		}
+	}
+
+	// Attach target items to the rule
+	if len(targetItemIDs) > 0 {
+		if err := mappingService.AttachTargetItems(ctx, createdRule.ID, targetItemIDs, targetOrders); err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.Internal, "failed to attach target items: %v", err)
+		}
 	}
 
 	// Convert to protobuf format
@@ -1074,6 +1286,11 @@ func (s *Server) AddMappingRule(ctx context.Context, req *corev1.AddMappingRuleR
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to convert mapping rule: %v", err)
 	}
+
+	// Populate the new fields in the proto
+	protoRule.MappingRuleCardinality = cardinality
+	protoRule.SourceItemUris = sourceURIs
+	protoRule.TargetItemUris = targetURIs
 
 	return &corev1.AddMappingRuleResponse{
 		Message:     "Mapping rule created successfully",
@@ -1622,12 +1839,86 @@ func (s *Server) filterUnifiedModelEnrichmentForTable(enrichment *unifiedmodelv1
 	return filteredEnrichment
 }
 
-// parseSourceTarget parses database[.table] format
+// ============================================================================
+// Resource URI Builder Helper Functions
+// ============================================================================
+
+// buildResourceURI constructs a proper redb:// URI according to RESOURCE_ADDRESSING.md
+// Note: Uses double slash format (redb://data) not single slash (redb:/data)
+func (s *Server) buildResourceURI(scope, databaseID, tableName, columnName string) string {
+	switch scope {
+	case "database":
+		return fmt.Sprintf("redb://data/database/%s", databaseID)
+	case "table":
+		if tableName == "" {
+			s.engine.logger.Warnf("Table name is empty for table-scope resource URI")
+			return fmt.Sprintf("redb://data/database/%s", databaseID)
+		}
+		return fmt.Sprintf("redb://data/database/%s/table/%s", databaseID, tableName)
+	case "column":
+		if tableName == "" || columnName == "" {
+			s.engine.logger.Warnf("Table or column name is empty for column-scope resource URI")
+			return fmt.Sprintf("redb://data/database/%s", databaseID)
+		}
+		return fmt.Sprintf("redb://data/database/%s/table/%s/column/%s", databaseID, tableName, columnName)
+	default:
+		s.engine.logger.Warnf("Unknown scope '%s' in buildResourceURI, defaulting to database", scope)
+		return fmt.Sprintf("redb://data/database/%s", databaseID)
+	}
+}
+
+// buildMCPResourceURI constructs a proper mcp:// URI
+// For now, we use simple format: mcp://{resource_name}
+// Future: mcp://{server_id}/resource/{resource_name}
+func (s *Server) buildMCPResourceURI(mcpResourceName string) string {
+	// Currently using simplified format without server_id
+	return fmt.Sprintf("mcp://%s", mcpResourceName)
+}
+
+// buildMappingType constructs the mapping_type string based on source and target types
+func (s *Server) buildMappingType(sourceType, targetType string) string {
+	return fmt.Sprintf("%s-to-%s", sourceType, targetType)
+}
+
+// parseSourceTarget parses database[.table] format or redb:// URI format
+// For URIs, it resolves database IDs to database names
 func (s *Server) parseSourceTarget(input string) (database, table string, err error) {
 	if input == "" {
 		return "", "", fmt.Errorf("source/target cannot be empty")
 	}
 
+	// Check if input is a URI (redb://, mcp://, stream://, webhook://)
+	if strings.Contains(input, "://") {
+		// Parse as URI
+		addr, err := resource.ParseResourceURI(input)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to parse URI: %w", err)
+		}
+
+		// For database resources (redb://), extract database ID and table name
+		if addr.Protocol == resource.ProtocolDatabase {
+			// Resolve database ID to database name
+			ctx := context.Background()
+			databaseName, err := s.getDatabaseNameByID(ctx, addr.DatabaseID)
+			if err != nil {
+				return "", "", fmt.Errorf("failed to resolve database ID %s: %w", addr.DatabaseID, err)
+			}
+
+			// Extract table name if present
+			tableName := ""
+			if addr.ObjectType == resource.ObjectTypeTable {
+				tableName = addr.ObjectName
+			}
+
+			return databaseName, tableName, nil
+		}
+
+		// For non-database resources (MCP, stream, webhook), return the URI as-is in the database field
+		// The table field remains empty for these resources
+		return input, "", nil
+	}
+
+	// Legacy format: database[.table]
 	parts := strings.Split(input, ".")
 	if len(parts) == 1 {
 		// Only database name
@@ -1640,8 +1931,22 @@ func (s *Server) parseSourceTarget(input string) (database, table string, err er
 	}
 }
 
+// getDatabaseNameByID retrieves the database name from database ID
+func (s *Server) getDatabaseNameByID(ctx context.Context, databaseID string) (string, error) {
+	// Create database service
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+
+	// Get database by ID
+	db, err := databaseService.GetByID(ctx, databaseID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get database: %w", err)
+	}
+
+	return db.Name, nil
+}
+
 // addTableMappingUnified handles table-scoped mapping creation from unified request
-func (s *Server) addTableMappingUnified(ctx context.Context, req *corev1.AddMappingRequest, sourceDB, sourceTable, targetDB, targetTable string) (*corev1.AddMappingResponse, error) {
+func (s *Server) addTableMappingUnified(ctx context.Context, req *corev1.AddMappingRequest, sourceDB, sourceTable, targetDB, targetTable string, generateRules bool) (*corev1.AddMappingResponse, error) {
 	// Convert to legacy AddTableMappingRequest format
 	legacyReq := &corev1.AddTableMappingRequest{
 		TenantId:                  req.TenantId,
@@ -1660,11 +1965,13 @@ func (s *Server) addTableMappingUnified(ctx context.Context, req *corev1.AddMapp
 	}
 
 	// Call existing AddTableMapping implementation
+	// Note: AddTableMapping doesn't have generateRules parameter yet, we'll need to refactor it
+	// For now, just call it - the refactoring will happen in a separate step
 	return s.AddTableMapping(ctx, legacyReq)
 }
 
 // addDatabaseMappingUnified handles database-scoped mapping creation from unified request with enhanced matching
-func (s *Server) addDatabaseMappingUnified(ctx context.Context, req *corev1.AddMappingRequest, sourceDB, targetDB string) (*corev1.AddMappingResponse, error) {
+func (s *Server) addDatabaseMappingUnified(ctx context.Context, req *corev1.AddMappingRequest, sourceDB, targetDB string, generateRules bool) (*corev1.AddMappingResponse, error) {
 	// Get workspace service
 	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
 
@@ -1695,8 +2002,24 @@ func (s *Server) addDatabaseMappingUnified(ctx context.Context, req *corev1.AddM
 	// Get mapping service
 	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
 
+	// Build resource URIs and mapping type
+	sourceType := "database"
+	targetType := "database"
+	sourceIdentifier := s.buildResourceURI("database", sourceDBObj.ID, "", "")
+	targetIdentifier := s.buildResourceURI("database", targetDBObj.ID, "", "")
+	mappingType := s.buildMappingType(sourceType, targetType)
+
+	// Build mapping object with human-readable names
+	mappingObject := map[string]interface{}{
+		"source_database_name": sourceDBObj.Name,
+		"source_database_id":   sourceDBObj.ID,
+		"target_database_name": targetDBObj.Name,
+		"target_database_id":   targetDBObj.ID,
+	}
+
 	// Create the mapping
-	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, "database", req.MappingName, req.MappingDescription, req.OwnerId)
+	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, mappingType, req.MappingName, req.MappingDescription, req.OwnerId,
+		sourceType, targetType, sourceIdentifier, targetIdentifier, mappingObject)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to create mapping: %v", err)
@@ -1759,8 +2082,8 @@ func (s *Server) addDatabaseMappingUnified(ctx context.Context, req *corev1.AddM
 		}
 	}
 
-	// Perform enhanced database-to-database matching
-	if sourceUM != nil && targetUM != nil {
+	// Perform enhanced database-to-database matching (only if generateRules is true)
+	if generateRules && sourceUM != nil && targetUM != nil {
 		// Create matching request with database-optimized options
 		// For database-level mapping, we prioritize table name matching and structure
 		matchReq := &unifiedmodelv1.MatchUnifiedModelsEnrichedRequest{
@@ -1805,27 +2128,27 @@ func (s *Server) addDatabaseMappingUnified(ctx context.Context, req *corev1.AddM
 
 					// Create metadata for the mapping rule
 					metadata := map[string]interface{}{
-						"generated_at":      time.Now().UTC().Format(time.RFC3339),
-						"match_score":       columnMatch.Score,
-						"match_type":        "enriched_match",
-						"source_column":     columnMatch.SourceColumn,
-						"source_table":      tableMatch.SourceTable,
-						"target_column":     columnMatch.TargetColumn,
-						"target_table":      tableMatch.TargetTable,
-						"type_compatible":   columnMatch.IsTypeCompatible,
-						"table_match_score": tableMatch.Score,
+						"generated_at":         time.Now().UTC().Format(time.RFC3339),
+						"match_score":          columnMatch.Score,
+						"match_type":           "enriched_match",
+						"source_column":        columnMatch.SourceColumn,
+						"source_table":         tableMatch.SourceTable,
+						"source_database_name": sourceDBObj.Name,
+						"source_database_id":   sourceDBObj.ID,
+						"target_column":        columnMatch.TargetColumn,
+						"target_table":         tableMatch.TargetTable,
+						"target_database_name": targetDBObj.Name,
+						"target_database_id":   targetDBObj.ID,
+						"type_compatible":      columnMatch.IsTypeCompatible,
+						"table_match_score":    tableMatch.Score,
 					}
 
 					// Create empty transformation options
 					transformationOptions := map[string]interface{}{}
 
-					// Create the mapping rule with correct resource URI format:
-					// redb:/data/database/{id}/table/{name}/column/{col}
-					// Note: Only ONE slash after colon (redb:/ not redb://)
-					sourceURI := fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s",
-						sourceDBObj.ID, tableMatch.SourceTable, columnMatch.SourceColumn)
-					targetURI := fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s",
-						targetDBObj.ID, tableMatch.TargetTable, columnMatch.TargetColumn)
+					// Build proper resource URIs
+					sourceURI := s.buildResourceURI("column", sourceDBObj.ID, tableMatch.SourceTable, columnMatch.SourceColumn)
+					targetURI := s.buildResourceURI("column", targetDBObj.ID, tableMatch.TargetTable, columnMatch.TargetColumn)
 
 					_, err = mappingService.CreateMappingRule(ctx, req.TenantId, workspaceID, ruleName,
 						fmt.Sprintf("Auto-generated rule for %s.%s.%s -> %s.%s.%s",
@@ -1905,7 +2228,7 @@ func (s *Server) addMCPMapping(ctx context.Context, req *corev1.AddMappingReques
 	databaseService := database.NewService(s.engine.db, s.engine.logger)
 
 	// Validate source database exists and belongs to the tenant/workspace
-	_, err = databaseService.Get(ctx, req.TenantId, workspaceID, sourceDB)
+	sourceDBObj, err := databaseService.Get(ctx, req.TenantId, workspaceID, sourceDB)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.NotFound, "source database not found: %v", err)
@@ -1914,93 +2237,52 @@ func (s *Server) addMCPMapping(ctx context.Context, req *corev1.AddMappingReques
 	// Get mapping service
 	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
 
-	// Build source identifier
-	var sourceIdentifier string
+	// Build resource URIs and mapping type based on scope
+	var sourceType, sourceIdentifier string
+	var mappingObject map[string]interface{}
+
 	if req.Scope == "table" && sourceTable != "" {
-		sourceIdentifier = fmt.Sprintf("%s.%s", sourceDB, sourceTable)
-	} else {
-		sourceIdentifier = sourceDB
-	}
-
-	// Create the mapping with MCP target type
-	// Store mapping with source and target identifiers
-	var query string
-	var args []interface{}
-
-	if req.PolicyId != nil && *req.PolicyId != "" {
-		query = `
-			INSERT INTO mappings (
-				tenant_id, workspace_id, mapping_name, mapping_description,
-				mapping_source_type, mapping_target_type,
-				mapping_source_identifier, mapping_target_identifier,
-				mapping_type, policy_ids, owner_id
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-			RETURNING mapping_id, created, updated
-		`
-		args = []interface{}{
-			req.TenantId,
-			workspaceID,
-			req.MappingName,
-			req.MappingDescription,
-			req.Scope,               // mapping_source_type
-			"mcp",                   // mapping_target_type
-			sourceIdentifier,        // mapping_source_identifier
-			mcpResourceName,         // mapping_target_identifier
-			req.Scope,               // mapping_type
-			[]string{*req.PolicyId}, // policy_ids as array
-			req.OwnerId,
+		sourceType = "table"
+		sourceIdentifier = s.buildResourceURI("table", sourceDBObj.ID, sourceTable, "")
+		mappingObject = map[string]interface{}{
+			"source_database_name": sourceDBObj.Name,
+			"source_database_id":   sourceDBObj.ID,
+			"source_table_name":    sourceTable,
+			"target_mcp_resource":  mcpResourceName,
 		}
 	} else {
-		query = `
-			INSERT INTO mappings (
-				tenant_id, workspace_id, mapping_name, mapping_description,
-				mapping_source_type, mapping_target_type,
-				mapping_source_identifier, mapping_target_identifier,
-				mapping_type, owner_id
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-			RETURNING mapping_id, created, updated
-		`
-		args = []interface{}{
-			req.TenantId,
-			workspaceID,
-			req.MappingName,
-			req.MappingDescription,
-			req.Scope,        // mapping_source_type
-			"mcp",            // mapping_target_type
-			sourceIdentifier, // mapping_source_identifier
-			mcpResourceName,  // mapping_target_identifier
-			req.Scope,        // mapping_type
-			req.OwnerId,
+		sourceType = "database"
+		sourceIdentifier = s.buildResourceURI("database", sourceDBObj.ID, "", "")
+		mappingObject = map[string]interface{}{
+			"source_database_name": sourceDBObj.Name,
+			"source_database_id":   sourceDBObj.ID,
+			"target_mcp_resource":  mcpResourceName,
 		}
 	}
 
-	var mappingID string
-	var created, updated time.Time
-	err = s.engine.db.Pool().QueryRow(ctx, query, args...).Scan(&mappingID, &created, &updated)
+	targetType := "mcp-resource"
+	targetIdentifier := s.buildMCPResourceURI(mcpResourceName)
+	mappingType := s.buildMappingType(sourceType, targetType)
+
+	// Create the mapping
+	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, mappingType, req.MappingName, req.MappingDescription, req.OwnerId,
+		sourceType, targetType, sourceIdentifier, targetIdentifier, mappingObject)
 	if err != nil {
 		s.engine.IncrementErrors()
-		s.engine.logger.Errorf("Failed to create MCP mapping: %v", err)
-		return nil, status.Errorf(codes.Internal, "failed to create MCP mapping: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to create mapping: %v", err)
 	}
 
-	s.engine.logger.Infof("Created MCP mapping %s (ID: %s) from %s to mcp://%s", req.MappingName, mappingID, sourceIdentifier, mcpResourceName)
+	s.engine.logger.Infof("Created MCP mapping %s (ID: %s) from %s to %s", req.MappingName, createdMapping.ID, sourceIdentifier, targetIdentifier)
 
-	// Auto-generate mapping rules for table-scope MCP mappings
-	if req.Scope == "table" && sourceTable != "" {
-		err = s.autoGenerateMCPMappingRules(ctx, req.TenantId, workspaceID, mappingID, req.MappingName, sourceDB, sourceTable, mcpResourceName, req.OwnerId)
+	// Auto-generate mapping rules for table-scope MCP mappings (only if generateRules is true)
+	if req.GenerateRules && req.Scope == "table" && sourceTable != "" {
+		err = s.autoGenerateMCPMappingRules(ctx, req.TenantId, workspaceID, createdMapping.ID, req.MappingName, sourceDB, sourceTable, mcpResourceName, req.OwnerId)
 		if err != nil {
 			s.engine.logger.Warnf("Failed to auto-generate mapping rules for MCP mapping: %v", err)
 			// Don't fail the mapping creation, just log the warning
 		}
 	} else if req.Scope == "database" {
 		s.engine.logger.Warnf("Database-scope MCP mappings are not supported for auto-rule generation. Please use table-scope mappings.")
-	}
-
-	// Get the created mapping
-	createdMapping, err := mappingService.Get(ctx, req.TenantId, workspaceID, req.MappingName)
-	if err != nil {
-		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.Internal, "failed to retrieve created mapping: %v", err)
 	}
 
 	// Convert to protobuf format
@@ -2011,7 +2293,7 @@ func (s *Server) addMCPMapping(ctx context.Context, req *corev1.AddMappingReques
 	}
 
 	return &corev1.AddMappingResponse{
-		Message: fmt.Sprintf("MCP mapping created successfully from %s to mcp://%s with %d auto-generated rules", sourceIdentifier, mcpResourceName, len(protoMapping.MappingRules)),
+		Message: fmt.Sprintf("MCP mapping created successfully from %s to %s with %d auto-generated rules", sourceIdentifier, targetIdentifier, len(protoMapping.MappingRules)),
 		Success: true,
 		Mapping: protoMapping,
 		Status:  commonv1.Status_STATUS_SUCCESS,
@@ -2080,22 +2362,24 @@ func (s *Server) autoGenerateMCPMappingRules(ctx context.Context, tenantID, work
 		}
 
 		// Build source and target URIs with correct format:
-		// redb:/data/database/{id}/table/{name}/column/{col}
-		// Note: Only ONE slash after colon (redb:/ not redb://)
-		sourceURI := fmt.Sprintf("redb:/data/database/%s/table/%s/column/%s", sourceDBObj.ID, sourceTableName, columnName)
+		// redb://data/database/{id}/table/{name}/column/{col}
+		sourceURI := s.buildResourceURI("column", sourceDBObj.ID, sourceTableName, columnName)
 		targetURI := fmt.Sprintf("mcp_virtual://%s.%s.%s", mappingName, virtualTableName, columnName)
 
 		// Create metadata for the mapping rule (additional fields beyond source/target identifiers)
 		metadata := map[string]interface{}{
-			"source_table":     sourceTableName,
-			"source_column":    columnName,
-			"target_table":     virtualTableName,
-			"target_column":    columnName, // Same name by default
-			"match_type":       "auto_generated_mcp",
-			"column_data_type": column.DataType,
-			"column_nullable":  column.Nullable,
-			"is_primary_key":   column.IsPrimaryKey,
-			"generated_at":     time.Now().UTC().Format(time.RFC3339),
+			"source_table":         sourceTableName,
+			"source_column":        columnName,
+			"source_database_name": sourceDBObj.Name,
+			"source_database_id":   sourceDBObj.ID,
+			"target_table":         virtualTableName,
+			"target_column":        columnName, // Same name by default
+			"target_mcp_resource":  mcpResourceName,
+			"match_type":           "auto_generated_mcp",
+			"column_data_type":     column.DataType,
+			"column_nullable":      column.Nullable,
+			"is_primary_key":       column.IsPrimaryKey,
+			"generated_at":         time.Now().UTC().Format(time.RFC3339),
 		}
 
 		// Create empty transformation options

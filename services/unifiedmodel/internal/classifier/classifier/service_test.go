@@ -522,3 +522,77 @@ func TestService_ConvertTableToProtoMetadata(t *testing.T) {
 		t.Errorf("Expected default value 'nextval('seq')', got '%s'", idCol.ColumnDefault)
 	}
 }
+
+func TestService_Classify_ConfidenceClamping(t *testing.T) {
+	service := NewService()
+
+	// Create a table metadata that will generate high scores with large gaps
+	// This should trigger the confidence clamping logic
+	metadata := &pb.TableMetadata{
+		Engine: string(dbcapabilities.PostgreSQL),
+		Name:   "high_score_table",
+		Columns: []*pb.ColumnMetadata{
+			{
+				Name:            "id",
+				Type:            "integer",
+				IsPrimaryKey:    true,
+				IsAutoIncrement: true,
+			},
+			{
+				Name:         "user_id",
+				Type:         "integer",
+				IsPrimaryKey: false,
+			},
+			{
+				Name:         "created_at",
+				Type:         "timestamp",
+				IsPrimaryKey: false,
+			},
+			{
+				Name:         "updated_at",
+				Type:         "timestamp",
+				IsPrimaryKey: false,
+			},
+			{
+				Name:         "status",
+				Type:         "varchar",
+				IsPrimaryKey: false,
+			},
+		},
+	}
+
+	req := &pb.ClassifyRequest{
+		Metadata:  metadata,
+		TopN:      3,
+		Threshold: 0.1,
+	}
+
+	resp, err := service.Classify(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Classify failed: %v", err)
+	}
+
+	if resp == nil {
+		t.Fatal("Response should not be nil")
+	}
+
+	// Verify that confidence is within valid range [0, 1]
+	if resp.Confidence < 0.0 || resp.Confidence > 1.0 {
+		t.Errorf("Confidence %f is outside valid range [0, 1]", resp.Confidence)
+	}
+
+	// Verify all scores are also within valid range
+	for i, score := range resp.Scores {
+		if score.Score < 0.0 || score.Score > 1.0 {
+			t.Errorf("Score[%d] %f is outside valid range [0, 1]", i, score.Score)
+		}
+	}
+
+	// The confidence should never exceed 1.0 even with large gaps
+	// This is the key test for the bug fix
+	if resp.Confidence > 1.0 {
+		t.Errorf("BUG: Confidence %f exceeds 1.0 - the clamping fix is not working", resp.Confidence)
+	}
+}
+
+

@@ -95,14 +95,39 @@ func ParseResourceURI(uri string) (*ResourceAddress, error) {
 // parseDatabaseURI parses a database protocol URI
 // Format: redb://[scope]/database/{id}/{object-type}/{name}/...
 func parseDatabaseURI(parsedURL *url.URL) (*ResourceAddress, error) {
-	parts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
-	if len(parts) < 4 {
+	// For URIs like redb://data/database/..., the URL parser treats:
+	// - Host as "data" (the scope)
+	// - Path as "/database/..."
+	// So we need to extract scope from Host and prepend it to the path parts
+	
+	var scope string
+	var pathStr string
+	
+	if parsedURL.Host != "" {
+		// New format: redb://data/database/...
+		scope = parsedURL.Host
+		pathStr = parsedURL.Path
+	} else {
+		// Old format: redb:/data/database/... (for backward compatibility)
+		// In this case, everything is in the path
+		pathStr = parsedURL.Path
+	}
+	
+	parts := strings.Split(strings.Trim(pathStr, "/"), "/")
+	
+	// If scope wasn't in host, it should be the first part of the path
+	if scope == "" && len(parts) > 0 {
+		scope = parts[0]
+		parts = parts[1:]
+	}
+	
+	if len(parts) < 3 {
 		return nil, fmt.Errorf("invalid database URI format, expected: redb://[scope]/database/{id}/{object-type}/{name}")
 	}
 
 	addr := &ResourceAddress{
 		Protocol:     ProtocolDatabase,
-		Scope:        ResourceScope(parts[0]),
+		Scope:        ResourceScope(scope),
 		ResourceType: TypeDatabase,
 	}
 
@@ -111,21 +136,21 @@ func parseDatabaseURI(parsedURL *url.URL) (*ResourceAddress, error) {
 		return nil, fmt.Errorf("invalid scope: %s, must be data, metadata, or schema", addr.Scope)
 	}
 
-	// parts[1] should be "database"
-	if parts[1] != "database" {
-		return nil, fmt.Errorf("expected 'database' in path, got: %s", parts[1])
+	// parts[0] should be "database"
+	if parts[0] != "database" {
+		return nil, fmt.Errorf("expected 'database' in path, got: %s", parts[0])
 	}
 
-	addr.DatabaseID = parts[2]
-	addr.ObjectType = ObjectType(parts[3])
+	addr.DatabaseID = parts[1]
+	addr.ObjectType = ObjectType(parts[2])
 
-	if len(parts) > 4 {
-		addr.ObjectName = parts[4]
+	if len(parts) > 3 {
+		addr.ObjectName = parts[3]
 	}
 
 	// Parse remaining path segments
-	if len(parts) > 5 {
-		segments, err := parsePathSegments(parts[5:])
+	if len(parts) > 4 {
+		segments, err := parsePathSegments(parts[4:])
 		if err != nil {
 			return nil, fmt.Errorf("error parsing path segments: %w", err)
 		}

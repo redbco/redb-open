@@ -535,6 +535,8 @@ CREATE TABLE mappings (
     mapping_target_type VARCHAR(255),
     mapping_source_identifier VARCHAR(255),
     mapping_target_identifier VARCHAR(255),
+    mapping_source_container_id ulid,
+    mapping_target_container_id ulid,
     mapping_object JSONB DEFAULT '{}',
     policy_ids ulid[] DEFAULT '{}',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
@@ -556,6 +558,7 @@ CREATE TABLE mapping_rules (
     mapping_rule_description TEXT NOT NULL DEFAULT '',
     mapping_rule_metadata JSONB NOT NULL DEFAULT '{}',
     mapping_rule_workflow_type VARCHAR(50) DEFAULT 'simple',
+    mapping_rule_cardinality VARCHAR(50) DEFAULT 'one-to-one' CHECK (mapping_rule_cardinality IN ('one-to-one', 'one-to-many', 'many-to-one', 'many-to-many', 'generator', 'sink')),
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -568,6 +571,36 @@ CREATE TABLE mapping_rule_mappings (
     mapping_rule_order INTEGER NOT NULL DEFAULT 0,
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (mapping_rule_id, mapping_id)
+);
+
+-- Mapping rule source items (many-to-many for flexible cardinality)
+CREATE TABLE mapping_rule_source_items (
+    mapping_rule_id ulid NOT NULL REFERENCES mapping_rules(mapping_rule_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    resource_item_id ulid NOT NULL,
+    item_order INTEGER NOT NULL DEFAULT 0,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (mapping_rule_id, resource_item_id)
+);
+
+-- Mapping rule target items (many-to-many for flexible cardinality)
+CREATE TABLE mapping_rule_target_items (
+    mapping_rule_id ulid NOT NULL REFERENCES mapping_rules(mapping_rule_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    resource_item_id ulid NOT NULL,
+    item_order INTEGER NOT NULL DEFAULT 0,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (mapping_rule_id, resource_item_id)
+);
+
+-- Mapping filters for data filtering (one mapping -> many filters)
+CREATE TABLE mapping_filters (
+    filter_id ulid PRIMARY KEY DEFAULT generate_ulid('filter'),
+    mapping_id ulid NOT NULL REFERENCES mappings(mapping_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    filter_type VARCHAR(50) NOT NULL CHECK (filter_type IN ('where_clause', 'column_condition', 'json_path', 'null_check', 'range')),
+    filter_expression JSONB NOT NULL,
+    filter_order INTEGER NOT NULL DEFAULT 0,
+    filter_operator VARCHAR(10) NOT NULL DEFAULT 'AND' CHECK (filter_operator IN ('AND', 'OR')),
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Relationships between data sources
@@ -1055,6 +1088,151 @@ CREATE TABLE license_feature_usage (
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (feature, local_identity, mesh_id)
 );
+
+-- =============================================================================
+-- RESOURCE REGISTRY SYSTEM
+-- =============================================================================
+
+-- Resource containers for high-level addressable resources
+CREATE TABLE resource_containers (
+    container_id ulid PRIMARY KEY DEFAULT generate_ulid('container'),
+    tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    workspace_id ulid NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    resource_uri TEXT UNIQUE NOT NULL,
+    protocol VARCHAR(50) NOT NULL,
+    scope VARCHAR(50) NOT NULL,
+    object_type VARCHAR(100) NOT NULL,
+    object_name VARCHAR(255) NOT NULL,
+    database_id ulid REFERENCES databases(database_id) ON DELETE CASCADE,
+    instance_id ulid REFERENCES instances(instance_id) ON DELETE SET NULL,
+    integration_id ulid REFERENCES integrations(integration_id) ON DELETE CASCADE,
+    mcpserver_id ulid REFERENCES mcpservers(mcpserver_id) ON DELETE CASCADE,
+    connected_to_node_id BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    status status_enum DEFAULT 'STATUS_CREATED',
+    status_message VARCHAR(255) DEFAULT '',
+    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    online BOOLEAN DEFAULT true,
+    container_metadata JSONB DEFAULT '{}',
+	enriched_metadata JSONB DEFAULT '{}',
+	database_type VARCHAR(100),
+	vendor VARCHAR(100),
+	item_count INTEGER DEFAULT 0,
+	size_bytes BIGINT DEFAULT 0,
+	container_classification VARCHAR(255),
+	container_classification_confidence NUMERIC(3,2),
+	container_classification_source VARCHAR(20) DEFAULT 'auto' CHECK (container_classification_source IN ('auto', 'manual')),
+	created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(workspace_id, object_type, object_name, database_id),
+	CHECK (protocol IN ('redb', 'stream', 'webhook', 'mcp')),
+	CHECK (scope IN ('data', 'metadata', 'schema')),
+	CHECK (container_classification_confidence IS NULL OR (container_classification_confidence >= 0.00 AND container_classification_confidence <= 1.00))
+);
+
+-- Resource items for low-level addressable resources
+CREATE TABLE resource_items (
+    item_id ulid PRIMARY KEY DEFAULT generate_ulid('item'),
+    container_id ulid NOT NULL REFERENCES resource_containers(container_id) ON DELETE CASCADE,
+    tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    workspace_id ulid NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    resource_uri TEXT UNIQUE NOT NULL,
+    protocol VARCHAR(50) NOT NULL,
+    scope VARCHAR(50) NOT NULL,
+	item_type VARCHAR(100) NOT NULL,
+	item_name VARCHAR(255) NOT NULL,
+	item_display_name VARCHAR(255) DEFAULT '',
+	item_path TEXT[],
+    data_type VARCHAR(255) NOT NULL,
+    unified_data_type VARCHAR(100),
+    is_nullable BOOLEAN DEFAULT true,
+    is_primary_key BOOLEAN DEFAULT false,
+    is_unique BOOLEAN DEFAULT false,
+    is_indexed BOOLEAN DEFAULT false,
+    is_required BOOLEAN DEFAULT false,
+    is_array BOOLEAN DEFAULT false,
+    array_dimensions INTEGER DEFAULT 1,
+    default_value TEXT,
+    constraints JSONB DEFAULT '[]',
+    is_custom_type BOOLEAN DEFAULT false,
+    custom_type_name VARCHAR(255),
+    custom_type_definition JSONB,
+    has_schema BOOLEAN DEFAULT false,
+    schema_format VARCHAR(50),
+    schema_definition JSONB,
+    schema_version VARCHAR(50),
+    schema_evolution_version INTEGER DEFAULT 1,
+    schema_validation_mode VARCHAR(50) DEFAULT 'strict',
+    schema_mismatch_action VARCHAR(50) DEFAULT 'reject',
+    allow_new_fields BOOLEAN DEFAULT false,
+    allow_field_type_widening BOOLEAN DEFAULT false,
+    allow_field_removal BOOLEAN DEFAULT false,
+    schema_evolution_log JSONB DEFAULT '[]',
+    nested_items JSONB DEFAULT '[]',
+    max_length INTEGER,
+    precision INTEGER,
+    scale INTEGER,
+    connected_to_node_id BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    status status_enum DEFAULT 'STATUS_CREATED',
+    online BOOLEAN DEFAULT true,
+    item_metadata JSONB DEFAULT '{}',
+    enriched_metadata JSONB DEFAULT '{}',
+    item_comment TEXT,
+    is_privileged BOOLEAN DEFAULT false,
+    privileged_classification VARCHAR(100),
+    detection_confidence DECIMAL(3,2),
+    detection_method VARCHAR(100),
+    ordinal_position INTEGER,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(container_id, item_name, item_path),
+    CHECK (protocol IN ('redb', 'stream', 'webhook', 'mcp')),
+    CHECK (scope IN ('data', 'metadata', 'schema')),
+    CHECK (detection_confidence IS NULL OR (detection_confidence >= 0.00 AND detection_confidence <= 1.00)),
+    CHECK (schema_format IN ('json_schema', 'avro', 'protobuf', 'xml_schema', 'cbor_schema', 'thrift', NULL)),
+    CHECK (array_dimensions > 0),
+    CHECK (schema_validation_mode IN ('strict', 'permissive', 'evolving', 'disabled')),
+    CHECK (schema_mismatch_action IN ('reject', 'accept', 'accept_and_log', 'coerce', 'evolve_schema'))
+);
+
+-- Add the foreign key constraint to the the mappings table
+ALTER TABLE mappings ADD CONSTRAINT fk_mapping_source_container_id FOREIGN KEY (mapping_source_container_id) REFERENCES resource_containers(container_id) ON DELETE CASCADE;
+ALTER TABLE mappings ADD CONSTRAINT fk_mapping_target_container_id FOREIGN KEY (mapping_target_container_id) REFERENCES resource_containers(container_id) ON DELETE CASCADE;
+
+-- Add the foreign key constraint to the the mapping_rule_source_items table
+ALTER TABLE mapping_rule_source_items ADD CONSTRAINT fk_mapping_rule_source_items_resource_item_id FOREIGN KEY (resource_item_id) REFERENCES resource_items(item_id) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- Add the foreign key constraint to the the mapping_rule_target_items table
+ALTER TABLE mapping_rule_target_items ADD CONSTRAINT fk_mapping_rule_target_items_resource_item_id FOREIGN KEY (resource_item_id) REFERENCES resource_items(item_id) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- =============================================================================
+-- DATA PRODUCTS (DATA AS A PRODUCT)
+-- =============================================================================
+
+-- Data products for organizing resource items into reusable data assets
+CREATE TABLE data_products (
+    product_id ulid PRIMARY KEY DEFAULT generate_ulid('product'),
+    tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    workspace_id ulid NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    product_name VARCHAR(255) NOT NULL,
+    product_description TEXT DEFAULT '',
+    metadata JSONB DEFAULT '{}',
+    owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    status status_enum DEFAULT 'STATUS_CREATED',
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(workspace_id, product_name)
+);
+
+-- Data product to resource item associations (many-to-many)
+CREATE TABLE data_product_items (
+    product_id ulid NOT NULL REFERENCES data_products(product_id) ON DELETE CASCADE,
+    resource_item_id ulid NOT NULL REFERENCES resource_items(item_id) ON DELETE CASCADE,
+    item_order INTEGER NOT NULL DEFAULT 0,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (product_id, resource_item_id)
+);
+
 `
 
 // DatabaseIndexes contains the performance indexes for the database
@@ -1106,6 +1284,13 @@ CREATE INDEX idx_commits_tenant_workspace_repo ON commits(tenant_id, workspace_i
 
 -- Data mapping and relationship queries
 CREATE INDEX idx_mappings_tenant_workspace ON mappings(tenant_id, workspace_id);
+CREATE INDEX idx_mappings_source_container ON mappings(mapping_source_container_id);
+CREATE INDEX idx_mappings_target_container ON mappings(mapping_target_container_id);
+CREATE INDEX idx_mapping_rule_source_items_rule_id ON mapping_rule_source_items(mapping_rule_id);
+CREATE INDEX idx_mapping_rule_source_items_item_id ON mapping_rule_source_items(resource_item_id);
+CREATE INDEX idx_mapping_rule_target_items_rule_id ON mapping_rule_target_items(mapping_rule_id);
+CREATE INDEX idx_mapping_rule_target_items_item_id ON mapping_rule_target_items(resource_item_id);
+CREATE INDEX idx_mapping_filters_mapping_id ON mapping_filters(mapping_id, filter_order);
 CREATE INDEX idx_relationships_tenant_workspace ON relationships(tenant_id, workspace_id);
 CREATE INDEX idx_relationships_mapping_id ON relationships(mapping_id);
 
@@ -1248,5 +1433,62 @@ CREATE INDEX idx_stream_offsets_updated ON mesh_stream_offsets(updated);
 CREATE INDEX idx_outbox_next_attempt ON mesh_outbox(next_attempt) WHERE status = 'STATUS_PENDING';
 CREATE INDEX idx_outbox_stream_status ON mesh_outbox(stream_id, status);
 CREATE INDEX idx_inbox_processed ON mesh_inbox(processed) WHERE processed IS NULL;
+
+-- Resource registry queries
+CREATE INDEX idx_resource_containers_tenant_id ON resource_containers(tenant_id);
+CREATE INDEX idx_resource_containers_workspace_id ON resource_containers(workspace_id);
+CREATE INDEX idx_resource_containers_database_id ON resource_containers(database_id) WHERE database_id IS NOT NULL;
+CREATE INDEX idx_resource_containers_instance_id ON resource_containers(instance_id) WHERE instance_id IS NOT NULL;
+CREATE INDEX idx_resource_containers_integration_id ON resource_containers(integration_id) WHERE integration_id IS NOT NULL;
+CREATE INDEX idx_resource_containers_mcpserver_id ON resource_containers(mcpserver_id) WHERE mcpserver_id IS NOT NULL;
+CREATE INDEX idx_resource_containers_node_id ON resource_containers(connected_to_node_id);
+CREATE INDEX idx_resource_containers_resource_uri ON resource_containers(resource_uri);
+CREATE INDEX idx_resource_containers_protocol ON resource_containers(protocol);
+CREATE INDEX idx_resource_containers_scope ON resource_containers(scope);
+CREATE INDEX idx_resource_containers_object_type ON resource_containers(object_type);
+CREATE INDEX idx_resource_containers_status ON resource_containers(status);
+CREATE INDEX idx_resource_containers_online ON resource_containers(online);
+CREATE INDEX idx_resource_containers_last_seen ON resource_containers(last_seen);
+CREATE INDEX idx_resource_containers_metadata_gin ON resource_containers USING gin(container_metadata);
+CREATE INDEX idx_resource_containers_enriched_gin ON resource_containers USING gin(enriched_metadata);
+CREATE INDEX idx_resource_containers_classification ON resource_containers(container_classification) WHERE container_classification IS NOT NULL;
+CREATE INDEX idx_resource_containers_classification_confidence ON resource_containers(container_classification_confidence) WHERE container_classification_confidence IS NOT NULL;
+CREATE INDEX idx_resource_containers_classification_source ON resource_containers(container_classification_source);
+
+CREATE INDEX idx_resource_items_tenant_id ON resource_items(tenant_id);
+CREATE INDEX idx_resource_items_workspace_id ON resource_items(workspace_id);
+CREATE INDEX idx_resource_items_container_id ON resource_items(container_id);
+CREATE INDEX idx_resource_items_node_id ON resource_items(connected_to_node_id);
+CREATE INDEX idx_resource_items_resource_uri ON resource_items(resource_uri);
+CREATE INDEX idx_resource_items_protocol ON resource_items(protocol);
+CREATE INDEX idx_resource_items_scope ON resource_items(scope);
+CREATE INDEX idx_resource_items_item_type ON resource_items(item_type);
+CREATE INDEX idx_resource_items_data_type ON resource_items(data_type);
+CREATE INDEX idx_resource_items_unified_data_type ON resource_items(unified_data_type) WHERE unified_data_type IS NOT NULL;
+CREATE INDEX idx_resource_items_is_primary_key ON resource_items(is_primary_key) WHERE is_primary_key = true;
+CREATE INDEX idx_resource_items_is_unique ON resource_items(is_unique) WHERE is_unique = true;
+CREATE INDEX idx_resource_items_is_indexed ON resource_items(is_indexed) WHERE is_indexed = true;
+CREATE INDEX idx_resource_items_is_privileged ON resource_items(is_privileged) WHERE is_privileged = true;
+CREATE INDEX idx_resource_items_privileged_class ON resource_items(privileged_classification) WHERE privileged_classification IS NOT NULL;
+CREATE INDEX idx_resource_items_has_schema ON resource_items(has_schema) WHERE has_schema = true;
+CREATE INDEX idx_resource_items_schema_format ON resource_items(schema_format) WHERE schema_format IS NOT NULL;
+CREATE INDEX idx_resource_items_status ON resource_items(status);
+CREATE INDEX idx_resource_items_online ON resource_items(online);
+CREATE INDEX idx_resource_items_ordinal ON resource_items(ordinal_position) WHERE ordinal_position IS NOT NULL;
+CREATE INDEX idx_resource_items_display_name ON resource_items(item_display_name) WHERE item_display_name != '';
+CREATE INDEX idx_resource_items_schema_def_gin ON resource_items USING gin(schema_definition) WHERE schema_definition IS NOT NULL;
+CREATE INDEX idx_resource_items_metadata_gin ON resource_items USING gin(item_metadata);
+CREATE INDEX idx_resource_items_enriched_gin ON resource_items USING gin(enriched_metadata);
+
+-- Data product queries
+CREATE INDEX idx_data_products_tenant_id ON data_products(tenant_id);
+CREATE INDEX idx_data_products_workspace_id ON data_products(workspace_id);
+CREATE INDEX idx_data_products_owner_id ON data_products(owner_id);
+CREATE INDEX idx_data_products_status ON data_products(status);
+CREATE INDEX idx_data_products_name ON data_products(product_name);
+CREATE INDEX idx_data_products_metadata_gin ON data_products USING gin(metadata);
+CREATE INDEX idx_data_product_items_product_id ON data_product_items(product_id);
+CREATE INDEX idx_data_product_items_resource_item_id ON data_product_items(resource_item_id);
+CREATE INDEX idx_data_product_items_order ON data_product_items(product_id, item_order);
 
 `

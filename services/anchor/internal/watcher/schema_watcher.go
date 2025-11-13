@@ -15,6 +15,7 @@ import (
 	"github.com/redbco/redb-open/pkg/database"
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
+	"github.com/redbco/redb-open/services/anchor/internal/resources"
 	"github.com/redbco/redb-open/services/anchor/internal/state"
 	"google.golang.org/grpc"
 )
@@ -26,6 +27,7 @@ type SchemaWatcher struct {
 	repoClient   corev1.RepoServiceClient
 	branchClient corev1.BranchServiceClient
 	commitClient corev1.CommitServiceClient
+	resourceRepo *resources.Repository
 	logger       *logger.Logger
 }
 
@@ -37,6 +39,7 @@ func NewSchemaWatcher(db *database.PostgreSQL, umConn *grpc.ClientConn, coreConn
 		repoClient:   corev1.NewRepoServiceClient(coreConn),
 		branchClient: corev1.NewBranchServiceClient(coreConn),
 		commitClient: corev1.NewCommitServiceClient(coreConn),
+		resourceRepo: resources.NewRepository(db.Pool()),
 		logger:       logger,
 	}
 }
@@ -148,6 +151,16 @@ func (w *SchemaWatcher) ensureRepoBranchCommit(ctx context.Context, workspaceID,
 			// Log any warnings from the enriched analysis
 			for _, warning := range enrichedResp.Warnings {
 				w.logWarn("Enriched analysis warning for %s: %s", databaseID, warning)
+			}
+
+			// Populate resource registry tables with containers and items (pass enrichedResp)
+			w.logInfo("Populating resource registry for database %s", databaseID)
+			err = w.populateResourceRegistry(ctx, &um, databaseID, enrichedResp)
+			if err != nil {
+				w.logError("Failed to populate resource registry for database %s: %v", databaseID, err)
+				// Don't fail the entire operation if resource registry population fails
+			} else {
+				w.logInfo("Successfully populated resource registry for database %s", databaseID)
 			}
 		}
 	}
@@ -579,4 +592,110 @@ func (w *SchemaWatcher) invalidateMappingsForDatabase(ctx context.Context, works
 	} else {
 		w.logDebug("No mappings found targeting database %s", databaseID)
 	}
+}
+
+// populateResourceRegistry populates the resource_containers and resource_items tables
+func (w *SchemaWatcher) populateResourceRegistry(ctx context.Context, um *unifiedmodel.UnifiedModel, databaseID string, enrichedResp *pb.AnalyzeSchemaEnrichedResponse) error {
+	// Get database info from the database
+	var tenantID, workspaceID, ownerID, nodeID, databaseName string
+	err := w.db.Pool().QueryRow(ctx,
+		`SELECT tenant_id, workspace_id, owner_id, connected_to_node_id, database_name 
+		 FROM databases WHERE database_id = $1`,
+		databaseID).Scan(&tenantID, &workspaceID, &ownerID, &nodeID, &databaseName)
+	if err != nil {
+		return fmt.Errorf("failed to get database info: %w", err)
+	}
+
+	// Generate containers and items from the UnifiedModel (now passing enrichedResp)
+	containers, items, err := unifiedmodel.PopulateResourcesFromUnifiedModel(um, databaseID, nodeID, tenantID, workspaceID, ownerID, databaseName, enrichedResp)
+	if err != nil {
+		return fmt.Errorf("failed to generate resources from UnifiedModel: %w", err)
+	}
+
+	w.logInfo("Generated %d containers and %d items for database %s", len(containers), len(items), databaseID)
+
+	// Delete existing containers and items for this database (cascade will delete items)
+	_, err = w.db.Pool().Exec(ctx,
+		"DELETE FROM resource_containers WHERE database_id = $1",
+		databaseID)
+	if err != nil {
+		return fmt.Errorf("failed to delete existing containers: %w", err)
+	}
+
+	// Create a map to associate container URIs with their IDs after insertion
+	containerURIToID := make(map[string]string)
+
+	// Insert containers
+	for _, container := range containers {
+		err = w.resourceRepo.CreateContainer(ctx, container)
+		if err != nil {
+			w.logError("Failed to create container %s: %v", container.ResourceURI, err)
+			// Continue with other containers even if one fails
+			continue
+		}
+		// Store the mapping after successful creation (container.ContainerID is now set by the DB)
+		containerURIToID[container.ResourceURI] = container.ContainerID
+	}
+
+	// Insert items - now with container_id set
+	for _, item := range items {
+		// Extract the container URI from the item URI
+		// Item URI format: redb://data/database/{dbID}/table/{tableName}/column/{columnName}
+		// Container URI format: redb://data/database/{dbID}/table/{tableName}
+		containerURI := extractContainerURIFromItemURI(item.ResourceURI)
+
+		// Set the container_id based on the mapping
+		if containerID, ok := containerURIToID[containerURI]; ok {
+			item.ContainerID = containerID
+		} else {
+			w.logError("Failed to find container ID for item %s (container URI: %s)", item.ResourceURI, containerURI)
+			continue
+		}
+
+		err = w.resourceRepo.CreateItem(ctx, item)
+		if err != nil {
+			w.logError("Failed to create item %s: %v", item.ResourceURI, err)
+			// Continue with other items even if one fails
+			continue
+		}
+	}
+
+	w.logInfo("Successfully populated %d containers and %d items for database %s", len(containers), len(items), databaseID)
+	return nil
+}
+
+// extractContainerURIFromItemURI extracts the container URI from an item URI
+// Item URI format examples:
+//   - redb://data/database/{dbID}/table/{tableName}/column/{columnName}
+//   - redb://data/database/{dbID}/collection/{collectionName}/field/{fieldName}
+//   - redb://data/database/{dbID}/view/{viewName}/column/{columnName}
+//
+// Container URI format:
+//   - redb://data/database/{dbID}/table/{tableName}
+//   - redb://data/database/{dbID}/collection/{collectionName}
+//   - redb://data/database/{dbID}/view/{viewName}
+func extractContainerURIFromItemURI(itemURI string) string {
+	// Find the last occurrence of a container type (table, collection, view, etc.)
+	// and extract everything up to and including its name
+
+	// Split by '/' to get segments
+	parts := strings.Split(itemURI, "/")
+
+	// We need to find patterns like: .../table/{name}/column/... or .../collection/{name}/field/...
+	// The container URI is everything up to and including the container name
+	for i := 0; i < len(parts)-2; i++ {
+		segment := parts[i]
+		// Check if this is a container type
+		if segment == "table" || segment == "collection" || segment == "view" ||
+			segment == "materialized_view" || segment == "graph_node" ||
+			segment == "graph_edge" || segment == "topic" || segment == "stream" {
+			// Container URI is everything up to and including the next segment (container name)
+			if i+1 < len(parts) {
+				return strings.Join(parts[:i+2], "/")
+			}
+		}
+	}
+
+	// Fallback: return the URI as-is (shouldn't happen with valid URIs)
+	return itemURI
 }

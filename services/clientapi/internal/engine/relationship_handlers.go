@@ -79,23 +79,28 @@ func (rh *RelationshipHandlers) ListRelationships(w http.ResponseWriter, r *http
 	relationships := make([]Relationship, len(grpcResp.Relationships))
 	for i, relationship := range grpcResp.Relationships {
 		relationships[i] = Relationship{
-			TenantID:                     relationship.TenantId,
-			WorkspaceID:                  relationship.WorkspaceId,
-			RelationshipID:               relationship.RelationshipId,
-			RelationshipName:             relationship.RelationshipName,
-			RelationshipDescription:      relationship.RelationshipDescription,
-			RelationshipType:             relationship.RelationshipType,
-			RelationshipSourceType:       "table", // Default value since not in proto
-			RelationshipTargetType:       "table", // Default value since not in proto
-			RelationshipSourceDatabaseID: relationship.RelationshipSourceDatabaseId,
-			RelationshipSourceTableName:  relationship.RelationshipSourceTableName,
-			RelationshipTargetDatabaseID: relationship.RelationshipTargetDatabaseId,
-			RelationshipTargetTableName:  relationship.RelationshipTargetTableName,
-			MappingID:                    relationship.MappingId,
-			PolicyID:                     relationship.PolicyId,
-			StatusMessage:                relationship.StatusMessage,
-			Status:                       convertStatus(relationship.Status),
-			OwnerID:                      relationship.OwnerId,
+			TenantID:                       relationship.TenantId,
+			WorkspaceID:                    relationship.WorkspaceId,
+			RelationshipID:                 relationship.RelationshipId,
+			RelationshipName:               relationship.RelationshipName,
+			RelationshipDescription:        relationship.RelationshipDescription,
+			RelationshipType:               relationship.RelationshipType,
+			RelationshipSourceType:         "table", // Default value since not in proto
+			RelationshipTargetType:         "table", // Default value since not in proto
+			RelationshipSourceDatabaseID:   relationship.RelationshipSourceDatabaseId,
+			RelationshipSourceTableName:    relationship.RelationshipSourceTableName,
+			RelationshipTargetDatabaseID:   relationship.RelationshipTargetDatabaseId,
+			RelationshipTargetTableName:    relationship.RelationshipTargetTableName,
+			MappingID:                      relationship.MappingId,
+			MappingName:                    relationship.MappingName,
+			PolicyID:                       relationship.PolicyId,
+			StatusMessage:                  relationship.StatusMessage,
+			Status:                         convertStatus(relationship.Status),
+			OwnerID:                        relationship.OwnerId,
+			RelationshipSourceDatabaseName: relationship.RelationshipSourceDatabaseName,
+			RelationshipTargetDatabaseName: relationship.RelationshipTargetDatabaseName,
+			RelationshipSourceDatabaseType: relationship.RelationshipSourceDatabaseType,
+			RelationshipTargetDatabaseType: relationship.RelationshipTargetDatabaseType,
 		}
 	}
 
@@ -157,23 +162,28 @@ func (rh *RelationshipHandlers) ShowRelationship(w http.ResponseWriter, r *http.
 
 	// Convert gRPC response to REST response
 	relationship := Relationship{
-		TenantID:                     grpcResp.Relationship.TenantId,
-		WorkspaceID:                  grpcResp.Relationship.WorkspaceId,
-		RelationshipID:               grpcResp.Relationship.RelationshipId,
-		RelationshipName:             grpcResp.Relationship.RelationshipName,
-		RelationshipDescription:      grpcResp.Relationship.RelationshipDescription,
-		RelationshipType:             grpcResp.Relationship.RelationshipType,
-		RelationshipSourceType:       "table", // Default value since not in proto
-		RelationshipTargetType:       "table", // Default value since not in proto
-		RelationshipSourceDatabaseID: grpcResp.Relationship.RelationshipSourceDatabaseId,
-		RelationshipSourceTableName:  grpcResp.Relationship.RelationshipSourceTableName,
-		RelationshipTargetDatabaseID: grpcResp.Relationship.RelationshipTargetDatabaseId,
-		RelationshipTargetTableName:  grpcResp.Relationship.RelationshipTargetTableName,
-		MappingID:                    grpcResp.Relationship.MappingId,
-		PolicyID:                     grpcResp.Relationship.PolicyId,
-		StatusMessage:                grpcResp.Relationship.StatusMessage,
-		Status:                       convertStatus(grpcResp.Relationship.Status),
-		OwnerID:                      grpcResp.Relationship.OwnerId,
+		TenantID:                       grpcResp.Relationship.TenantId,
+		WorkspaceID:                    grpcResp.Relationship.WorkspaceId,
+		RelationshipID:                 grpcResp.Relationship.RelationshipId,
+		RelationshipName:               grpcResp.Relationship.RelationshipName,
+		RelationshipDescription:        grpcResp.Relationship.RelationshipDescription,
+		RelationshipType:               grpcResp.Relationship.RelationshipType,
+		RelationshipSourceType:         "table", // Default value since not in proto
+		RelationshipTargetType:         "table", // Default value since not in proto
+		RelationshipSourceDatabaseID:   grpcResp.Relationship.RelationshipSourceDatabaseId,
+		RelationshipSourceTableName:    grpcResp.Relationship.RelationshipSourceTableName,
+		RelationshipTargetDatabaseID:   grpcResp.Relationship.RelationshipTargetDatabaseId,
+		RelationshipTargetTableName:    grpcResp.Relationship.RelationshipTargetTableName,
+		MappingID:                      grpcResp.Relationship.MappingId,
+		MappingName:                    grpcResp.Relationship.MappingName,
+		PolicyID:                       grpcResp.Relationship.PolicyId,
+		StatusMessage:                  grpcResp.Relationship.StatusMessage,
+		Status:                         convertStatus(grpcResp.Relationship.Status),
+		OwnerID:                        grpcResp.Relationship.OwnerId,
+		RelationshipSourceDatabaseName: grpcResp.Relationship.RelationshipSourceDatabaseName,
+		RelationshipTargetDatabaseName: grpcResp.Relationship.RelationshipTargetDatabaseName,
+		RelationshipSourceDatabaseType: grpcResp.Relationship.RelationshipSourceDatabaseType,
+		RelationshipTargetDatabaseType: grpcResp.Relationship.RelationshipTargetDatabaseType,
 	}
 
 	response := ShowRelationshipResponse{
@@ -258,23 +268,28 @@ func (rh *RelationshipHandlers) AddRelationship(w http.ResponseWriter, r *http.R
 
 	// Convert gRPC response to REST response
 	relationship := Relationship{
-		TenantID:                     grpcResp.Relationship.TenantId,
-		WorkspaceID:                  grpcResp.Relationship.WorkspaceId,
-		RelationshipID:               grpcResp.Relationship.RelationshipId,
-		RelationshipName:             grpcResp.Relationship.RelationshipName,
-		RelationshipDescription:      grpcResp.Relationship.RelationshipDescription,
-		RelationshipType:             grpcResp.Relationship.RelationshipType,
-		RelationshipSourceType:       "table", // Default value since not in proto
-		RelationshipTargetType:       "table", // Default value since not in proto
-		RelationshipSourceDatabaseID: grpcResp.Relationship.RelationshipSourceDatabaseId,
-		RelationshipSourceTableName:  grpcResp.Relationship.RelationshipSourceTableName,
-		RelationshipTargetDatabaseID: grpcResp.Relationship.RelationshipTargetDatabaseId,
-		RelationshipTargetTableName:  grpcResp.Relationship.RelationshipTargetTableName,
-		MappingID:                    grpcResp.Relationship.MappingId,
-		PolicyID:                     grpcResp.Relationship.PolicyId,
-		StatusMessage:                grpcResp.Relationship.StatusMessage,
-		Status:                       convertStatus(grpcResp.Relationship.Status),
-		OwnerID:                      grpcResp.Relationship.OwnerId,
+		TenantID:                       grpcResp.Relationship.TenantId,
+		WorkspaceID:                    grpcResp.Relationship.WorkspaceId,
+		RelationshipID:                 grpcResp.Relationship.RelationshipId,
+		RelationshipName:               grpcResp.Relationship.RelationshipName,
+		RelationshipDescription:        grpcResp.Relationship.RelationshipDescription,
+		RelationshipType:               grpcResp.Relationship.RelationshipType,
+		RelationshipSourceType:         "table", // Default value since not in proto
+		RelationshipTargetType:         "table", // Default value since not in proto
+		RelationshipSourceDatabaseID:   grpcResp.Relationship.RelationshipSourceDatabaseId,
+		RelationshipSourceTableName:    grpcResp.Relationship.RelationshipSourceTableName,
+		RelationshipTargetDatabaseID:   grpcResp.Relationship.RelationshipTargetDatabaseId,
+		RelationshipTargetTableName:    grpcResp.Relationship.RelationshipTargetTableName,
+		MappingID:                      grpcResp.Relationship.MappingId,
+		MappingName:                    grpcResp.Relationship.MappingName,
+		PolicyID:                       grpcResp.Relationship.PolicyId,
+		StatusMessage:                  grpcResp.Relationship.StatusMessage,
+		Status:                         convertStatus(grpcResp.Relationship.Status),
+		OwnerID:                        grpcResp.Relationship.OwnerId,
+		RelationshipSourceDatabaseName: grpcResp.Relationship.RelationshipSourceDatabaseName,
+		RelationshipTargetDatabaseName: grpcResp.Relationship.RelationshipTargetDatabaseName,
+		RelationshipSourceDatabaseType: grpcResp.Relationship.RelationshipSourceDatabaseType,
+		RelationshipTargetDatabaseType: grpcResp.Relationship.RelationshipTargetDatabaseType,
 	}
 
 	response := AddRelationshipResponse{
@@ -357,23 +372,28 @@ func (rh *RelationshipHandlers) ModifyRelationship(w http.ResponseWriter, r *htt
 
 	// Convert gRPC response to REST response
 	relationship := Relationship{
-		TenantID:                     grpcResp.Relationship.TenantId,
-		WorkspaceID:                  grpcResp.Relationship.WorkspaceId,
-		RelationshipID:               grpcResp.Relationship.RelationshipId,
-		RelationshipName:             grpcResp.Relationship.RelationshipName,
-		RelationshipDescription:      grpcResp.Relationship.RelationshipDescription,
-		RelationshipType:             grpcResp.Relationship.RelationshipType,
-		RelationshipSourceType:       "table", // Default value since not in proto
-		RelationshipTargetType:       "table", // Default value since not in proto
-		RelationshipSourceDatabaseID: grpcResp.Relationship.RelationshipSourceDatabaseId,
-		RelationshipSourceTableName:  grpcResp.Relationship.RelationshipSourceTableName,
-		RelationshipTargetDatabaseID: grpcResp.Relationship.RelationshipTargetDatabaseId,
-		RelationshipTargetTableName:  grpcResp.Relationship.RelationshipTargetTableName,
-		MappingID:                    grpcResp.Relationship.MappingId,
-		PolicyID:                     grpcResp.Relationship.PolicyId,
-		StatusMessage:                grpcResp.Relationship.StatusMessage,
-		Status:                       convertStatus(grpcResp.Relationship.Status),
-		OwnerID:                      grpcResp.Relationship.OwnerId,
+		TenantID:                       grpcResp.Relationship.TenantId,
+		WorkspaceID:                    grpcResp.Relationship.WorkspaceId,
+		RelationshipID:                 grpcResp.Relationship.RelationshipId,
+		RelationshipName:               grpcResp.Relationship.RelationshipName,
+		RelationshipDescription:        grpcResp.Relationship.RelationshipDescription,
+		RelationshipType:               grpcResp.Relationship.RelationshipType,
+		RelationshipSourceType:         "table", // Default value since not in proto
+		RelationshipTargetType:         "table", // Default value since not in proto
+		RelationshipSourceDatabaseID:   grpcResp.Relationship.RelationshipSourceDatabaseId,
+		RelationshipSourceTableName:    grpcResp.Relationship.RelationshipSourceTableName,
+		RelationshipTargetDatabaseID:   grpcResp.Relationship.RelationshipTargetDatabaseId,
+		RelationshipTargetTableName:    grpcResp.Relationship.RelationshipTargetTableName,
+		MappingID:                      grpcResp.Relationship.MappingId,
+		MappingName:                    grpcResp.Relationship.MappingName,
+		PolicyID:                       grpcResp.Relationship.PolicyId,
+		StatusMessage:                  grpcResp.Relationship.StatusMessage,
+		Status:                         convertStatus(grpcResp.Relationship.Status),
+		OwnerID:                        grpcResp.Relationship.OwnerId,
+		RelationshipSourceDatabaseName: grpcResp.Relationship.RelationshipSourceDatabaseName,
+		RelationshipTargetDatabaseName: grpcResp.Relationship.RelationshipTargetDatabaseName,
+		RelationshipSourceDatabaseType: grpcResp.Relationship.RelationshipSourceDatabaseType,
+		RelationshipTargetDatabaseType: grpcResp.Relationship.RelationshipTargetDatabaseType,
 	}
 
 	response := ModifyRelationshipResponse{

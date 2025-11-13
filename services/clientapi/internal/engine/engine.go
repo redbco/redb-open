@@ -61,6 +61,8 @@ type Engine struct {
 	templateClient       corev1.TemplateServiceClient
 	auditClient          corev1.AuditServiceClient
 	importExportClient   corev1.ImportExportServiceClient
+	resourceClient       corev1.ResourceServiceClient
+	dataProductClient    corev1.DataProductServiceClient
 	logger               *logger.Logger
 	state                struct {
 		sync.Mutex
@@ -161,6 +163,8 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.templateClient = corev1.NewTemplateServiceClient(coreConn)
 	e.auditClient = corev1.NewAuditServiceClient(coreConn)
 	e.importExportClient = corev1.NewImportExportServiceClient(coreConn)
+	e.resourceClient = corev1.NewResourceServiceClient(coreConn)
+	e.dataProductClient = corev1.NewDataProductServiceClient(coreConn)
 
 	// Connect to security service using dynamic address resolution
 	securityAddr := grpcconfig.GetServiceAddress(e.config, "security")

@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Database as DatabaseType } from '@/lib/api/types';
-import { Database, Server, Activity, Settings, Trash2, Power, Table } from 'lucide-react';
+import { Database, Server, Activity, Unplug } from 'lucide-react';
+import { DisconnectDatabaseDialog } from './DisconnectDatabaseDialog';
 
 interface DatabaseCardProps {
   database: DatabaseType;
@@ -13,6 +14,7 @@ interface DatabaseCardProps {
 
 export function DatabaseCard({ database, workspaceId, onUpdate }: DatabaseCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
@@ -44,7 +46,13 @@ export function DatabaseCard({ database, workspaceId, onUpdate }: DatabaseCardPr
             <VendorIcon className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h3 className="font-semibold text-foreground">{database.database_name}</h3>
+            <Link
+              href={`/workspaces/${workspaceId}/databases/${database.database_name}/schema`}
+              className="font-semibold text-foreground hover:text-primary transition-colors"
+              title="View Database Schema"
+            >
+              {database.database_name}
+            </Link>
             <p className="text-sm text-muted-foreground">{database.database_vendor}</p>
           </div>
         </div>
@@ -90,41 +98,20 @@ export function DatabaseCard({ database, workspaceId, onUpdate }: DatabaseCardPr
         )}
       </div>
 
-      <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="mt-4 pt-4 border-t border-border">
+        <div className="flex items-center justify-between">
           <button
             onClick={() => setIsExpanded(!isExpanded)}
             className="text-sm text-primary hover:text-primary/80 font-medium"
           >
             {isExpanded ? 'Hide Details' : 'View Details'}
           </button>
-          <Link
-            href={`/workspaces/${workspaceId}/databases/${database.database_name}/schema`}
-            className="inline-flex items-center gap-1 text-sm px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary/20 rounded-md transition-colors font-medium"
-            title="View Database Schema"
-          >
-            <Table className="h-3.5 w-3.5" />
-            View Schema
-          </Link>
-        </div>
-        <div className="flex items-center space-x-2">
           <button
-            className="p-2 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
-            title="Settings"
+            onClick={() => setShowDisconnectDialog(true)}
+            className="text-sm text-red-600 hover:text-red-700 dark:text-red-500 dark:hover:text-red-400 font-medium flex items-center gap-1"
           >
-            <Settings className="h-4 w-4" />
-          </button>
-          <button
-            className="p-2 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
-            title={database.database_enabled ? 'Disable' : 'Enable'}
-          >
-            <Power className="h-4 w-4" />
-          </button>
-          <button
-            className="p-2 rounded-md hover:bg-red-100 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-            title="Disconnect"
-          >
-            <Trash2 className="h-4 w-4" />
+            <Unplug className="h-3.5 w-3.5" />
+            Disconnect
           </button>
         </div>
       </div>
@@ -141,8 +128,8 @@ export function DatabaseCard({ database, workspaceId, onUpdate }: DatabaseCardPr
           </div>
           {database.database_version && (
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Version:</span>
-              <span className="font-medium text-foreground">{database.database_version}</span>
+              <span className="text-muted-foreground flex-shrink-0">Version:</span>
+              <span className="font-medium text-foreground truncate ml-2">{database.database_version}</span>
             </div>
           )}
           {database.database_username && (
@@ -158,6 +145,16 @@ export function DatabaseCard({ database, workspaceId, onUpdate }: DatabaseCardPr
             </div>
           )}
         </div>
+      )}
+
+      {/* Disconnect Dialog */}
+      {showDisconnectDialog && (
+        <DisconnectDatabaseDialog
+          database={database}
+          workspaceName={workspaceId}
+          onClose={() => setShowDisconnectDialog(false)}
+          onSuccess={onUpdate}
+        />
       )}
     </div>
   );

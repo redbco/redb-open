@@ -15,7 +15,8 @@ import {
   ArrowRightLeft,
   Link as LucideLink,
   GitBranch,
-  Layers
+  Layers,
+  Package
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useWorkspace } from '@/lib/hooks/useWorkspace';
@@ -71,6 +72,12 @@ const workspaceNavigationItems: NavItem[] = [
     description: 'Schema and table column mappings'
   },
   {
+    name: 'Data Inventory',
+    href: '/data-inventory',
+    icon: Package,
+    description: 'Explore and create data products'
+  },
+  {
     name: 'Relationships',
     href: '/relationships',
     icon: LucideLink,
@@ -110,7 +117,9 @@ export function WorkspaceSidebar({ workspaceId, isOpen, onToggle }: WorkspaceSid
       isOpen ? 'w-64' : 'w-16'
     }`}>
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className={`flex items-center border-b border-border p-4 ${
+        isOpen ? 'justify-between' : 'justify-center'
+      }`}>
         {isOpen && (
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
@@ -138,15 +147,15 @@ export function WorkspaceSidebar({ workspaceId, isOpen, onToggle }: WorkspaceSid
         </button>
       </div>
 
-      {/* Back to Workspaces */}
+      {/* Back to Overview */}
       {isOpen && (
         <div className="px-4 py-2 border-b border-border">
           <Link
-            href="/workspaces"
+            href="/overview"
             className="flex items-center space-x-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
-            <span>All Workspaces</span>
+            <span>System Overview</span>
           </Link>
         </div>
       )}
@@ -162,7 +171,9 @@ export function WorkspaceSidebar({ workspaceId, isOpen, onToggle }: WorkspaceSid
               <li key={item.name}>
                 <Link
                   href={`/workspaces/${workspaceId}${item.href}`}
-                  className={`flex items-center space-x-3 px-3 py-2 rounded-md transition-colors group ${
+                  className={`flex items-center rounded-md transition-colors group ${
+                    isOpen ? 'space-x-3 px-3' : 'justify-center px-0'
+                  } py-2 ${
                     active
                       ? 'bg-primary text-primary-foreground'
                       : 'text-muted-foreground hover:text-foreground hover:bg-accent'

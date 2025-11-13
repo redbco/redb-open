@@ -132,6 +132,8 @@ func (e *Engine) RegisterCoreServices() error {
 	corev1.RegisterTemplateServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterAuditServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterImportExportServiceServer(e.grpcServer, e.coreSvc)
+	corev1.RegisterResourceServiceServer(e.grpcServer, e.coreSvc)
+	corev1.RegisterDataProductServiceServer(e.grpcServer, e.coreSvc)
 
 	return nil
 }

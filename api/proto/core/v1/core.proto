@@ -97,9 +97,16 @@ service DatabaseService {
   rpc ReconnectDatabase(ReconnectDatabaseRequest) returns (ReconnectDatabaseResponse);
   rpc ModifyDatabase(ModifyDatabaseRequest) returns (ModifyDatabaseResponse);
   rpc DisconnectDatabase(DisconnectDatabaseRequest) returns (DisconnectDatabaseResponse);
+  rpc GetDatabaseDisconnectMetadata(GetDatabaseDisconnectMetadataRequest) returns (GetDatabaseDisconnectMetadataResponse);
   rpc GetLatestStoredDatabaseSchema(GetLatestStoredDatabaseSchemaRequest) returns (GetLatestStoredDatabaseSchemaResponse);
   rpc WipeDatabase(WipeDatabaseRequest) returns (WipeDatabaseResponse);
   rpc DropDatabase(DropDatabaseRequest) returns (DropDatabaseResponse);
+  
+  // Table data operations
+  rpc FetchTableData(FetchTableDataRequest) returns (FetchTableDataResponse);
+  rpc WipeTable(WipeTableRequest) returns (WipeTableResponse);
+  rpc DropTable(DropTableRequest) returns (DropTableResponse);
+  rpc UpdateTableData(UpdateTableDataRequest) returns (UpdateTableDataResponse);
 
   // Data transformation services
   rpc TransformData(TransformDataRequest) returns (TransformDataResponse) {}
@@ -114,6 +121,34 @@ service DatabaseService {
   // Schema deployment services
   rpc CloneDatabase(CloneDatabaseRequest) returns (CloneDatabaseResponse);
   rpc CloneDatabaseRemote(CloneDatabaseRemoteRequest) returns (CloneDatabaseRemoteResponse);
+}
+
+// Resource service for resource container and item management
+service ResourceService {
+  // Container operations
+  rpc GetResourceContainer(GetResourceContainerRequest) returns (GetResourceContainerResponse);
+  rpc GetResourceContainerByURI(GetResourceContainerByURIRequest) returns (GetResourceContainerByURIResponse);
+  rpc ListResourceContainers(ListResourceContainersRequest) returns (ListResourceContainersResponse);
+  rpc UpdateResourceContainerStatus(UpdateResourceContainerStatusRequest) returns (UpdateResourceContainerStatusResponse);
+  
+  // Item operations
+  rpc GetResourceItem(GetResourceItemRequest) returns (GetResourceItemResponse);
+  rpc GetResourceItemByURI(GetResourceItemByURIRequest) returns (GetResourceItemByURIResponse);
+  rpc ListResourceItems(ListResourceItemsRequest) returns (ListResourceItemsResponse);
+  rpc ListPrivilegedItems(ListPrivilegedItemsRequest) returns (ListPrivilegedItemsResponse);
+  rpc ModifyResourceItem(ModifyResourceItemRequest) returns (ModifyResourceItemResponse);
+  
+  // Search operations
+  rpc SearchResources(SearchResourcesRequest) returns (SearchResourcesResponse);
+}
+
+// DataProduct service for data product management (data-as-a-product)
+service DataProductService {
+  rpc ListDataProducts(ListDataProductsRequest) returns (ListDataProductsResponse);
+  rpc GetDataProduct(GetDataProductRequest) returns (GetDataProductResponse);
+  rpc CreateDataProduct(CreateDataProductRequest) returns (CreateDataProductResponse);
+  rpc ModifyDataProduct(ModifyDataProductRequest) returns (ModifyDataProductResponse);
+  rpc DeleteDataProduct(DeleteDataProductRequest) returns (DeleteDataProductResponse);
 }
 
 // Repo service for repository management
@@ -1502,6 +1537,8 @@ message DisconnectDatabaseRequest {
     string database_name = 3;
     optional bool delete_database_object = 4;
     optional bool delete_repo = 5;
+    optional bool delete_branch = 6;
+    optional bool disconnect_instance = 7;
 }
 
 // Disconnect a database response
@@ -1509,6 +1546,34 @@ message DisconnectDatabaseResponse {
     string message = 1;
     bool success = 2;
     redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Get database disconnect metadata request
+message GetDatabaseDisconnectMetadataRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+}
+
+// Get database disconnect metadata response
+message GetDatabaseDisconnectMetadataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_name = 4;
+    string instance_name = 5;
+    bool is_last_database_in_instance = 6;
+    int32 total_databases_in_instance = 7;
+    bool has_attached_branch = 8;
+    string attached_repo_name = 9;
+    string attached_branch_name = 10;
+    bool is_only_branch_in_repo = 11;
+    int32 total_branches_in_repo = 12;
+    bool has_other_databases_on_branch = 13;
+    bool can_delete_branch_only = 14;
+    bool can_delete_entire_repo = 15;
+    bool should_delete_repo = 16;
+    bool should_delete_branch = 17;
 }
 
 // Get the latest stored database schema request
@@ -1538,6 +1603,106 @@ message WipeDatabaseResponse {
     string message = 1;
     bool success = 2;
     redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Fetch table data with pagination
+message FetchTableDataRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+    string table_name = 4;
+    int32 page = 5;  // 1-based page number
+    int32 page_size = 6;  // Number of rows per page (default 25)
+}
+
+message ColumnPrivilegedInfo {
+    string column_name = 1;
+    bool is_privileged = 2;
+    string privileged_classification = 3;  // pii, phi, pci, secrets, etc.
+    float detection_confidence = 4;  // 0.0 to 1.0
+}
+
+message TableColumnSchema {
+    string name = 1;
+    string data_type = 2;
+    bool is_nullable = 3;
+    bool is_primary_key = 4;
+    bool is_unique = 5;
+    bool is_indexed = 6;
+    string default_value = 7;
+    repeated string constraints = 8;
+    bool is_privileged = 9;
+    string privileged_classification = 10;
+    float privileged_confidence = 11;
+    string data_category = 12;
+    float classification_confidence = 13;
+    int32 ordinal_position = 14;
+    string item_display_name = 15;
+    string unified_data_type = 16;
+    bool is_required = 17;
+    bool is_array = 18;
+    string detection_method = 19;
+    int32 max_length = 20;
+    int32 precision = 21;
+    int32 scale = 22;
+    string item_comment = 23;
+}
+
+message FetchTableDataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    bytes data = 4;  // JSON encoded array of row objects
+    int64 total_rows = 5;  // Total number of rows in the table
+    int32 page = 6;
+    int32 page_size = 7;
+    int32 total_pages = 8;
+    repeated TableColumnSchema column_schemas = 10;  // Full column schema information including privileged data
+}
+
+// Wipe table data
+message WipeTableRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+    string table_name = 4;
+}
+
+message WipeTableResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    int64 rows_affected = 4;
+}
+
+// Drop table
+message DropTableRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+    string table_name = 4;
+}
+
+message DropTableResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Update table data
+message UpdateTableDataRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string database_name = 3;
+    string table_name = 4;
+    bytes updates = 5;  // JSON encoded array of update operations: [{where: {...}, set: {...}}]
+}
+
+message UpdateTableDataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    int64 rows_affected = 4;
 }
 
 // Add a database to an instance request
@@ -2024,6 +2189,12 @@ message DeployCommitResponse {
 
 // Mapping messages
 
+// Relationship info for mapping responses
+message RelationshipInfo {
+    string relationship_name = 1;
+    redbco.redbopen.common.v1.Status status = 2;
+}
+
 // The mapping object
 message Mapping {
     string tenant_id = 1;
@@ -2040,6 +2211,28 @@ message Mapping {
     string validated_at = 12;
     repeated string validation_errors = 13;
     repeated string validation_warnings = 14;
+    string mapping_source_type = 15;
+    string mapping_target_type = 16;
+    string mapping_source_identifier = 17;
+    string mapping_target_identifier = 18;
+    string mapping_object = 19;  // JSON string
+    repeated string relationship_names = 20;
+    repeated string mcp_resource_names = 21;
+    repeated string mcp_tool_names = 22;
+    string mapping_source_container_id = 23; // Source container ID (foreign key to resource_containers)
+    string mapping_target_container_id = 24; // Target container ID (foreign key to resource_containers)
+    repeated MappingFilter filters = 25; // Data filters for the mapping
+    repeated RelationshipInfo relationship_infos = 26; // Relationship names and statuses
+}
+
+// Mapping filter message
+message MappingFilter {
+    string filter_id = 1;
+    string mapping_id = 2;
+    string filter_type = 3; // 'where_clause', 'column_condition', 'json_path', 'null_check', 'range'
+    string filter_expression = 4; // JSON string containing the filter expression
+    int32 filter_order = 5;
+    string filter_operator = 6; // 'AND' or 'OR' - how to combine with other filters
 }
 
 // Show a mapping request
@@ -2076,6 +2269,8 @@ message AddMappingRequest {
     string target = 7;  // database_name[.table_name]
     optional string policy_id = 8;
     string owner_id = 9;
+    bool generate_rules = 10;  // Default true for backward compatibility
+    repeated MappingFilter filters = 11; // Optional data filters for the mapping
 }
 
 // Add a database mapping request
@@ -2198,14 +2393,17 @@ message MappingRule {
     string mapping_rule_description = 5;
     string mapping_rule_metadata = 6;
     repeated string mapping_names = 7;
-    string mapping_rule_source = 8;
-    string mapping_rule_target = 9;
+    string mapping_rule_source = 8; // Deprecated: use source_item_uris
+    string mapping_rule_target = 9; // Deprecated: use target_item_uris
     string mapping_rule_transformation_id = 10;
     string mapping_rule_transformation_name = 11;
     string mapping_rule_transformation_options = 12;
     string owner_id = 13;
     int32 mapping_count = 14;
     repeated Mapping mappings = 15;
+    string mapping_rule_cardinality = 16; // 'one-to-one', 'one-to-many', 'many-to-one', 'many-to-many', 'generator', 'sink'
+    repeated string source_item_uris = 17; // Multiple source item URIs
+    repeated string target_item_uris = 18; // Multiple target item URIs
 }
 
 // Add a mapping rule request
@@ -2214,12 +2412,15 @@ message AddMappingRuleRequest {
     string workspace_name = 2;
     string mapping_rule_name = 3;
     string mapping_rule_description = 4;
-    string mapping_rule_source = 5;
-    string mapping_rule_target = 6;
+    string mapping_rule_source = 5; // Deprecated: use source_item_uris
+    string mapping_rule_target = 6; // Deprecated: use target_item_uris
     string mapping_rule_transformation_name = 7;
     string mapping_rule_transformation_options = 8;
     string mapping_rule_metadata = 9;
     string owner_id = 10;
+    string mapping_rule_cardinality = 11; // 'one-to-one', 'one-to-many', 'many-to-one', 'many-to-many', 'generator', 'sink'
+    repeated string source_item_uris = 12; // Multiple source item URIs (for flexible cardinality)
+    repeated string target_item_uris = 13; // Multiple target item URIs (for flexible cardinality)
 }
 
 // Add a mapping rule response
@@ -2365,6 +2566,11 @@ message Relationship {
     string status_message = 13;
     redbco.redbopen.common.v1.Status status = 14;
     string owner_id = 15;
+    string mapping_name = 16;
+    string relationship_source_database_name = 17;
+    string relationship_target_database_name = 18;
+    string relationship_source_database_type = 19;
+    string relationship_target_database_type = 20;
 }
 
 // Show all relationships request
@@ -4292,6 +4498,387 @@ message CloneDatabaseRemoteResponse {
     string target_commit_id = 7;
     repeated string warnings = 8;
     int64 rows_copied = 9; // Number of rows copied if with_data was true
+}
+
+// ============================================================================
+// RESOURCE REGISTRY MESSAGES
+// ============================================================================
+
+// ResourceContainer represents a container-level resource
+message ResourceContainer {
+    string container_id = 1;
+    string tenant_id = 2;
+    string workspace_id = 3;
+    string resource_uri = 4;
+    string protocol = 5; // redb, stream, webhook, mcp
+    string scope = 6; // data, metadata, schema
+    string object_type = 7; // table, collection, node, topic, etc.
+    string object_name = 8;
+    string database_id = 9;
+    string instance_id = 10;
+    string integration_id = 11;
+    string mcpserver_id = 12;
+    string connected_to_node_id = 13;
+    string owner_id = 14;
+    string status = 15;
+    string status_message = 16;
+    string last_seen = 17;
+    bool online = 18;
+    google.protobuf.Struct container_metadata = 19;
+    google.protobuf.Struct enriched_metadata = 20;
+    string database_type = 21;
+    string vendor = 22;
+    int32 item_count = 23;
+    int64 size_bytes = 24;
+    string created = 25;
+    string updated = 26;
+}
+
+// ResourceItem represents an item-level resource
+message ResourceItem {
+    string item_id = 1;
+    string container_id = 2;
+    string tenant_id = 3;
+    string workspace_id = 4;
+    string resource_uri = 5;
+    string protocol = 6;
+    string scope = 7;
+    string item_type = 8; // column, field, property, parameter, etc.
+    string item_name = 9;
+    repeated string item_path = 10;
+    string data_type = 11;
+    string unified_data_type = 12;
+    bool is_nullable = 13;
+    bool is_primary_key = 14;
+    bool is_unique = 15;
+    bool is_indexed = 16;
+    bool is_required = 17;
+    bool is_array = 18;
+    int32 array_dimensions = 19;
+    string default_value = 20;
+    google.protobuf.Struct constraints = 21;
+    
+    // Custom type definitions
+    bool is_custom_type = 22;
+    string custom_type_name = 23;
+    google.protobuf.Struct custom_type_definition = 24;
+    
+    // Schema definition
+    bool has_schema = 25;
+    string schema_format = 26;
+    google.protobuf.Struct schema_definition = 27;
+    string schema_version = 28;
+    int32 schema_evolution_version = 29;
+    string schema_validation_mode = 30;
+    string schema_mismatch_action = 31;
+    bool allow_new_fields = 32;
+    bool allow_field_type_widening = 33;
+    bool allow_field_removal = 34;
+    google.protobuf.Struct schema_evolution_log = 35;
+    
+    // Nested structure
+    google.protobuf.Struct nested_items = 36;
+    
+    // Type properties
+    int32 max_length = 37;
+    int32 precision = 38;
+    int32 scale = 39;
+    
+    // Metadata
+    string connected_to_node_id = 40;
+    string status = 41;
+    bool online = 42;
+    google.protobuf.Struct item_metadata = 43;
+    google.protobuf.Struct enriched_metadata = 44;
+    string item_comment = 45;
+    
+    // Privileged data
+    bool is_privileged = 46;
+    string privileged_classification = 47;
+    double detection_confidence = 48;
+    string detection_method = 49;
+    
+    // Position
+    int32 ordinal_position = 50;
+    
+    // Display name (user-editable)
+    string item_display_name = 51;
+    
+    // Timestamps
+    string created = 52;
+    string updated = 53;
+}
+
+// Resource filter for querying
+message ResourceContainerFilter {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string database_id = 3;
+    string instance_id = 4;
+    string integration_id = 5;
+    string mcpserver_id = 6;
+    string node_id = 7;
+    string protocol = 8;
+    string scope = 9;
+    string object_type = 10;
+    string database_type = 11;
+    string status = 12;
+    bool online = 13;
+    int32 limit = 14;
+    int32 offset = 15;
+}
+
+message ResourceItemFilter {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string container_id = 3;
+    string node_id = 4;
+    string protocol = 5;
+    string scope = 6;
+    string item_type = 7;
+    string data_type = 8;
+    string unified_data_type = 9;
+    bool is_primary_key = 10;
+    bool is_unique = 11;
+    bool is_indexed = 12;
+    bool is_privileged = 13;
+    string privileged_classification = 14;
+    bool is_custom_type = 15;
+    bool has_schema = 16;
+    string schema_format = 17;
+    bool online = 18;
+    string status = 19;
+    int32 limit = 20;
+    int32 offset = 21;
+}
+
+// Get resource container by ID
+message GetResourceContainerRequest {
+    string container_id = 1;
+}
+
+message GetResourceContainerResponse {
+    ResourceContainer container = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Get resource container by URI
+message GetResourceContainerByURIRequest {
+    string uri = 1;
+}
+
+message GetResourceContainerByURIResponse {
+    ResourceContainer container = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// List resource containers
+message ListResourceContainersRequest {
+    ResourceContainerFilter filter = 1;
+}
+
+message ListResourceContainersResponse {
+    repeated ResourceContainer containers = 1;
+    int32 total_count = 2;
+    string message = 3;
+    bool success = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// Update resource container status
+message UpdateResourceContainerStatusRequest {
+    string container_id = 1;
+    bool online = 2;
+    string status = 3;
+    string status_message = 4;
+}
+
+message UpdateResourceContainerStatusResponse {
+    bool success = 1;
+    string message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+}
+
+// Get resource item by ID
+message GetResourceItemRequest {
+    string item_id = 1;
+}
+
+message GetResourceItemResponse {
+    ResourceItem item = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Get resource item by URI
+message GetResourceItemByURIRequest {
+    string uri = 1;
+}
+
+message GetResourceItemByURIResponse {
+    ResourceItem item = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// List resource items
+message ListResourceItemsRequest {
+    ResourceItemFilter filter = 1;
+}
+
+message ListResourceItemsResponse {
+    repeated ResourceItem items = 1;
+    int32 total_count = 2;
+    string message = 3;
+    bool success = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// List privileged items
+message ListPrivilegedItemsRequest {
+    string workspace_id = 1;
+    string database_id = 2;
+    int32 limit = 3;
+    int32 offset = 4;
+}
+
+message ListPrivilegedItemsResponse {
+    repeated ResourceItem items = 1;
+    int32 total_count = 2;
+    string message = 3;
+    bool success = 4;
+    redbco.redbopen.common.v1.Status status = 5;
+}
+
+// Modify resource item
+message ModifyResourceItemRequest {
+    string item_id = 1;
+    optional string item_display_name = 2;
+}
+
+message ModifyResourceItemResponse {
+    ResourceItem item = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Search resources
+message SearchResourcesRequest {
+    string workspace_id = 1;
+    string query = 2;
+    string resource_type = 3; // container, item, or empty for both
+    int32 limit = 4;
+    int32 offset = 5;
+}
+
+message SearchResourcesResponse {
+    repeated ResourceContainer containers = 1;
+    repeated ResourceItem items = 2;
+    int32 total_count = 3;
+    string message = 4;
+    bool success = 5;
+    redbco.redbopen.common.v1.Status status = 6;
+}
+
+// ============================================================================
+// DataProduct - Virtual data products (data-as-a-product)
+// ============================================================================
+
+message DataProduct {
+    string product_id = 1;
+    string tenant_id = 2;
+    string workspace_id = 3;
+    string product_name = 4;
+    string product_description = 5;
+    repeated ResourceItem resource_items = 6;
+    google.protobuf.Struct metadata = 7;
+    string owner_id = 8;
+    string status = 9;
+    string created = 10;
+    string updated = 11;
+}
+
+// List data products
+message ListDataProductsRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+}
+
+message ListDataProductsResponse {
+    repeated DataProduct data_products = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Get data product
+message GetDataProductRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string product_name = 3;
+}
+
+message GetDataProductResponse {
+    DataProduct data_product = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Create data product
+message CreateDataProductRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string product_name = 3;
+    string product_description = 4;
+    repeated string resource_item_ids = 5;
+    google.protobuf.Struct metadata = 6;
+    string owner_id = 7;
+}
+
+message CreateDataProductResponse {
+    DataProduct data_product = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify data product
+message ModifyDataProductRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string product_name = 3;
+    string product_description = 4;
+    repeated string resource_item_ids = 5;
+    google.protobuf.Struct metadata = 6;
+    string status = 7;
+}
+
+message ModifyDataProductResponse {
+    DataProduct data_product = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Delete data product
+message DeleteDataProductRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string product_name = 3;
+}
+
+message DeleteDataProductResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
 }
 
 // ============================================================================

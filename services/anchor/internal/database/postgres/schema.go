@@ -481,6 +481,7 @@ func discoverTablesAndColumnsUnified(pool *pgxpool.Pool, um *unifiedmodel.Unifie
             t.table_schema,
             t.table_name,
             c.column_name,
+            c.ordinal_position,
             c.data_type,
             c.is_nullable,
             c.column_default,
@@ -588,13 +589,14 @@ func discoverTablesAndColumnsUnified(pool *pgxpool.Pool, um *unifiedmodel.Unifie
 
 	for rows.Next() {
 		var schemaName, tableName, columnName, dataType, isNullable string
+		var ordinalPosition int
 		var columnDefault, arrayElementType, customTypeName, parentTable, partitionValue sql.NullString
 		var atttypmod sql.NullInt64
 		var isPrimaryKey, isArray, isUnique, isAutoIncrement bool
 		var tableType string
 
 		if err := rows.Scan(
-			&schemaName, &tableName, &columnName, &dataType, &isNullable, &columnDefault, &customTypeName,
+			&schemaName, &tableName, &columnName, &ordinalPosition, &dataType, &isNullable, &columnDefault, &customTypeName,
 			&arrayElementType, &atttypmod, &isPrimaryKey, &isArray, &isUnique, &isAutoIncrement, &tableType, &parentTable, &partitionValue,
 		); err != nil {
 			return fmt.Errorf("error scanning table and column row: %v", err)
@@ -613,11 +615,12 @@ func discoverTablesAndColumnsUnified(pool *pgxpool.Pool, um *unifiedmodel.Unifie
 
 		// Create column
 		column := unifiedmodel.Column{
-			Name:          columnName,
-			DataType:      dataType,
-			Nullable:      isNullable == "YES",
-			IsPrimaryKey:  isPrimaryKey,
-			AutoIncrement: isAutoIncrement,
+			Name:            columnName,
+			DataType:        dataType,
+			Nullable:        isNullable == "YES",
+			IsPrimaryKey:    isPrimaryKey,
+			AutoIncrement:   isAutoIncrement,
+			OrdinalPosition: &ordinalPosition,
 		}
 
 		if columnDefault.Valid {

@@ -9,7 +9,13 @@ import type {
   ConnectDatabaseResponse,
   ModifyDatabaseRequest,
   DisconnectDatabaseRequest,
+  GetDatabaseDisconnectMetadataResponse,
   GetDatabaseSchemaResponse,
+  FetchTableDataResponse,
+  WipeTableResponse,
+  DropTableResponse,
+  UpdateTableDataRequest,
+  UpdateTableDataResponse,
   ListInstancesResponse,
   ShowInstanceResponse,
   ConnectInstanceRequest,
@@ -22,11 +28,16 @@ import type {
   CreateDatabaseMappingRequest,
   CreateMappingResponse,
   ModifyMappingRequest,
+  ValidateMappingResponse,
   ListRelationshipsResponse,
   ShowRelationshipResponse,
   CreateRelationshipRequest,
   CreateRelationshipResponse,
   ModifyRelationshipRequest,
+  StartRelationshipRequest,
+  StartRelationshipResponse,
+  StopRelationshipResponse,
+  GetRelationshipMetricsResponse,
   ListWorkspacesResponse,
   AddMCPServerRequest,
   AddMCPServerResponse,
@@ -96,6 +107,10 @@ import type {
   ChangePasswordResponse,
   ListSessionsResponse,
   LogoutSessionResponse,
+  ListResourceContainersResponse,
+  ListResourceItemsResponse,
+  Webhook,
+  Stream,
 } from './types';
 
 // Authentication Endpoints
@@ -141,6 +156,11 @@ export const databaseEndpoints = {
       request
     ),
 
+  getDisconnectMetadata: (workspaceName: string, databaseName: string) =>
+    apiClient.get<GetDatabaseDisconnectMetadataResponse>(
+      `api/v1/workspaces/${workspaceName}/databases/${databaseName}/disconnect-metadata`
+    ),
+
   getSchema: (workspaceName: string, databaseName: string) =>
     apiClient.get<GetDatabaseSchemaResponse>(`api/v1/workspaces/${workspaceName}/databases/${databaseName}/schema`),
 
@@ -152,6 +172,28 @@ export const databaseEndpoints = {
   drop: (workspaceName: string, databaseName: string) =>
     apiClient.post<{ success: boolean; message: string }>(
       `api/v1/workspaces/${workspaceName}/databases/${databaseName}/drop`
+    ),
+
+  // Table data operations
+  fetchTableData: (workspaceName: string, databaseName: string, tableName: string, page: number = 1, pageSize: number = 25) =>
+    apiClient.get<FetchTableDataResponse>(
+      `api/v1/workspaces/${workspaceName}/databases/${databaseName}/tables/${tableName}/data?page=${page}&page_size=${pageSize}`
+    ),
+
+  wipeTable: (workspaceName: string, databaseName: string, tableName: string) =>
+    apiClient.post<WipeTableResponse>(
+      `api/v1/workspaces/${workspaceName}/databases/${databaseName}/tables/${tableName}/wipe`
+    ),
+
+  dropTable: (workspaceName: string, databaseName: string, tableName: string) =>
+    apiClient.post<DropTableResponse>(
+      `api/v1/workspaces/${workspaceName}/databases/${databaseName}/tables/${tableName}/drop`
+    ),
+
+  updateTableData: (workspaceName: string, databaseName: string, tableName: string, request: UpdateTableDataRequest) =>
+    apiClient.put<UpdateTableDataResponse>(
+      `api/v1/workspaces/${workspaceName}/databases/${databaseName}/tables/${tableName}/data`,
+      request
     ),
 };
 
@@ -208,6 +250,12 @@ export const mappingEndpoints = {
     apiClient.delete<{ success: boolean; message: string }>(
       `api/v1/workspaces/${workspaceName}/mappings/${mappingId}`
     ),
+
+  validate: (workspaceName: string, mappingName: string) =>
+    apiClient.post<ValidateMappingResponse>(
+      `api/v1/workspaces/${workspaceName}/mappings/${mappingName}/validate`,
+      {}
+    ),
 };
 
 // Relationship Endpoints
@@ -230,6 +278,28 @@ export const relationshipEndpoints = {
   delete: (workspaceName: string, relationshipId: string) =>
     apiClient.delete<{ success: boolean; message: string }>(
       `api/v1/workspaces/${workspaceName}/relationships/${relationshipId}`
+    ),
+
+  start: (workspaceName: string, relationshipName: string, request?: StartRelationshipRequest) =>
+    apiClient.post<StartRelationshipResponse>(
+      `api/v1/workspaces/${workspaceName}/relationships/${relationshipName}/start`,
+      request || {}
+    ),
+
+  stop: (workspaceName: string, relationshipName: string) =>
+    apiClient.post<StopRelationshipResponse>(
+      `api/v1/workspaces/${workspaceName}/relationships/${relationshipName}/stop`,
+      {}
+    ),
+
+  remove: (workspaceName: string, relationshipName: string, force?: boolean) => {
+    const url = `api/v1/workspaces/${workspaceName}/relationships/${relationshipName}/remove${force ? '?force=true' : ''}`;
+    return apiClient.delete<{ success: boolean; message: string }>(url);
+  },
+
+  getMetrics: (workspaceName: string, relationshipName: string) =>
+    apiClient.get<GetRelationshipMetricsResponse>(
+      `api/v1/workspaces/${workspaceName}/relationships/${relationshipName}/metrics`
     ),
 };
 
@@ -279,6 +349,14 @@ export const branchEndpoints = {
   show: (workspaceName: string, repoName: string, branchName: string) =>
     apiClient.get<ShowBranchResponse>(
       `api/v1/workspaces/${workspaceName}/repos/${repoName}/branches/${branchName}`
+    ),
+};
+
+// Commit Endpoints
+export const commitEndpoints = {
+  show: (workspaceName: string, repoName: string, branchName: string, commitCode: string) =>
+    apiClient.get<ShowCommitResponse>(
+      `api/v1/workspaces/${workspaceName}/repos/${repoName}/branches/${branchName}/commits/${commitCode}`
     ),
 };
 
@@ -469,6 +547,100 @@ export const userEndpoints = {
     apiClient.post<{ success: boolean; message: string }>('api/v1/auth/sessions/logout-all'),
 };
 
+// Resource Endpoints (for resource containers and items)
+export const resourceEndpoints = {
+  listContainers: (workspaceName: string, filters?: ResourceContainerFilter) => {
+    const params = new URLSearchParams();
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          params.append(key, String(value));
+        }
+      });
+    }
+    const queryString = params.toString();
+    return apiClient.get<ListResourceContainersResponse>(
+      `api/v1/workspaces/${workspaceName}/resources/containers${queryString ? `?${queryString}` : ''}`
+    );
+  },
+
+  showContainer: (workspaceName: string, containerId: string) =>
+    apiClient.get<ShowResourceContainerResponse>(
+      `api/v1/workspaces/${workspaceName}/resources/containers/${containerId}`
+    ),
+
+  listItems: (workspaceName: string, filters?: ResourceItemFilter) => {
+    const params = new URLSearchParams();
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          params.append(key, String(value));
+        }
+      });
+    }
+    const queryString = params.toString();
+    return apiClient.get<ListResourceItemsResponse>(
+      `api/v1/workspaces/${workspaceName}/resources/items${queryString ? `?${queryString}` : ''}`
+    );
+  },
+
+  listItemsForContainer: (workspaceName: string, containerId: string) =>
+    apiClient.get<ListResourceItemsResponse>(
+      `api/v1/workspaces/${workspaceName}/resources/containers/${containerId}/items`
+    ),
+
+  modifyItem: (workspaceName: string, itemId: string, data: { item_display_name?: string }) =>
+    apiClient.patch<{ success: boolean; message: string; item: ResourceItem }>(
+      `api/v1/workspaces/${workspaceName}/resources/items/${itemId}`,
+      data
+    ),
+};
+
+// Data Product Endpoints
+export const dataProductEndpoints = {
+  list: (workspaceName: string) =>
+    apiClient.get<ListDataProductsResponse>(`api/v1/workspaces/${workspaceName}/dataproducts`),
+
+  show: (workspaceName: string, productName: string) =>
+    apiClient.get<ShowDataProductResponse>(`api/v1/workspaces/${workspaceName}/dataproducts/${productName}`),
+
+  create: (workspaceName: string, request: CreateDataProductRequest) =>
+    apiClient.post<CreateDataProductResponse>(`api/v1/workspaces/${workspaceName}/dataproducts`, request),
+
+  modify: (workspaceName: string, productName: string, request: ModifyDataProductRequest) =>
+    apiClient.put<ModifyDataProductResponse>(
+      `api/v1/workspaces/${workspaceName}/dataproducts/${productName}`,
+      request
+    ),
+
+  delete: (workspaceName: string, productName: string) =>
+    apiClient.delete<DeleteDataProductResponse>(
+      `api/v1/workspaces/${workspaceName}/dataproducts/${productName}`
+    ),
+};
+
+// Webhook Endpoints (Placeholders)
+export const webhookEndpoints = {
+  list: (workspaceName: string) =>
+    // Placeholder: Returns empty array until webhooks are implemented
+    Promise.resolve({ webhooks: [] as Webhook[] }),
+
+  show: (workspaceName: string, webhookId: string) =>
+    // Placeholder: Returns 404 until webhooks are implemented
+    Promise.reject(new Error('Webhooks not yet implemented')),
+};
+
+// Stream Endpoints (Placeholders)
+export const streamEndpoints = {
+  list: (workspaceName: string) =>
+    // Placeholder: Returns empty array until streams are implemented
+    Promise.resolve({ streams: [] as Stream[] }),
+
+  show: (workspaceName: string, streamId: string) =>
+    // Placeholder: Returns 404 until streams are implemented
+    Promise.reject(new Error('Streams not yet implemented')),
+};
+
 // Export all endpoints
 export const api = {
   auth: authEndpoints,
@@ -480,6 +652,7 @@ export const api = {
   mcpServers: mcpServerEndpoints,
   repositories: repositoryEndpoints,
   branches: branchEndpoints,
+  commits: commitEndpoints,
   environments: environmentEndpoints,
   mesh: meshEndpoints,
   regions: regionEndpoints,
@@ -488,5 +661,9 @@ export const api = {
   mcpTools: mcpToolEndpoints,
   mcpResources: mcpResourceEndpoints,
   users: userEndpoints,
+  resources: resourceEndpoints,
+  dataProducts: dataProductEndpoints,
+  webhooks: webhookEndpoints,
+  streams: streamEndpoints,
 };
 

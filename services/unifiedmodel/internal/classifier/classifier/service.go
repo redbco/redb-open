@@ -3,6 +3,7 @@ package classifier
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	pb "github.com/redbco/redb-open/api/proto/unifiedmodel/v1"
@@ -89,7 +90,8 @@ func (s *Service) Classify(ctx context.Context, req *pb.ClassifyRequest) (*pb.Cl
 		// Adjust confidence based on score gap
 		if len(filteredScores) > 1 {
 			gap := filteredScores[0].Score - filteredScores[1].Score
-			response.Confidence = filteredScores[0].Score + gap*0.3
+			// Clamp confidence to [0, 1] to prevent values exceeding 1.0
+			response.Confidence = math.Max(0, math.Min(1, filteredScores[0].Score+gap*0.3))
 		}
 	}
 

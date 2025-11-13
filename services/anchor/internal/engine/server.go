@@ -489,8 +489,17 @@ func (s *Server) FetchData(ctx context.Context, req *pb.FetchDataRequest) (*pb.F
 	// Set default limit (can be made configurable from options if needed)
 	limit := 100 // Default limit for data fetching
 
-	// TODO: Parse limit from req.Options if provided
-	// For now, use default limit
+	// Parse options for pagination if provided
+	if len(req.Options) > 0 {
+		var options map[string]interface{}
+		if err := json.Unmarshal(req.Options, &options); err == nil {
+			if limitVal, ok := options["limit"].(float64); ok {
+				limit = int(limitVal)
+			}
+			// Note: offset is parsed but not currently used by adapters
+			// Most adapters don't support offset-based pagination natively
+		}
+	}
 
 	// Get data from the database via adapter
 	registry := s.engine.GetState().GetConnectionRegistry()
@@ -505,7 +514,12 @@ func (s *Server) FetchData(ctx context.Context, req *pb.FetchDataRequest) (*pb.F
 	}
 
 	conn := client.AdapterConnection.(adapter.Connection)
+	
+	// Note: Most adapters don't support offset directly, so we fetch with limit
+	// For proper pagination support, we would need to enhance each adapter
+	// For now, we just use the limit parameter
 	data, err := conn.DataOperations().Fetch(ctx, req.TableName, limit)
+	
 	if err != nil {
 		// Send error response
 		response := &pb.FetchDataResponse{
@@ -986,6 +1000,186 @@ func (s *Server) WipeDatabase(ctx context.Context, req *pb.WipeDatabaseRequest) 
 		Message:    "Database wiped successfully",
 		Status:     commonv1.Status_STATUS_SUCCESS,
 		DatabaseId: req.DatabaseId,
+	}, nil
+}
+
+func (s *Server) WipeTable(ctx context.Context, req *pb.WipeTableRequest) (*pb.WipeTableResponse, error) {
+	defer s.trackOperation()()
+
+	// Get database connection
+	registry := s.engine.GetState().GetConnectionRegistry()
+	client, err := registry.GetDatabaseClient(req.DatabaseId)
+	if err != nil {
+		return &pb.WipeTableResponse{
+			Success:    false,
+			Message:    fmt.Sprintf("Database not found: %v", err),
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		}, nil
+	}
+
+	conn := client.AdapterConnection.(adapter.Connection)
+	
+	// Delete all data from the table
+	rowsAffected, err := conn.DataOperations().Delete(ctx, req.TableName, make(map[string]interface{}))
+	if err != nil {
+		return &pb.WipeTableResponse{
+			Success:      false,
+			Message:      fmt.Sprintf("Failed to wipe table %s: %v", req.TableName, err),
+			Status:       commonv1.Status_STATUS_ERROR,
+			DatabaseId:   req.DatabaseId,
+			TableName:    req.TableName,
+			RowsAffected: 0,
+		}, nil
+	}
+
+	return &pb.WipeTableResponse{
+		Success:      true,
+		Message:      fmt.Sprintf("Table %s wiped successfully", req.TableName),
+		Status:       commonv1.Status_STATUS_SUCCESS,
+		DatabaseId:   req.DatabaseId,
+		TableName:    req.TableName,
+		RowsAffected: rowsAffected,
+	}, nil
+}
+
+func (s *Server) DropTable(ctx context.Context, req *pb.DropTableRequest) (*pb.DropTableResponse, error) {
+	defer s.trackOperation()()
+
+	// Get database connection
+	registry := s.engine.GetState().GetConnectionRegistry()
+	_, err := registry.GetDatabaseClient(req.DatabaseId)
+	if err != nil {
+		return &pb.DropTableResponse{
+			Success:    false,
+			Message:    fmt.Sprintf("Database not found: %v", err),
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		}, nil
+	}
+
+	// Note: DropTable is not part of the SchemaOperator interface yet
+	// For now, return an error indicating this needs to be implemented
+	// TODO: Add DropTable to SchemaOperator interface and implement in all adapters
+	return &pb.DropTableResponse{
+		Success:    false,
+		Message:    "Drop table operation not yet fully implemented - needs adapter interface update",
+		Status:     commonv1.Status_STATUS_ERROR,
+		DatabaseId: req.DatabaseId,
+		TableName:  req.TableName,
+	}, nil
+	
+	/* Future implementation when DropTable is added to interface:
+	conn := client.AdapterConnection.(adapter.Connection)
+	err = conn.SchemaOperations().DropTable(ctx, req.TableName)
+	if err != nil {
+		return &pb.DropTableResponse{
+			Success:    false,
+			Message:    fmt.Sprintf("Failed to drop table %s: %v", req.TableName, err),
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		}, nil
+	}
+
+	return &pb.DropTableResponse{
+		Success:    true,
+		Message:    fmt.Sprintf("Table %s dropped successfully", req.TableName),
+		Status:     commonv1.Status_STATUS_SUCCESS,
+		DatabaseId: req.DatabaseId,
+		TableName:  req.TableName,
+	}, nil
+	*/
+}
+
+func (s *Server) UpdateTableData(ctx context.Context, req *pb.UpdateTableDataRequest) (*pb.UpdateTableDataResponse, error) {
+	defer s.trackOperation()()
+
+	// Get database connection
+	registry := s.engine.GetState().GetConnectionRegistry()
+	client, err := registry.GetDatabaseClient(req.DatabaseId)
+	if err != nil {
+		return &pb.UpdateTableDataResponse{
+			Success:    false,
+			Message:    fmt.Sprintf("Database not found: %v", err),
+			Status:     commonv1.Status_STATUS_ERROR,
+			DatabaseId: req.DatabaseId,
+			TableName:  req.TableName,
+		}, nil
+	}
+
+	// Parse updates (JSON array of {where: {...}, set: {...}} operations)
+	var updates []map[string]interface{}
+	if err := json.Unmarshal(req.Updates, &updates); err != nil {
+		return &pb.UpdateTableDataResponse{
+			Success:      false,
+			Message:      fmt.Sprintf("Failed to parse updates: %v", err),
+			Status:       commonv1.Status_STATUS_ERROR,
+			DatabaseId:   req.DatabaseId,
+			TableName:    req.TableName,
+			RowsAffected: 0,
+		}, nil
+	}
+
+	conn := client.AdapterConnection.(adapter.Connection)
+	
+	// Execute each update operation
+	var totalRowsAffected int64
+	for _, update := range updates {
+		whereClause, ok := update["where"].(map[string]interface{})
+		if !ok {
+			return &pb.UpdateTableDataResponse{
+				Success:      false,
+				Message:      "Invalid update format: missing or invalid 'where' clause",
+				Status:       commonv1.Status_STATUS_ERROR,
+				DatabaseId:   req.DatabaseId,
+				TableName:    req.TableName,
+				RowsAffected: totalRowsAffected,
+			}, nil
+		}
+
+		setClause, ok := update["set"].(map[string]interface{})
+		if !ok {
+			return &pb.UpdateTableDataResponse{
+				Success:      false,
+				Message:      "Invalid update format: missing or invalid 'set' clause",
+				Status:       commonv1.Status_STATUS_ERROR,
+				DatabaseId:   req.DatabaseId,
+				TableName:    req.TableName,
+				RowsAffected: totalRowsAffected,
+			}, nil
+		}
+
+		// Convert to adapter format: data is an array with the set values, whereColumns are the keys from where clause
+		data := []map[string]interface{}{setClause}
+		whereColumns := make([]string, 0, len(whereClause))
+		for col := range whereClause {
+			whereColumns = append(whereColumns, col)
+		}
+
+		rowsAffected, err := conn.DataOperations().Update(ctx, req.TableName, data, whereColumns)
+		if err != nil {
+			return &pb.UpdateTableDataResponse{
+				Success:      false,
+				Message:      fmt.Sprintf("Failed to update table data: %v", err),
+				Status:       commonv1.Status_STATUS_ERROR,
+				DatabaseId:   req.DatabaseId,
+				TableName:    req.TableName,
+				RowsAffected: totalRowsAffected,
+			}, nil
+		}
+		totalRowsAffected += rowsAffected
+	}
+
+	return &pb.UpdateTableDataResponse{
+		Success:      true,
+		Message:      fmt.Sprintf("Updated %d rows in table %s", totalRowsAffected, req.TableName),
+		Status:       commonv1.Status_STATUS_SUCCESS,
+		DatabaseId:   req.DatabaseId,
+		TableName:    req.TableName,
+		RowsAffected: totalRowsAffected,
 	}, nil
 }
 

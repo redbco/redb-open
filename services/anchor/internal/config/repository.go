@@ -331,11 +331,12 @@ func (r *Repository) UpdateDatabaseMetadata(ctx context.Context, metadata *Datab
 		UPDATE databases 
 		SET 
 			database_metadata = $1,
+			database_version = $2,
 			updated = CURRENT_TIMESTAMP
-		WHERE database_id = $2
+		WHERE database_id = $3
 	`
 
-	result, err := r.db.Pool().Exec(ctx, query, metadataJSON, metadata.DatabaseID)
+	result, err := r.db.Pool().Exec(ctx, query, metadataJSON, metadata.Version, metadata.DatabaseID)
 	if err != nil {
 		return fmt.Errorf("error updating database metadata: %w", err)
 	}
@@ -363,11 +364,12 @@ func (r *Repository) UpdateInstanceMetadata(ctx context.Context, metadata *Insta
 		UPDATE instances 
 		SET 
 			instance_metadata = $1,
+			instance_version = $2,
 			updated = CURRENT_TIMESTAMP
-		WHERE instance_id = $2
+		WHERE instance_id = $3
 	`
 
-	result, err := r.db.Pool().Exec(ctx, query, metadataJSON, metadata.InstanceID)
+	result, err := r.db.Pool().Exec(ctx, query, metadataJSON, metadata.Version, metadata.InstanceID)
 	if err != nil {
 		return fmt.Errorf("error updating instance metadata: %w", err)
 	}

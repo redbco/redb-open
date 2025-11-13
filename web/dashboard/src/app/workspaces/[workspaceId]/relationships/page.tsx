@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useRelationships } from '@/lib/hooks/useRelationships';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useToast } from '@/components/ui/Toast';
-import { Link as LucideLink, Plus, RefreshCw, Play, Pause, Activity, CheckCircle } from 'lucide-react';
+import { Link as LucideLink, Plus, RefreshCw, Play, Pause, CheckCircle } from 'lucide-react';
+import { CreateRelationshipDialog } from '@/components/relationships/CreateRelationshipDialog';
+import { api } from '@/lib/api/endpoints';
 
 interface RelationshipsPageProps {
   params: Promise<{
@@ -14,6 +17,8 @@ interface RelationshipsPageProps {
 
 export default function RelationshipsPage({ params }: RelationshipsPageProps) {
   const [workspaceId, setWorkspaceId] = useState<string>('');
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [operationInProgress, setOperationInProgress] = useState<string | null>(null);
   const { showToast } = useToast();
   
   useEffect(() => {
@@ -21,6 +26,57 @@ export default function RelationshipsPage({ params }: RelationshipsPageProps) {
   }, [params]);
 
   const { relationships, isLoading, error, refetch } = useRelationships(workspaceId);
+
+  const handleStartRelationship = async (relationshipName: string) => {
+    setOperationInProgress(relationshipName);
+    try {
+      await api.relationships.start(workspaceId, relationshipName, {
+        batch_size: 1000,
+        parallel_workers: 4
+      });
+      
+      showToast({
+        type: 'success',
+        title: 'Relationship Started',
+        message: `Successfully started relationship '${relationshipName}'.`
+      });
+      
+      // Refetch relationships to update status
+      refetch();
+    } catch (error: unknown) {
+      showToast({
+        type: 'error',
+        title: 'Failed to Start Relationship',
+        message: error instanceof Error ? error.message : 'An error occurred while starting the relationship.'
+      });
+    } finally {
+      setOperationInProgress(null);
+    }
+  };
+
+  const handleStopRelationship = async (relationshipName: string) => {
+    setOperationInProgress(relationshipName);
+    try {
+      await api.relationships.stop(workspaceId, relationshipName);
+      
+      showToast({
+        type: 'success',
+        title: 'Relationship Stopped',
+        message: `Successfully stopped relationship '${relationshipName}'.`
+      });
+      
+      // Refetch relationships to update status
+      refetch();
+    } catch (error: unknown) {
+      showToast({
+        type: 'error',
+        title: 'Failed to Stop Relationship',
+        message: error instanceof Error ? error.message : 'An error occurred while stopping the relationship.'
+      });
+    } finally {
+      setOperationInProgress(null);
+    }
+  };
 
   if (!workspaceId) {
     return (
@@ -83,7 +139,7 @@ export default function RelationshipsPage({ params }: RelationshipsPageProps) {
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
           <button
-            onClick={() => showToast({ type: 'info', title: 'Coming Soon', message: 'Create relationship dialog will be available soon' })}
+            onClick={() => setIsCreateDialogOpen(true)}
             className="inline-flex items-center px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
           >
             <Plus className="h-4 w-4 mr-2" />
@@ -160,7 +216,7 @@ export default function RelationshipsPage({ params }: RelationshipsPageProps) {
             Create your first relationship to start replicating data between databases
           </p>
           <button
-            onClick={() => showToast({ type: 'info', title: 'Coming Soon', message: 'Create relationship dialog will be available soon' })}
+            onClick={() => setIsCreateDialogOpen(true)}
             className="inline-flex items-center px-6 py-3 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
           >
             <Plus className="h-5 w-5 mr-2" />
@@ -174,7 +230,12 @@ export default function RelationshipsPage({ params }: RelationshipsPageProps) {
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center space-x-3 mb-2">
-                    <h3 className="text-lg font-semibold text-foreground">{relationship.relationship_name}</h3>
+                    <Link 
+                      href={`/workspaces/${workspaceId}/relationships/${encodeURIComponent(relationship.relationship_name)}`}
+                      className="text-lg font-semibold text-foreground hover:text-primary transition-colors"
+                    >
+                      {relationship.relationship_name}
+                    </Link>
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                       relationship.status === 'active'
                         ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
@@ -186,33 +247,47 @@ export default function RelationshipsPage({ params }: RelationshipsPageProps) {
                   {relationship.relationship_description && (
                     <p className="text-sm text-muted-foreground mb-3">{relationship.relationship_description}</p>
                   )}
-                  <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="flex items-center gap-4 text-sm">
                     <div>
                       <span className="text-muted-foreground">Type:</span>
                       <span className="ml-2 text-foreground capitalize">{relationship.relationship_type}</span>
                     </div>
-                    <div>
-                      <span className="text-muted-foreground">Mapping:</span>
-                      <span className="ml-2 text-foreground font-mono text-xs">{relationship.mapping_id}</span>
+                    <div className="flex items-center gap-2 text-foreground">
+                      <span className="font-medium">
+                        {relationship.relationship_source_database_name}.{relationship.relationship_source_table_name} ({relationship.relationship_source_database_type})
+                      </span>
+                      <span className="text-muted-foreground">→</span>
+                      <Link 
+                        href={`/workspaces/${workspaceId}/mappings/${relationship.mapping_name}`}
+                        className="text-primary hover:text-primary/80 font-mono text-xs underline underline-offset-2 transition-colors"
+                      >
+                        {relationship.mapping_name}
+                      </Link>
+                      <span className="text-muted-foreground">→</span>
+                      <span className="font-medium">
+                        {relationship.relationship_target_database_name}.{relationship.relationship_target_table_name} ({relationship.relationship_target_database_type})
+                      </span>
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
                   {relationship.status === 'active' ? (
                     <button
-                      onClick={() => showToast({ type: 'info', title: 'Coming Soon', message: 'Stop functionality will be available soon' })}
-                      className="px-3 py-1.5 text-sm border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors inline-flex items-center"
+                      onClick={() => handleStopRelationship(relationship.relationship_name)}
+                      disabled={operationInProgress === relationship.relationship_name}
+                      className="px-3 py-1.5 text-sm border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors inline-flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Pause className="h-4 w-4 mr-1" />
-                      Stop
+                      {operationInProgress === relationship.relationship_name ? 'Stopping...' : 'Stop'}
                     </button>
                   ) : (
                     <button
-                      onClick={() => showToast({ type: 'info', title: 'Coming Soon', message: 'Start functionality will be available soon' })}
-                      className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors inline-flex items-center"
+                      onClick={() => handleStartRelationship(relationship.relationship_name)}
+                      disabled={operationInProgress === relationship.relationship_name}
+                      className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors inline-flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Play className="h-4 w-4 mr-1" />
-                      Start
+                      {operationInProgress === relationship.relationship_name ? 'Starting...' : 'Start'}
                     </button>
                   )}
                 </div>
@@ -221,7 +296,16 @@ export default function RelationshipsPage({ params }: RelationshipsPageProps) {
           ))}
         </div>
       )}
+
+      {/* Create Relationship Dialog */}
+      <CreateRelationshipDialog
+        isOpen={isCreateDialogOpen}
+        onClose={() => setIsCreateDialogOpen(false)}
+        workspaceName={workspaceId}
+        onSuccess={() => {
+          refetch();
+        }}
+      />
     </div>
   );
 }
-

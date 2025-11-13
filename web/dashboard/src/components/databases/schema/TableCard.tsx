@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { Table, ChevronDown, ChevronRight, Edit2, Plus, Database } from 'lucide-react';
+import { useParams } from 'next/navigation';
+import Link from 'next/link';
+import { Table, ChevronDown, ChevronRight, Edit2, Plus, Database, Eye, Info } from 'lucide-react';
 import { ColumnRow } from './ColumnRow';
 import type { SchemaTable } from '@/lib/api/types';
 
@@ -21,22 +23,54 @@ export function TableCard({
   onDropColumn,
 }: TableCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [showClassificationDetails, setShowClassificationDetails] = useState(false);
+  const params = useParams();
+  const workspaceId = params?.workspaceId as string;
+  const databaseName = params?.databaseName as string;
 
-  // Normalize field names (handle both camelCase and snake_case)
-  const tableType = table.tableType || table.table_type || 'table';
-  const primaryCategory = table.primaryCategory || table.primary_category || 'General';
+  // Normalize field names (handle both camelCase and snake_case) from enriched schema endpoint
+  const databaseType = table.database_type;
+  const objectType = table.object_type || table.tableType || table.table_type || 'table';
+  const primaryCategory = table.primaryCategory || table.primary_category || table.container_classification || 'General';
   const classificationScores = table.classificationScores || table.classification_scores || [];
   const classificationConfidence =
-    table.classificationConfidence || table.classification_confidence || 0;
+    table.classificationConfidence || table.classification_confidence || table.container_classification_confidence || 0;
+  const classificationSource = table.container_classification_source;
 
-  // Get primary classification score
-  const primaryClassification = classificationScores.length > 0 ? classificationScores[0] : null;
+  // Count privileged columns by confidence level from enriched schema data
+  const privilegedColumnStats = table.columns.reduce(
+    (acc, col) => {
+      const isPrivileged = col.isPrivileged || col.is_privileged || false;
+      const confidence = col.detectionConfidence || col.detection_confidence || 0;
+      
+      if (isPrivileged) {
+        acc.total++;
+        if (confidence > 0.7) {
+          acc.high++;
+        } else if (confidence >= 0.4) {
+          acc.medium++;
+        } else if (confidence > 0) {
+          acc.low++;
+        }
+      }
+      return acc;
+    },
+    { total: 0, high: 0, medium: 0, low: 0 }
+  );
 
-  // Count privileged columns
-  const privilegedColumnCount = table.columns.filter(
-    (col) => (col.isPrivilegedData || col.is_privileged_data) && 
-             (col.privilegedConfidence || col.privileged_confidence || 0) > 0.7
-  ).length;
+  const privilegedColumnCount = privilegedColumnStats.high;
+
+  // Build link to table data page
+  const tableDataLink = workspaceId && databaseName 
+    ? `/workspaces/${workspaceId}/databases/${databaseName}/tables/${table.name}`
+    : '#';
+  
+  // Sort columns by ordinal_position (from enriched schema endpoint)
+  const sortedColumns = [...table.columns].sort((a, b) => {
+    const posA = a.ordinal_position || a.ordinalPosition || 0;
+    const posB = b.ordinal_position || b.ordinalPosition || 0;
+    return posA - posB;
+  });
 
   return (
     <div className="bg-card border border-border rounded-lg overflow-hidden hover:shadow-md transition-shadow">
@@ -58,22 +92,32 @@ export function TableCard({
               <Table className="h-5 w-5 text-primary" />
             </div>
             <div className="flex-1">
-              <h3 className="text-lg font-semibold text-foreground">{table.name}</h3>
+              <Link href={tableDataLink}>
+                <h3 className="text-lg font-semibold text-foreground hover:text-primary transition-colors cursor-pointer">
+                  {table.name}
+                </h3>
+              </Link>
               <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
-                {table.engine && (
+                {databaseType && (
                   <span className="inline-flex items-center gap-1">
                     <Database className="h-3 w-3" />
-                    {table.engine}
+                    {databaseType}
                   </span>
                 )}
-                {table.schema && <span>• Schema: {table.schema}</span>}
-                {tableType && <span>• Type: {tableType}</span>}
+                {objectType && objectType !== 'table' && <span>• Type: {objectType}</span>}
+                {table.item_count !== undefined && <span>• {table.item_count} item{table.item_count !== 1 ? 's' : ''}</span>}
               </div>
             </div>
           </div>
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2">
+            <Link href={tableDataLink}>
+              <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors">
+                <Eye className="h-3.5 w-3.5" />
+                View Data
+              </button>
+            </Link>
             {onModifyTable && (
               <button
                 onClick={() => onModifyTable(table.name)}
@@ -95,26 +139,46 @@ export function TableCard({
           </div>
         </div>
 
-        {/* Classification Info */}
-        <div className="flex items-center gap-4 text-sm">
+        {/* Classification Info from enriched schema endpoint */}
+        <div className="flex items-center gap-4 text-sm flex-wrap">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-background border border-border">
             <span className="text-muted-foreground">Category:</span>
             <span className="font-medium text-foreground">{primaryCategory}</span>
+            {classificationSource && (
+              <span className="text-xs text-muted-foreground">({classificationSource})</span>
+            )}
           </div>
 
           {classificationConfidence > 0 && (
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-background border border-border">
-              <span className="text-muted-foreground">Classification:</span>
+              <span className="text-muted-foreground">Confidence:</span>
               <span className="font-medium text-foreground">
-                {(classificationConfidence * 100).toFixed(0)}% confidence
+                {(classificationConfidence * 100).toFixed(0)}%
               </span>
+              {classificationScores.length > 1 && (
+                <button
+                  onClick={() => setShowClassificationDetails(!showClassificationDetails)}
+                  className="ml-1 p-0.5 hover:bg-accent rounded transition-colors"
+                  title="Show classification details"
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           )}
 
           {privilegedColumnCount > 0 && (
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border border-red-200 dark:border-red-800">
               <span className="font-medium">
-                {privilegedColumnCount} Privileged Column{privilegedColumnCount !== 1 ? 's' : ''}
+                {privilegedColumnCount} High-Confidence Privileged Column{privilegedColumnCount !== 1 ? 's' : ''}
+              </span>
+            </div>
+          )}
+          
+          {privilegedColumnStats.total > privilegedColumnCount && (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400 border border-yellow-200 dark:border-yellow-800">
+              <span className="font-medium text-xs">
+                +{privilegedColumnStats.total - privilegedColumnCount} Lower-Confidence
               </span>
             </div>
           )}
@@ -125,6 +189,30 @@ export function TableCard({
             </span>
           </div>
         </div>
+
+        {/* Classification Details Dropdown */}
+        {showClassificationDetails && classificationScores.length > 1 && (
+          <div className="mt-3 p-3 bg-muted/30 rounded-md border border-border">
+            <p className="text-xs font-medium text-muted-foreground mb-2">
+              Classification Scores (from schema analysis):
+            </p>
+            <div className="space-y-1.5">
+              {classificationScores.slice(0, 3).map((score, idx) => (
+                <div key={idx} className="flex items-center gap-2 text-xs">
+                  <div className="flex-shrink-0 w-12 text-right font-mono text-muted-foreground">
+                    {(score.score * 100).toFixed(0)}%
+                  </div>
+                  <div className="flex-1">
+                    <span className="font-medium text-foreground">{score.category}</span>
+                    {score.reason && (
+                      <span className="text-muted-foreground ml-2">- {score.reason}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Columns List */}
@@ -146,7 +234,7 @@ export function TableCard({
               </div>
 
               {/* Column Rows */}
-              {table.columns.map((column, index) => (
+              {sortedColumns.map((column, index) => (
                 <ColumnRow
                   key={`${table.name}-${column.name}-${index}`}
                   column={column}

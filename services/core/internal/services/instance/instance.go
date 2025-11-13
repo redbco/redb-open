@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/redbco/redb-open/pkg/database"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/pkg/encryption"
 	"github.com/redbco/redb-open/pkg/logger"
 	databaseService "github.com/redbco/redb-open/services/core/internal/services/database"
@@ -427,6 +428,208 @@ func (s *Service) List(ctx context.Context, tenantID, workspaceName string) ([]*
 	}
 
 	return instances, nil
+}
+
+// FindByHostPortAndNode finds an existing instance by host, port, and node with region awareness.
+// For public addresses and hostnames: ignores node (searches across all nodes)
+// For private addresses:
+//   - If nodes are in same region (both have regions specified): searches across same region
+//   - If node has no region: searches only on the same node
+func (s *Service) FindByHostPortAndNode(ctx context.Context, tenantID, workspaceID, host string, port int32, nodeID string) (*Instance, error) {
+	s.logger.Infof("Looking for existing instance: host=%s, port=%d, node=%s", host, port, nodeID)
+
+	// Import dbcapabilities for host utilities
+	normalizedHost := dbcapabilities.NormalizeHost(host)
+	isPrivate := dbcapabilities.IsPrivateAddress(normalizedHost)
+
+	s.logger.Infof("Host normalized: %s -> %s, isPrivate=%v", host, normalizedHost, isPrivate)
+
+	var query string
+	var args []interface{}
+
+	if !isPrivate {
+		// Public address or hostname - search across all nodes
+		s.logger.Infof("Public address detected, searching across all nodes")
+
+		query = `
+			SELECT instance_id, tenant_id, workspace_id, environment_id, connected_to_node_id, 
+			       instance_name, instance_description, instance_type, instance_vendor, 
+			       instance_version, instance_unique_identifier, instance_host, instance_port, 
+			       instance_username, instance_password, instance_system_db_name, instance_enabled, 
+			       instance_ssl, instance_ssl_mode, instance_ssl_cert, instance_ssl_key, 
+			       instance_ssl_root_cert, instance_metadata, policy_ids, owner_id, 
+			       instance_status_message, status, created, updated
+			FROM instances
+			WHERE tenant_id = $1 AND workspace_id = $2 
+			  AND instance_host = $3 
+			  AND instance_port = $4
+			LIMIT 1
+		`
+		args = []interface{}{tenantID, workspaceID, normalizedHost, port}
+	} else {
+		// Private address - need to check region
+		s.logger.Infof("Private address detected, checking region for node %s", nodeID)
+
+		// First, get the region of the current node
+		var currentNodeRegion *string
+		err := s.db.Pool().QueryRow(ctx, "SELECT region_id FROM nodes WHERE node_id = $1", nodeID).Scan(&currentNodeRegion)
+		if err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				s.logger.Errorf("Failed to get node region: %v", err)
+				return nil, fmt.Errorf("failed to get node region: %w", err)
+			}
+			// Node not found or has no region - will search same node only below
+			currentNodeRegion = nil
+		}
+
+		isLocalhost := dbcapabilities.IsLocalhostVariant(normalizedHost)
+
+		if currentNodeRegion == nil {
+			// Node has no region - match only same node
+			s.logger.Infof("Node has no region, searching only on same node")
+
+			if isLocalhost {
+				query = `
+					SELECT instance_id, tenant_id, workspace_id, environment_id, connected_to_node_id, 
+					       instance_name, instance_description, instance_type, instance_vendor, 
+					       instance_version, instance_unique_identifier, instance_host, instance_port, 
+					       instance_username, instance_password, instance_system_db_name, instance_enabled, 
+					       instance_ssl, instance_ssl_mode, instance_ssl_cert, instance_ssl_key, 
+					       instance_ssl_root_cert, instance_metadata, policy_ids, owner_id, 
+					       instance_status_message, status, created, updated
+					FROM instances
+					WHERE tenant_id = $1 AND workspace_id = $2 
+					  AND instance_port = $3 
+					  AND connected_to_node_id = $4
+					  AND (instance_host = 'localhost' OR instance_host = '127.0.0.1' OR instance_host = '::1')
+					LIMIT 1
+				`
+				args = []interface{}{tenantID, workspaceID, port, nodeID}
+			} else {
+				query = `
+					SELECT instance_id, tenant_id, workspace_id, environment_id, connected_to_node_id, 
+					       instance_name, instance_description, instance_type, instance_vendor, 
+					       instance_version, instance_unique_identifier, instance_host, instance_port, 
+					       instance_username, instance_password, instance_system_db_name, instance_enabled, 
+					       instance_ssl, instance_ssl_mode, instance_ssl_cert, instance_ssl_key, 
+					       instance_ssl_root_cert, instance_metadata, policy_ids, owner_id, 
+					       instance_status_message, status, created, updated
+					FROM instances
+					WHERE tenant_id = $1 AND workspace_id = $2 
+					  AND instance_host = $3 
+					  AND instance_port = $4 
+					  AND connected_to_node_id = $5
+					LIMIT 1
+				`
+				args = []interface{}{tenantID, workspaceID, normalizedHost, port, nodeID}
+			}
+		} else {
+			// Node has a region - match instances in same region
+			s.logger.Infof("Node has region %s, searching across same region", *currentNodeRegion)
+
+			if isLocalhost {
+				query = `
+					SELECT instance_id, tenant_id, workspace_id, environment_id, connected_to_node_id, 
+					       instance_name, instance_description, instance_type, instance_vendor, 
+					       instance_version, instance_unique_identifier, instance_host, instance_port, 
+					       instance_username, instance_password, instance_system_db_name, instance_enabled, 
+					       instance_ssl, instance_ssl_mode, instance_ssl_cert, instance_ssl_key, 
+					       instance_ssl_root_cert, instance_metadata, policy_ids, owner_id, 
+					       instance_status_message, status, created, updated
+					FROM instances
+					WHERE tenant_id = $1 AND workspace_id = $2 
+					  AND instance_port = $3 
+					  AND (instance_host = 'localhost' OR instance_host = '127.0.0.1' OR instance_host = '::1')
+					  AND connected_to_node_id IN (
+					    SELECT node_id FROM nodes 
+					    WHERE region_id = $4 AND region_id IS NOT NULL
+					  )
+					LIMIT 1
+				`
+				args = []interface{}{tenantID, workspaceID, port, *currentNodeRegion}
+			} else {
+				query = `
+					SELECT instance_id, tenant_id, workspace_id, environment_id, connected_to_node_id, 
+					       instance_name, instance_description, instance_type, instance_vendor, 
+					       instance_version, instance_unique_identifier, instance_host, instance_port, 
+					       instance_username, instance_password, instance_system_db_name, instance_enabled, 
+					       instance_ssl, instance_ssl_mode, instance_ssl_cert, instance_ssl_key, 
+					       instance_ssl_root_cert, instance_metadata, policy_ids, owner_id, 
+					       instance_status_message, status, created, updated
+					FROM instances
+					WHERE tenant_id = $1 AND workspace_id = $2 
+					  AND instance_host = $3 
+					  AND instance_port = $4 
+					  AND connected_to_node_id IN (
+					    SELECT node_id FROM nodes 
+					    WHERE region_id = $5 AND region_id IS NOT NULL
+					  )
+					LIMIT 1
+				`
+				args = []interface{}{tenantID, workspaceID, normalizedHost, port, *currentNodeRegion}
+			}
+		}
+	}
+
+	// Execute query
+	var instance Instance
+	var metadataJSON []byte
+	var policyIDsArray []string
+
+	err := s.db.Pool().QueryRow(ctx, query, args...).Scan(
+		&instance.ID,
+		&instance.TenantID,
+		&instance.WorkspaceID,
+		&instance.EnvironmentID,
+		&instance.ConnectedToNodeID,
+		&instance.Name,
+		&instance.Description,
+		&instance.Type,
+		&instance.Vendor,
+		&instance.Version,
+		&instance.UniqueIdentifier,
+		&instance.Host,
+		&instance.Port,
+		&instance.Username,
+		&instance.Password,
+		&instance.SystemDBName,
+		&instance.Enabled,
+		&instance.SSL,
+		&instance.SSLMode,
+		&instance.SSLCert,
+		&instance.SSLKey,
+		&instance.SSLRootCert,
+		&metadataJSON,
+		&policyIDsArray,
+		&instance.OwnerID,
+		&instance.StatusMessage,
+		&instance.Status,
+		&instance.Created,
+		&instance.Updated,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			s.logger.Infof("No existing instance found for host=%s, port=%d", host, port)
+			return nil, nil // Not found, not an error
+		}
+		s.logger.Errorf("Failed to query for existing instance: %v", err)
+		return nil, fmt.Errorf("failed to query for existing instance: %w", err)
+	}
+
+	// Parse metadata JSON
+	instance.Metadata = make(map[string]interface{})
+	if len(metadataJSON) > 0 && string(metadataJSON) != "{}" {
+		if err := json.Unmarshal(metadataJSON, &instance.Metadata); err != nil {
+			s.logger.Warnf("Failed to parse metadata JSON: %v", err)
+		}
+	}
+
+	// Set policy IDs
+	instance.PolicyIDs = policyIDsArray
+
+	s.logger.Infof("Found existing instance: %s (ID: %s) for host=%s, port=%d", instance.Name, instance.ID, host, port)
+	return &instance, nil
 }
 
 // Update updates specific fields of an instance

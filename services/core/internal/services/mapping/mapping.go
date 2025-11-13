@@ -34,6 +34,13 @@ type Mapping struct {
 	Name               string
 	Description        string
 	MappingType        string
+	SourceType         string
+	TargetType         string
+	SourceIdentifier   string
+	TargetIdentifier   string
+	SourceContainerID  *string
+	TargetContainerID  *string
+	MappingObject      map[string]interface{}
 	PolicyIDs          []string
 	OwnerID            string
 	Validated          bool
@@ -43,6 +50,7 @@ type Mapping struct {
 	Created            time.Time
 	Updated            time.Time
 	MappingRuleCount   int32
+	Filters            []*MappingFilter // Associated filters
 }
 
 // Rule represents a mapping rule in the system
@@ -54,14 +62,17 @@ type Rule struct {
 	Description  string
 	Metadata     map[string]interface{}
 	WorkflowType string // 'simple' or 'dag'
+	Cardinality  string // 'one-to-one', 'one-to-many', 'many-to-one', 'many-to-many', 'generator', 'sink'
 	OwnerID      string
 	Created      time.Time
 	Updated      time.Time
 	MappingCount int32
+	SourceItems  []*ResourceItem // Associated source items
+	TargetItems  []*ResourceItem // Associated target items
 }
 
 // Create creates a new mapping
-func (s *Service) Create(ctx context.Context, tenantID, workspaceID, mappingType, name, description, ownerID string) (*Mapping, error) {
+func (s *Service) Create(ctx context.Context, tenantID, workspaceID, mappingType, name, description, ownerID, sourceType, targetType, sourceIdentifier, targetIdentifier string, mappingObject map[string]interface{}) (*Mapping, error) {
 	s.logger.Infof("Creating mapping in database for tenant: %s, workspace: %s, name: %s", tenantID, workspaceID, name)
 
 	// Check if the tenant exists
@@ -94,21 +105,75 @@ func (s *Service) Create(ctx context.Context, tenantID, workspaceID, mappingType
 		return nil, errors.New("mapping with this name already exists in the workspace")
 	}
 
+	// Marshal mapping_object to JSON
+	var mappingObjectJSON []byte
+	if len(mappingObject) > 0 {
+		mappingObjectJSON, err = json.Marshal(mappingObject)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal mapping_object: %w", err)
+		}
+	} else {
+		mappingObjectJSON = []byte("{}")
+	}
+
+	// Look up container IDs for source and target
+	var sourceContainerID *string
+	var targetContainerID *string
+
+	// Query for source container ID
+	if sourceIdentifier != "" {
+		var containerID string
+		err := s.db.Pool().QueryRow(ctx, "SELECT container_id FROM resource_containers WHERE resource_uri = $1", sourceIdentifier).Scan(&containerID)
+		if err == nil {
+			sourceContainerID = &containerID
+			s.logger.Infof("Found source container ID: %s for URI: %s", containerID, sourceIdentifier)
+		} else {
+			s.logger.Warnf("No source container found for URI: %s (error: %v)", sourceIdentifier, err)
+		}
+	}
+
+	// Query for target container ID
+	if targetIdentifier != "" {
+		var containerID string
+		err := s.db.Pool().QueryRow(ctx, "SELECT container_id FROM resource_containers WHERE resource_uri = $1", targetIdentifier).Scan(&containerID)
+		if err == nil {
+			targetContainerID = &containerID
+			s.logger.Infof("Found target container ID: %s for URI: %s", containerID, targetIdentifier)
+		} else {
+			s.logger.Warnf("No target container found for URI: %s (error: %v)", targetIdentifier, err)
+		}
+	}
+
 	// Insert the mapping into the database
 	query := `
-		INSERT INTO mappings (tenant_id, workspace_id, mapping_name, mapping_description, mapping_type, owner_id)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING mapping_id, tenant_id, workspace_id, mapping_name, mapping_description, mapping_type, COALESCE(policy_ids, '{}') as policy_ids, owner_id, created, updated
+		INSERT INTO mappings (tenant_id, workspace_id, mapping_name, mapping_description, mapping_type, 
+			mapping_source_type, mapping_target_type, mapping_source_identifier, mapping_target_identifier, 
+			mapping_source_container_id, mapping_target_container_id,
+			mapping_object, owner_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		RETURNING mapping_id, tenant_id, workspace_id, mapping_name, mapping_description, mapping_type,
+			mapping_source_type, mapping_target_type, mapping_source_identifier, mapping_target_identifier,
+			mapping_source_container_id, mapping_target_container_id,
+			mapping_object, COALESCE(policy_ids, '{}') as policy_ids, owner_id, created, updated
 	`
 
 	var mapping Mapping
-	err = s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, name, description, mappingType, ownerID).Scan(
+	var mappingObjectBytes []byte
+	err = s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, name, description, mappingType,
+		sourceType, targetType, sourceIdentifier, targetIdentifier, sourceContainerID, targetContainerID, mappingObjectJSON, ownerID).Scan(
 		&mapping.ID,
 		&mapping.TenantID,
 		&mapping.WorkspaceID,
 		&mapping.Name,
 		&mapping.Description,
 		&mapping.MappingType,
+		&mapping.SourceType,
+		&mapping.TargetType,
+		&mapping.SourceIdentifier,
+		&mapping.TargetIdentifier,
+		&mapping.SourceContainerID,
+		&mapping.TargetContainerID,
+		&mappingObjectBytes,
 		&mapping.PolicyIDs,
 		&mapping.OwnerID,
 		&mapping.Created,
@@ -119,6 +184,13 @@ func (s *Service) Create(ctx context.Context, tenantID, workspaceID, mappingType
 		return nil, err
 	}
 
+	// Unmarshal mapping_object
+	if len(mappingObjectBytes) > 0 {
+		if err := json.Unmarshal(mappingObjectBytes, &mapping.MappingObject); err != nil {
+			s.logger.Warnf("Failed to unmarshal mapping_object: %v", err)
+		}
+	}
+
 	return &mapping, nil
 }
 
@@ -127,14 +199,16 @@ func (s *Service) Get(ctx context.Context, tenantID, workspaceID, mappingName st
 	s.logger.Infof("Retrieving mapping from database with name: %s", mappingName)
 	query := `
 		SELECT mapping_id, tenant_id, workspace_id, mapping_name, mapping_description, mapping_type,
-		       COALESCE(policy_ids, '{}') as policy_ids, owner_id, validated, validated_at,
+		       mapping_source_type, mapping_target_type, mapping_source_identifier, mapping_target_identifier,
+		       mapping_source_container_id, mapping_target_container_id,
+		       mapping_object, COALESCE(policy_ids, '{}') as policy_ids, owner_id, validated, validated_at,
 		       validation_errors, validation_warnings, created, updated
 		FROM mappings
 		WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_name = $3
 	`
 
 	var mapping Mapping
-	var validationErrorsJSON, validationWarningsJSON []byte
+	var validationErrorsJSON, validationWarningsJSON, mappingObjectBytes []byte
 	err := s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, mappingName).Scan(
 		&mapping.ID,
 		&mapping.TenantID,
@@ -142,6 +216,13 @@ func (s *Service) Get(ctx context.Context, tenantID, workspaceID, mappingName st
 		&mapping.Name,
 		&mapping.Description,
 		&mapping.MappingType,
+		&mapping.SourceType,
+		&mapping.TargetType,
+		&mapping.SourceIdentifier,
+		&mapping.TargetIdentifier,
+		&mapping.SourceContainerID,
+		&mapping.TargetContainerID,
+		&mappingObjectBytes,
 		&mapping.PolicyIDs,
 		&mapping.OwnerID,
 		&mapping.Validated,
@@ -170,6 +251,11 @@ func (s *Service) Get(ctx context.Context, tenantID, workspaceID, mappingName st
 			s.logger.Warnf("Failed to unmarshal validation warnings: %v", err)
 		}
 	}
+	if len(mappingObjectBytes) > 0 {
+		if err := json.Unmarshal(mappingObjectBytes, &mapping.MappingObject); err != nil {
+			s.logger.Warnf("Failed to unmarshal mapping_object: %v", err)
+		}
+	}
 
 	// Get mapping rule count
 	mappingRuleCount, err := s.GetMappingRuleCount(ctx, mapping.ID)
@@ -187,14 +273,18 @@ func (s *Service) List(ctx context.Context, tenantID, workspaceID string) ([]*Ma
 	s.logger.Infof("Listing mappings for tenant: %s, workspace: %s", tenantID, workspaceID)
 	query := `
 		SELECT m.mapping_id, m.tenant_id, m.workspace_id, m.mapping_name, m.mapping_description, m.mapping_type,
-		       COALESCE(m.policy_ids, '{}') as policy_ids, m.owner_id, m.validated, m.validated_at,
+		       m.mapping_source_type, m.mapping_target_type, m.mapping_source_identifier, m.mapping_target_identifier,
+		       m.mapping_source_container_id, m.mapping_target_container_id,
+		       m.mapping_object, COALESCE(m.policy_ids, '{}') as policy_ids, m.owner_id, m.validated, m.validated_at,
 		       m.validation_errors, m.validation_warnings, m.created, m.updated,
 		       COALESCE(COUNT(mrm.mapping_rule_id), 0) as mapping_rule_count
 		FROM mappings m
 		LEFT JOIN mapping_rule_mappings mrm ON m.mapping_id = mrm.mapping_id
 		WHERE m.tenant_id = $1 AND m.workspace_id = $2
 		GROUP BY m.mapping_id, m.tenant_id, m.workspace_id, m.mapping_name, m.mapping_description, m.mapping_type,
-		         m.policy_ids, m.owner_id, m.validated, m.validated_at, m.validation_errors, m.validation_warnings,
+		         m.mapping_source_type, m.mapping_target_type, m.mapping_source_identifier, m.mapping_target_identifier,
+		         m.mapping_source_container_id, m.mapping_target_container_id,
+		         m.mapping_object, m.policy_ids, m.owner_id, m.validated, m.validated_at, m.validation_errors, m.validation_warnings,
 		         m.created, m.updated
 		ORDER BY m.mapping_name
 	`
@@ -209,7 +299,7 @@ func (s *Service) List(ctx context.Context, tenantID, workspaceID string) ([]*Ma
 	var mappings []*Mapping
 	for rows.Next() {
 		var mapping Mapping
-		var validationErrorsJSON, validationWarningsJSON []byte
+		var validationErrorsJSON, validationWarningsJSON, mappingObjectBytes []byte
 		err := rows.Scan(
 			&mapping.ID,
 			&mapping.TenantID,
@@ -217,6 +307,13 @@ func (s *Service) List(ctx context.Context, tenantID, workspaceID string) ([]*Ma
 			&mapping.Name,
 			&mapping.Description,
 			&mapping.MappingType,
+			&mapping.SourceType,
+			&mapping.TargetType,
+			&mapping.SourceIdentifier,
+			&mapping.TargetIdentifier,
+			&mapping.SourceContainerID,
+			&mapping.TargetContainerID,
+			&mappingObjectBytes,
 			&mapping.PolicyIDs,
 			&mapping.OwnerID,
 			&mapping.Validated,
@@ -241,6 +338,11 @@ func (s *Service) List(ctx context.Context, tenantID, workspaceID string) ([]*Ma
 		if len(validationWarningsJSON) > 0 {
 			if err := json.Unmarshal(validationWarningsJSON, &mapping.ValidationWarnings); err != nil {
 				s.logger.Warnf("Failed to unmarshal validation warnings: %v", err)
+			}
+		}
+		if len(mappingObjectBytes) > 0 {
+			if err := json.Unmarshal(mappingObjectBytes, &mapping.MappingObject); err != nil {
+				s.logger.Warnf("Failed to unmarshal mapping_object: %v", err)
 			}
 		}
 
@@ -814,6 +916,28 @@ func (s *Service) CreateMappingRule(ctx context.Context, tenantID, workspaceID, 
 	return &rule, nil
 }
 
+// UpdateMappingRuleCardinality updates the cardinality field of a mapping rule
+func (s *Service) UpdateMappingRuleCardinality(ctx context.Context, ruleID string, cardinality string) error {
+	s.logger.Infof("Updating cardinality for mapping rule: %s to %s", ruleID, cardinality)
+
+	query := `
+		UPDATE mapping_rules
+		SET mapping_rule_cardinality = $1, updated = CURRENT_TIMESTAMP
+		WHERE mapping_rule_id = $2
+	`
+
+	result, err := s.db.Pool().Exec(ctx, query, cardinality, ruleID)
+	if err != nil {
+		return fmt.Errorf("failed to update mapping rule cardinality: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("mapping rule not found: %s", ruleID)
+	}
+
+	return nil
+}
+
 // ModifyMappingRule modifies a mapping rule
 func (s *Service) ModifyMappingRule(ctx context.Context, tenantID, workspaceID, name string, updates map[string]interface{}) (*Rule, error) {
 	s.logger.Infof("Modifying mapping rule with name: %s", name)
@@ -1070,14 +1194,15 @@ func (s *Service) GetMappingRulesForMappingByID(ctx context.Context, tenantID, w
 func (s *Service) GetByID(ctx context.Context, mappingID string) (*Mapping, error) {
 	query := `
 		SELECT mapping_id, tenant_id, workspace_id, mapping_name, mapping_description, 
-		       mapping_type, policy_ids, owner_id, validated, validated_at, 
+		       mapping_type, mapping_source_type, mapping_target_type, mapping_source_identifier, 
+		       mapping_target_identifier, mapping_object, policy_ids, owner_id, validated, validated_at, 
 		       validation_errors, validation_warnings, created, updated
 		FROM mappings
 		WHERE mapping_id = $1
 	`
 
 	mapping := &Mapping{}
-	var validationErrorsJSON, validationWarningsJSON []byte
+	var validationErrorsJSON, validationWarningsJSON, mappingObjectBytes []byte
 	err := s.db.Pool().QueryRow(ctx, query, mappingID).Scan(
 		&mapping.ID,
 		&mapping.TenantID,
@@ -1085,6 +1210,11 @@ func (s *Service) GetByID(ctx context.Context, mappingID string) (*Mapping, erro
 		&mapping.Name,
 		&mapping.Description,
 		&mapping.MappingType,
+		&mapping.SourceType,
+		&mapping.TargetType,
+		&mapping.SourceIdentifier,
+		&mapping.TargetIdentifier,
+		&mappingObjectBytes,
 		&mapping.PolicyIDs,
 		&mapping.OwnerID,
 		&mapping.Validated,
@@ -1110,6 +1240,11 @@ func (s *Service) GetByID(ctx context.Context, mappingID string) (*Mapping, erro
 	if len(validationWarningsJSON) > 0 {
 		if err := json.Unmarshal(validationWarningsJSON, &mapping.ValidationWarnings); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal validation warnings: %w", err)
+		}
+	}
+	if len(mappingObjectBytes) > 0 {
+		if err := json.Unmarshal(mappingObjectBytes, &mapping.MappingObject); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal mapping_object: %w", err)
 		}
 	}
 
@@ -1269,14 +1404,15 @@ func (s *Service) InvalidateMappingsByTarget(ctx context.Context, workspaceID, d
 func (s *Service) GetByName(ctx context.Context, tenantID, workspaceID, mappingName string) (*Mapping, error) {
 	query := `
 		SELECT mapping_id, tenant_id, workspace_id, mapping_name, mapping_description, 
-		       mapping_type, policy_ids, owner_id, validated, validated_at,
+		       mapping_type, mapping_source_type, mapping_target_type, mapping_source_identifier,
+		       mapping_target_identifier, mapping_object, policy_ids, owner_id, validated, validated_at,
 		       validation_errors, validation_warnings, created, updated
 		FROM mappings
 		WHERE tenant_id = $1 AND workspace_id = $2 AND mapping_name = $3
 	`
 
 	mapping := &Mapping{}
-	var validationErrorsJSON, validationWarningsJSON []byte
+	var validationErrorsJSON, validationWarningsJSON, mappingObjectBytes []byte
 	err := s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, mappingName).Scan(
 		&mapping.ID,
 		&mapping.TenantID,
@@ -1284,6 +1420,11 @@ func (s *Service) GetByName(ctx context.Context, tenantID, workspaceID, mappingN
 		&mapping.Name,
 		&mapping.Description,
 		&mapping.MappingType,
+		&mapping.SourceType,
+		&mapping.TargetType,
+		&mapping.SourceIdentifier,
+		&mapping.TargetIdentifier,
+		&mappingObjectBytes,
 		&mapping.PolicyIDs,
 		&mapping.OwnerID,
 		&mapping.Validated,
@@ -1311,6 +1452,921 @@ func (s *Service) GetByName(ctx context.Context, tenantID, workspaceID, mappingN
 			return nil, fmt.Errorf("failed to unmarshal validation warnings: %w", err)
 		}
 	}
+	if len(mappingObjectBytes) > 0 {
+		if err := json.Unmarshal(mappingObjectBytes, &mapping.MappingObject); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal mapping_object: %w", err)
+		}
+	}
 
 	return mapping, nil
+}
+
+// GetRelationshipNamesByMappingID retrieves relationship names using a mapping
+func (s *Service) GetRelationshipNamesByMappingID(ctx context.Context, mappingID string) ([]string, error) {
+	query := `SELECT relationship_name FROM relationships WHERE mapping_id = $1 ORDER BY relationship_name`
+
+	rows, err := s.db.Pool().Query(ctx, query, mappingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query relationships: %w", err)
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("failed to scan relationship name: %w", err)
+		}
+		names = append(names, name)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating relationships: %w", err)
+	}
+
+	// Return empty slice instead of nil
+	if names == nil {
+		names = []string{}
+	}
+
+	return names, nil
+}
+
+// RelationshipInfo holds relationship name and status information
+type RelationshipInfo struct {
+	Name   string
+	Status string
+}
+
+// GetRelationshipInfosByMappingID retrieves relationship names and statuses using a mapping
+func (s *Service) GetRelationshipInfosByMappingID(ctx context.Context, mappingID string) ([]RelationshipInfo, error) {
+	query := `SELECT relationship_name, status FROM relationships WHERE mapping_id = $1 ORDER BY relationship_name`
+
+	rows, err := s.db.Pool().Query(ctx, query, mappingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query relationships: %w", err)
+	}
+	defer rows.Close()
+
+	var infos []RelationshipInfo
+	for rows.Next() {
+		var info RelationshipInfo
+		if err := rows.Scan(&info.Name, &info.Status); err != nil {
+			return nil, fmt.Errorf("failed to scan relationship info: %w", err)
+		}
+		infos = append(infos, info)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating relationships: %w", err)
+	}
+
+	// Return empty slice instead of nil
+	if infos == nil {
+		infos = []RelationshipInfo{}
+	}
+
+	return infos, nil
+}
+
+// GetMCPResourceNamesByMappingID retrieves MCP resource names using a mapping
+func (s *Service) GetMCPResourceNamesByMappingID(ctx context.Context, mappingID string) ([]string, error) {
+	query := `SELECT mcpresource_name FROM mcpresources WHERE mapping_id = $1 ORDER BY mcpresource_name`
+
+	rows, err := s.db.Pool().Query(ctx, query, mappingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query MCP resources: %w", err)
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("failed to scan MCP resource name: %w", err)
+		}
+		names = append(names, name)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating MCP resources: %w", err)
+	}
+
+	// Return empty slice instead of nil
+	if names == nil {
+		names = []string{}
+	}
+
+	return names, nil
+}
+
+// GetMCPToolNamesByMappingID retrieves MCP tool names using a mapping
+func (s *Service) GetMCPToolNamesByMappingID(ctx context.Context, mappingID string) ([]string, error) {
+	query := `SELECT mcptool_name FROM mcptools WHERE mapping_id = $1 ORDER BY mcptool_name`
+
+	rows, err := s.db.Pool().Query(ctx, query, mappingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query MCP tools: %w", err)
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("failed to scan MCP tool name: %w", err)
+		}
+		names = append(names, name)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating MCP tools: %w", err)
+	}
+
+	// Return empty slice instead of nil
+	if names == nil {
+		names = []string{}
+	}
+
+	return names, nil
+}
+
+// ============================================================================
+// NEW METHODS FOR RESOURCE-BASED MAPPINGS
+// ============================================================================
+
+// ResourceItem represents an item with all its details
+type ResourceItem struct {
+	ItemID                   string
+	ContainerID              string
+	TenantID                 string
+	WorkspaceID              string
+	ResourceURI              string
+	Protocol                 string
+	Scope                    string
+	ItemType                 string
+	ItemName                 string
+	ItemDisplayName          string
+	ItemPath                 []string
+	DataType                 string
+	UnifiedDataType          *string
+	IsNullable               bool
+	IsPrimaryKey             bool
+	IsUnique                 bool
+	IsIndexed                bool
+	IsRequired               bool
+	IsArray                  bool
+	ArrayDimensions          int
+	DefaultValue             *string
+	MaxLength                *int
+	Precision                *int
+	Scale                    *int
+	Description              *string
+	IsPrivileged             bool
+	PrivilegedClassification *string
+	DetectionConfidence      *float64
+	DetectionMethod          *string
+	Created                  time.Time
+	Updated                  time.Time
+}
+
+// ResourceContainer represents a container with all its details
+type ResourceContainer struct {
+	ContainerID       string
+	TenantID          string
+	WorkspaceID       string
+	ResourceURI       string
+	Protocol          string
+	Scope             string
+	ObjectType        string
+	ObjectName        string
+	DatabaseID        *string
+	InstanceID        *string
+	IntegrationID     *string
+	MCPServerID       *string
+	ConnectedToNodeID int64
+	OwnerID           string
+	Status            string
+	StatusMessage     string
+	LastSeen          time.Time
+	Online            bool
+	ContainerMetadata map[string]interface{}
+	EnrichedMetadata  map[string]interface{}
+	Created           time.Time
+	Updated           time.Time
+}
+
+// MappingFilter represents a filter for a mapping
+type MappingFilter struct {
+	FilterID         string
+	MappingID        string
+	FilterType       string
+	FilterExpression map[string]interface{}
+	FilterOrder      int
+	FilterOperator   string
+	Created          time.Time
+	Updated          time.Time
+}
+
+// GetContainerByURI resolves a container ID from a URI
+func (s *Service) GetContainerByURI(ctx context.Context, uri string) (*ResourceContainer, error) {
+	s.logger.Infof("Resolving container by URI: %s", uri)
+
+	query := `
+		SELECT container_id, tenant_id, workspace_id, resource_uri, protocol, scope, object_type, object_name,
+		       database_id, instance_id, integration_id, mcpserver_id, connected_to_node_id, owner_id,
+		       status, status_message, last_seen, online, container_metadata, enriched_metadata, created, updated
+		FROM resource_containers
+		WHERE resource_uri = $1
+	`
+
+	var container ResourceContainer
+	var containerMetadataBytes, enrichedMetadataBytes []byte
+	err := s.db.Pool().QueryRow(ctx, query, uri).Scan(
+		&container.ContainerID,
+		&container.TenantID,
+		&container.WorkspaceID,
+		&container.ResourceURI,
+		&container.Protocol,
+		&container.Scope,
+		&container.ObjectType,
+		&container.ObjectName,
+		&container.DatabaseID,
+		&container.InstanceID,
+		&container.IntegrationID,
+		&container.MCPServerID,
+		&container.ConnectedToNodeID,
+		&container.OwnerID,
+		&container.Status,
+		&container.StatusMessage,
+		&container.LastSeen,
+		&container.Online,
+		&containerMetadataBytes,
+		&enrichedMetadataBytes,
+		&container.Created,
+		&container.Updated,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("container not found for URI: " + uri)
+		}
+		return nil, fmt.Errorf("failed to get container by URI: %w", err)
+	}
+
+	// Unmarshal JSON fields
+	if len(containerMetadataBytes) > 0 {
+		if err := json.Unmarshal(containerMetadataBytes, &container.ContainerMetadata); err != nil {
+			s.logger.Warnf("Failed to unmarshal container metadata: %v", err)
+		}
+	}
+	if len(enrichedMetadataBytes) > 0 {
+		if err := json.Unmarshal(enrichedMetadataBytes, &container.EnrichedMetadata); err != nil {
+			s.logger.Warnf("Failed to unmarshal enriched metadata: %v", err)
+		}
+	}
+
+	return &container, nil
+}
+
+// GetItemByURI resolves an item ID from a URI
+func (s *Service) GetItemByURI(ctx context.Context, uri string) (*ResourceItem, error) {
+	s.logger.Infof("Resolving item by URI: %s", uri)
+
+	query := `
+		SELECT item_id, container_id, tenant_id, workspace_id, resource_uri, protocol, scope, item_type,
+		       item_name, item_display_name, item_path, data_type, unified_data_type, is_nullable, is_primary_key, is_unique,
+		       is_indexed, is_required, is_array, array_dimensions, default_value, max_length, precision,
+		       scale, item_comment, is_privileged, privileged_classification, detection_confidence, 
+		       detection_method, created, updated
+		FROM resource_items
+		WHERE resource_uri = $1
+	`
+
+	var item ResourceItem
+	err := s.db.Pool().QueryRow(ctx, query, uri).Scan(
+		&item.ItemID,
+		&item.ContainerID,
+		&item.TenantID,
+		&item.WorkspaceID,
+		&item.ResourceURI,
+		&item.Protocol,
+		&item.Scope,
+		&item.ItemType,
+		&item.ItemName,
+		&item.ItemDisplayName,
+		&item.ItemPath,
+		&item.DataType,
+		&item.UnifiedDataType,
+		&item.IsNullable,
+		&item.IsPrimaryKey,
+		&item.IsUnique,
+		&item.IsIndexed,
+		&item.IsRequired,
+		&item.IsArray,
+		&item.ArrayDimensions,
+		&item.DefaultValue,
+		&item.MaxLength,
+		&item.Precision,
+		&item.Scale,
+		&item.Description,
+		&item.IsPrivileged,
+		&item.PrivilegedClassification,
+		&item.DetectionConfidence,
+		&item.DetectionMethod,
+		&item.Created,
+		&item.Updated,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("item not found for URI: " + uri)
+		}
+		return nil, fmt.Errorf("failed to get item by URI: %w", err)
+	}
+
+	return &item, nil
+}
+
+// AttachSourceItems attaches source items to a mapping rule
+func (s *Service) AttachSourceItems(ctx context.Context, ruleID string, itemIDs []string, itemOrders []int) error {
+	s.logger.Infof("Attaching %d source items to mapping rule %s", len(itemIDs), ruleID)
+
+	if len(itemIDs) != len(itemOrders) {
+		return fmt.Errorf("itemIDs and itemOrders must have the same length")
+	}
+
+	// Begin transaction
+	tx, err := s.db.Pool().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Insert each source item
+	query := `
+		INSERT INTO mapping_rule_source_items (mapping_rule_id, resource_item_id, item_order)
+		VALUES ($1, $2, $3)
+	`
+
+	for i, itemID := range itemIDs {
+		order := 0
+		if i < len(itemOrders) {
+			order = itemOrders[i]
+		}
+		_, err = tx.Exec(ctx, query, ruleID, itemID, order)
+		if err != nil {
+			return fmt.Errorf("failed to attach source item %s: %w", itemID, err)
+		}
+	}
+
+	// Commit transaction
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// AttachTargetItems attaches target items to a mapping rule
+func (s *Service) AttachTargetItems(ctx context.Context, ruleID string, itemIDs []string, itemOrders []int) error {
+	s.logger.Infof("Attaching %d target items to mapping rule %s", len(itemIDs), ruleID)
+
+	if len(itemIDs) != len(itemOrders) {
+		return fmt.Errorf("itemIDs and itemOrders must have the same length")
+	}
+
+	// Begin transaction
+	tx, err := s.db.Pool().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Insert each target item
+	query := `
+		INSERT INTO mapping_rule_target_items (mapping_rule_id, resource_item_id, item_order)
+		VALUES ($1, $2, $3)
+	`
+
+	for i, itemID := range itemIDs {
+		order := 0
+		if i < len(itemOrders) {
+			order = itemOrders[i]
+		}
+		_, err = tx.Exec(ctx, query, ruleID, itemID, order)
+		if err != nil {
+			return fmt.Errorf("failed to attach target item %s: %w", itemID, err)
+		}
+	}
+
+	// Commit transaction
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// GetRuleSourceItems retrieves all source items for a mapping rule
+func (s *Service) GetRuleSourceItems(ctx context.Context, ruleID string) ([]*ResourceItem, error) {
+	s.logger.Infof("Retrieving source items for mapping rule %s", ruleID)
+
+	query := `
+		SELECT ri.item_id, ri.container_id, ri.tenant_id, ri.workspace_id, ri.resource_uri, ri.protocol, ri.scope,
+		       ri.item_type, ri.item_name, ri.item_display_name, ri.item_path, ri.data_type, ri.unified_data_type, ri.is_nullable,
+		       ri.is_primary_key, ri.is_unique, ri.is_indexed, ri.is_required, ri.is_array, ri.array_dimensions,
+		       ri.default_value, ri.max_length, ri.precision, ri.scale, ri.item_comment, ri.is_privileged, 
+		       ri.privileged_classification, ri.detection_confidence, ri.detection_method, ri.created, ri.updated
+		FROM resource_items ri
+		INNER JOIN mapping_rule_source_items mrsi ON ri.item_id = mrsi.resource_item_id
+		WHERE mrsi.mapping_rule_id = $1
+		ORDER BY mrsi.item_order
+	`
+
+	rows, err := s.db.Pool().Query(ctx, query, ruleID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query source items: %w", err)
+	}
+	defer rows.Close()
+
+	var items []*ResourceItem
+	for rows.Next() {
+		var item ResourceItem
+		err := rows.Scan(
+			&item.ItemID,
+			&item.ContainerID,
+			&item.TenantID,
+			&item.WorkspaceID,
+			&item.ResourceURI,
+			&item.Protocol,
+			&item.Scope,
+			&item.ItemType,
+			&item.ItemName,
+			&item.ItemDisplayName,
+			&item.ItemPath,
+			&item.DataType,
+			&item.UnifiedDataType,
+			&item.IsNullable,
+			&item.IsPrimaryKey,
+			&item.IsUnique,
+			&item.IsIndexed,
+			&item.IsRequired,
+			&item.IsArray,
+			&item.ArrayDimensions,
+			&item.DefaultValue,
+			&item.MaxLength,
+			&item.Precision,
+			&item.Scale,
+			&item.Description,
+			&item.IsPrivileged,
+			&item.PrivilegedClassification,
+			&item.DetectionConfidence,
+			&item.DetectionMethod,
+			&item.Created,
+			&item.Updated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan source item: %w", err)
+		}
+		items = append(items, &item)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating source items: %w", err)
+	}
+
+	return items, nil
+}
+
+// GetRuleTargetItems retrieves all target items for a mapping rule
+func (s *Service) GetRuleTargetItems(ctx context.Context, ruleID string) ([]*ResourceItem, error) {
+	s.logger.Infof("Retrieving target items for mapping rule %s", ruleID)
+
+	query := `
+		SELECT ri.item_id, ri.container_id, ri.tenant_id, ri.workspace_id, ri.resource_uri, ri.protocol, ri.scope,
+		       ri.item_type, ri.item_name, ri.item_display_name, ri.item_path, ri.data_type, ri.unified_data_type, ri.is_nullable,
+		       ri.is_primary_key, ri.is_unique, ri.is_indexed, ri.is_required, ri.is_array, ri.array_dimensions,
+		       ri.default_value, ri.max_length, ri.precision, ri.scale, ri.item_comment, ri.is_privileged, 
+		       ri.privileged_classification, ri.detection_confidence, ri.detection_method, ri.created, ri.updated
+		FROM resource_items ri
+		INNER JOIN mapping_rule_target_items mrti ON ri.item_id = mrti.resource_item_id
+		WHERE mrti.mapping_rule_id = $1
+		ORDER BY mrti.item_order
+	`
+
+	rows, err := s.db.Pool().Query(ctx, query, ruleID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query target items: %w", err)
+	}
+	defer rows.Close()
+
+	var items []*ResourceItem
+	for rows.Next() {
+		var item ResourceItem
+		err := rows.Scan(
+			&item.ItemID,
+			&item.ContainerID,
+			&item.TenantID,
+			&item.WorkspaceID,
+			&item.ResourceURI,
+			&item.Protocol,
+			&item.Scope,
+			&item.ItemType,
+			&item.ItemName,
+			&item.ItemDisplayName,
+			&item.ItemPath,
+			&item.DataType,
+			&item.UnifiedDataType,
+			&item.IsNullable,
+			&item.IsPrimaryKey,
+			&item.IsUnique,
+			&item.IsIndexed,
+			&item.IsRequired,
+			&item.IsArray,
+			&item.ArrayDimensions,
+			&item.DefaultValue,
+			&item.MaxLength,
+			&item.Precision,
+			&item.Scale,
+			&item.Description,
+			&item.IsPrivileged,
+			&item.PrivilegedClassification,
+			&item.DetectionConfidence,
+			&item.DetectionMethod,
+			&item.Created,
+			&item.Updated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan target item: %w", err)
+		}
+		items = append(items, &item)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating target items: %w", err)
+	}
+
+	return items, nil
+}
+
+// GetContainerItems retrieves all resource items for a given container
+func (s *Service) GetContainerItems(ctx context.Context, containerID string) ([]*ResourceItem, error) {
+	s.logger.Infof("Retrieving all items for container %s", containerID)
+
+	query := `
+		SELECT item_id, container_id, tenant_id, workspace_id, resource_uri, protocol, scope, item_type,
+		       item_name, item_display_name, item_path, data_type, unified_data_type, is_nullable, is_primary_key, is_unique,
+		       is_indexed, is_required, is_array, array_dimensions, default_value, max_length, precision,
+		       scale, item_comment, is_privileged, privileged_classification, detection_confidence, 
+		       detection_method, created, updated
+		FROM resource_items
+		WHERE container_id = $1
+		ORDER BY COALESCE(ordinal_position, 999999), item_name
+	`
+
+	rows, err := s.db.Pool().Query(ctx, query, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query container items: %w", err)
+	}
+	defer rows.Close()
+
+	var items []*ResourceItem
+	for rows.Next() {
+		var item ResourceItem
+		err := rows.Scan(
+			&item.ItemID,
+			&item.ContainerID,
+			&item.TenantID,
+			&item.WorkspaceID,
+			&item.ResourceURI,
+			&item.Protocol,
+			&item.Scope,
+			&item.ItemType,
+			&item.ItemName,
+			&item.ItemDisplayName,
+			&item.ItemPath,
+			&item.DataType,
+			&item.UnifiedDataType,
+			&item.IsNullable,
+			&item.IsPrimaryKey,
+			&item.IsUnique,
+			&item.IsIndexed,
+			&item.IsRequired,
+			&item.IsArray,
+			&item.ArrayDimensions,
+			&item.DefaultValue,
+			&item.MaxLength,
+			&item.Precision,
+			&item.Scale,
+			&item.Description,
+			&item.IsPrivileged,
+			&item.PrivilegedClassification,
+			&item.DetectionConfidence,
+			&item.DetectionMethod,
+			&item.Created,
+			&item.Updated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan container item: %w", err)
+		}
+		items = append(items, &item)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating container items: %w", err)
+	}
+
+	return items, nil
+}
+
+// CreateFilter creates a single filter for a mapping
+func (s *Service) CreateFilter(ctx context.Context, mappingID string, filterType string, filterExpression map[string]interface{}, filterOrder int, filterOperator string) (*MappingFilter, error) {
+	s.logger.Infof("Creating filter for mapping %s", mappingID)
+
+	filterExpressionJSON, err := json.Marshal(filterExpression)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal filter expression: %w", err)
+	}
+
+	query := `
+		INSERT INTO mapping_filters (mapping_id, filter_type, filter_expression, filter_order, filter_operator)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING filter_id, mapping_id, filter_type, filter_expression, filter_order, filter_operator, created, updated
+	`
+
+	var filter MappingFilter
+	var filterExprBytes []byte
+	err = s.db.Pool().QueryRow(ctx, query, mappingID, filterType, filterExpressionJSON, filterOrder, filterOperator).Scan(
+		&filter.FilterID,
+		&filter.MappingID,
+		&filter.FilterType,
+		&filterExprBytes,
+		&filter.FilterOrder,
+		&filter.FilterOperator,
+		&filter.Created,
+		&filter.Updated,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create filter: %w", err)
+	}
+
+	// Unmarshal filter expression
+	if len(filterExprBytes) > 0 {
+		if err := json.Unmarshal(filterExprBytes, &filter.FilterExpression); err != nil {
+			s.logger.Warnf("Failed to unmarshal filter expression: %v", err)
+		}
+	}
+
+	return &filter, nil
+}
+
+// CreateFilters creates multiple filters for a mapping in batch
+func (s *Service) CreateFilters(ctx context.Context, mappingID string, filters []MappingFilter) error {
+	s.logger.Infof("Creating %d filters for mapping %s", len(filters), mappingID)
+
+	// Begin transaction
+	tx, err := s.db.Pool().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Insert each filter
+	query := `
+		INSERT INTO mapping_filters (mapping_id, filter_type, filter_expression, filter_order, filter_operator)
+		VALUES ($1, $2, $3, $4, $5)
+	`
+
+	for _, filter := range filters {
+		filterExpressionJSON, err := json.Marshal(filter.FilterExpression)
+		if err != nil {
+			return fmt.Errorf("failed to marshal filter expression: %w", err)
+		}
+
+		_, err = tx.Exec(ctx, query, mappingID, filter.FilterType, filterExpressionJSON, filter.FilterOrder, filter.FilterOperator)
+		if err != nil {
+			return fmt.Errorf("failed to create filter: %w", err)
+		}
+	}
+
+	// Commit transaction
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// GetMappingFilters retrieves all filters for a mapping ordered by filter_order
+func (s *Service) GetMappingFilters(ctx context.Context, mappingID string) ([]*MappingFilter, error) {
+	s.logger.Infof("Retrieving filters for mapping %s", mappingID)
+
+	query := `
+		SELECT filter_id, mapping_id, filter_type, filter_expression, filter_order, filter_operator, created, updated
+		FROM mapping_filters
+		WHERE mapping_id = $1
+		ORDER BY filter_order
+	`
+
+	rows, err := s.db.Pool().Query(ctx, query, mappingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query filters: %w", err)
+	}
+	defer rows.Close()
+
+	var filters []*MappingFilter
+	for rows.Next() {
+		var filter MappingFilter
+		var filterExprBytes []byte
+		err := rows.Scan(
+			&filter.FilterID,
+			&filter.MappingID,
+			&filter.FilterType,
+			&filterExprBytes,
+			&filter.FilterOrder,
+			&filter.FilterOperator,
+			&filter.Created,
+			&filter.Updated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan filter: %w", err)
+		}
+
+		// Unmarshal filter expression
+		if len(filterExprBytes) > 0 {
+			if err := json.Unmarshal(filterExprBytes, &filter.FilterExpression); err != nil {
+				s.logger.Warnf("Failed to unmarshal filter expression: %v", err)
+			}
+		}
+
+		filters = append(filters, &filter)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating filters: %w", err)
+	}
+
+	return filters, nil
+}
+
+// UpdateFilter updates a specific filter
+func (s *Service) UpdateFilter(ctx context.Context, filterID string, updates map[string]interface{}) (*MappingFilter, error) {
+	s.logger.Infof("Updating filter %s", filterID)
+
+	if len(updates) == 0 {
+		// Return current filter
+		query := `
+			SELECT filter_id, mapping_id, filter_type, filter_expression, filter_order, filter_operator, created, updated
+			FROM mapping_filters
+			WHERE filter_id = $1
+		`
+
+		var filter MappingFilter
+		var filterExprBytes []byte
+		err := s.db.Pool().QueryRow(ctx, query, filterID).Scan(
+			&filter.FilterID,
+			&filter.MappingID,
+			&filter.FilterType,
+			&filterExprBytes,
+			&filter.FilterOrder,
+			&filter.FilterOperator,
+			&filter.Created,
+			&filter.Updated,
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, errors.New("filter not found")
+			}
+			return nil, fmt.Errorf("failed to get filter: %w", err)
+		}
+
+		// Unmarshal filter expression
+		if len(filterExprBytes) > 0 {
+			if err := json.Unmarshal(filterExprBytes, &filter.FilterExpression); err != nil {
+				s.logger.Warnf("Failed to unmarshal filter expression: %v", err)
+			}
+		}
+
+		return &filter, nil
+	}
+
+	// Build dynamic update query
+	setParts := []string{}
+	args := []interface{}{filterID}
+	argIndex := 2
+
+	for field, value := range updates {
+		switch field {
+		case "filter_type", "filter_order", "filter_operator":
+			setParts = append(setParts, fmt.Sprintf("%s = $%d", field, argIndex))
+			args = append(args, value)
+			argIndex++
+		case "filter_expression":
+			filterExprJSON, err := json.Marshal(value)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal filter expression: %w", err)
+			}
+			setParts = append(setParts, fmt.Sprintf("filter_expression = $%d", argIndex))
+			args = append(args, filterExprJSON)
+			argIndex++
+		default:
+			s.logger.Warnf("Ignoring invalid update field: %s", field)
+		}
+	}
+
+	if len(setParts) == 0 {
+		// No valid updates, return current filter
+		return s.UpdateFilter(ctx, filterID, nil)
+	}
+
+	// Add updated timestamp
+	setParts = append(setParts, "updated = CURRENT_TIMESTAMP")
+
+	setClause := setParts[0]
+	for i := 1; i < len(setParts); i++ {
+		setClause += ", " + setParts[i]
+	}
+
+	query := fmt.Sprintf(`
+		UPDATE mapping_filters
+		SET %s
+		WHERE filter_id = $1
+		RETURNING filter_id, mapping_id, filter_type, filter_expression, filter_order, filter_operator, created, updated
+	`, setClause)
+
+	var filter MappingFilter
+	var filterExprBytes []byte
+	err := s.db.Pool().QueryRow(ctx, query, args...).Scan(
+		&filter.FilterID,
+		&filter.MappingID,
+		&filter.FilterType,
+		&filterExprBytes,
+		&filter.FilterOrder,
+		&filter.FilterOperator,
+		&filter.Created,
+		&filter.Updated,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("filter not found")
+		}
+		return nil, fmt.Errorf("failed to update filter: %w", err)
+	}
+
+	// Unmarshal filter expression
+	if len(filterExprBytes) > 0 {
+		if err := json.Unmarshal(filterExprBytes, &filter.FilterExpression); err != nil {
+			s.logger.Warnf("Failed to unmarshal filter expression: %v", err)
+		}
+	}
+
+	return &filter, nil
+}
+
+// DeleteFilter removes a filter from a mapping
+func (s *Service) DeleteFilter(ctx context.Context, filterID string) error {
+	s.logger.Infof("Deleting filter %s", filterID)
+
+	result, err := s.db.Pool().Exec(ctx, "DELETE FROM mapping_filters WHERE filter_id = $1", filterID)
+	if err != nil {
+		return fmt.Errorf("failed to delete filter: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return errors.New("filter not found")
+	}
+
+	return nil
+}
+
+// ReorderFilters reorders filters for a mapping
+func (s *Service) ReorderFilters(ctx context.Context, mappingID string, filterOrders map[string]int) error {
+	s.logger.Infof("Reordering filters for mapping %s", mappingID)
+
+	// Begin transaction
+	tx, err := s.db.Pool().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Update each filter's order
+	query := `
+		UPDATE mapping_filters
+		SET filter_order = $1, updated = CURRENT_TIMESTAMP
+		WHERE filter_id = $2 AND mapping_id = $3
+	`
+
+	for filterID, newOrder := range filterOrders {
+		_, err = tx.Exec(ctx, query, newOrder, filterID, mappingID)
+		if err != nil {
+			return fmt.Errorf("failed to update filter order for %s: %w", filterID, err)
+		}
+	}
+
+	// Commit transaction
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }

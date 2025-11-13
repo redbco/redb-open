@@ -31,6 +31,8 @@ type Server struct {
 	mcpHandler            *MCPHandlers
 	userHandler           *UserHandlers
 	tenantHandler         *TenantHandlers
+	resourceHandler       *ResourceHandlers
+	dataProductHandler    *DataProductHandlers
 	middleware            *Middleware
 }
 
@@ -57,6 +59,8 @@ func NewServer(engine *Engine) *Server {
 		mcpHandler:            NewMCPHandlers(engine),
 		userHandler:           NewUserHandlers(engine),
 		tenantHandler:         NewTenantHandlers(engine),
+		resourceHandler:       NewResourceHandlers(engine),
+		dataProductHandler:    NewDataProductHandlers(engine),
 		middleware:            NewMiddleware(engine),
 	}
 	s.setupRoutes()
@@ -69,7 +73,7 @@ func (s *Server) setupMiddleware() {
 	s.router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 			if r.Method == "OPTIONS" {
@@ -266,11 +270,18 @@ func (s *Server) setupRoutes() {
 	databases.HandleFunc("/{database_name}/reconnect", s.databaseHandler.ReconnectDatabase).Methods(http.MethodPost)
 	databases.HandleFunc("/{database_name}", s.databaseHandler.ModifyDatabase).Methods(http.MethodPut)
 	databases.HandleFunc("/{database_name}/disconnect", s.databaseHandler.DisconnectDatabase).Methods(http.MethodPost)
+	databases.HandleFunc("/{database_name}/disconnect-metadata", s.databaseHandler.GetDatabaseDisconnectMetadata).Methods(http.MethodGet)
 	databases.HandleFunc("/{database_name}/schema", s.databaseHandler.GetLatestStoredDatabaseSchema).Methods(http.MethodGet)
 	databases.HandleFunc("/{database_name}/wipe", s.databaseHandler.WipeDatabase).Methods(http.MethodPost)
 	databases.HandleFunc("/{database_name}/drop", s.databaseHandler.DropDatabase).Methods(http.MethodPost)
 	databases.HandleFunc("/transform", s.databaseHandler.TransformData).Methods(http.MethodPost)
 	databases.HandleFunc("/clone-database", s.databaseHandler.CloneDatabase).Methods(http.MethodPost)
+
+	// Table data endpoints
+	databases.HandleFunc("/{database_name}/tables/{table_name}/data", s.databaseHandler.FetchTableData).Methods(http.MethodGet)
+	databases.HandleFunc("/{database_name}/tables/{table_name}/data", s.databaseHandler.UpdateTableData).Methods(http.MethodPut)
+	databases.HandleFunc("/{database_name}/tables/{table_name}/wipe", s.databaseHandler.WipeTable).Methods(http.MethodPost)
+	databases.HandleFunc("/{database_name}/tables/{table_name}/drop", s.databaseHandler.DropTable).Methods(http.MethodPost)
 
 	// Repo endpoints (workspace-level)
 	repos := workspaces.PathPrefix("/{workspace_name}/repos").Subrouter()
@@ -368,6 +379,22 @@ func (s *Server) setupRoutes() {
 	relationships.HandleFunc("/{relationship_name}/stop", relationshipOps.StopRelationship).Methods(http.MethodPost)
 	relationships.HandleFunc("/{relationship_name}/resume", relationshipOps.ResumeRelationship).Methods(http.MethodPost)
 	relationships.HandleFunc("/{relationship_name}/remove", relationshipOps.RemoveRelationship).Methods(http.MethodDelete)
+
+	// Resource endpoints (workspace-level)
+	resources := workspaces.PathPrefix("/{workspace_name}/resources").Subrouter()
+	resources.HandleFunc("/containers", s.resourceHandler.ListResourceContainers).Methods(http.MethodGet)
+	resources.HandleFunc("/containers/{container_id}", s.resourceHandler.ShowResourceContainer).Methods(http.MethodGet)
+	resources.HandleFunc("/containers/{container_id}/items", s.resourceHandler.ListResourceItemsForContainer).Methods(http.MethodGet)
+	resources.HandleFunc("/items", s.resourceHandler.ListResourceItems).Methods(http.MethodGet)
+	resources.HandleFunc("/items/{item_id}", s.resourceHandler.ModifyResourceItem).Methods(http.MethodPatch)
+
+	// Data Product endpoints (workspace-level)
+	dataproducts := workspaces.PathPrefix("/{workspace_name}/dataproducts").Subrouter()
+	dataproducts.HandleFunc("", s.dataProductHandler.ListDataProducts).Methods(http.MethodGet)
+	dataproducts.HandleFunc("", s.dataProductHandler.CreateDataProduct).Methods(http.MethodPost)
+	dataproducts.HandleFunc("/{product_name}", s.dataProductHandler.ShowDataProduct).Methods(http.MethodGet)
+	dataproducts.HandleFunc("/{product_name}", s.dataProductHandler.ModifyDataProduct).Methods(http.MethodPut)
+	dataproducts.HandleFunc("/{product_name}", s.dataProductHandler.DeleteDataProduct).Methods(http.MethodDelete)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

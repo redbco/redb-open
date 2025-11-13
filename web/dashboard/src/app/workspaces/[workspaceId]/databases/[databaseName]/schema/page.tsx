@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useMemo } from 'react';
 import { useDatabaseSchema, useDatabase } from '@/lib/hooks/useDatabases';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useToast } from '@/components/ui/Toast';
@@ -14,6 +13,48 @@ import { ModifyTableDialog } from '@/components/databases/schema/ModifyTableDial
 import { AddColumnDialog } from '@/components/databases/schema/AddColumnDialog';
 import { ModifyColumnDialog } from '@/components/databases/schema/ModifyColumnDialog';
 import type { SchemaColumn } from '@/lib/api/types';
+
+// Type for schema items from API response
+interface SchemaItemResponse {
+  item_name: string;
+  item_display_name?: string;
+  data_type: string;
+  unified_data_type?: string;
+  is_nullable: boolean;
+  is_primary_key: boolean;
+  is_unique: boolean;
+  is_indexed: boolean;
+  is_required: boolean;
+  is_array: boolean;
+  default_value?: string;
+  constraints?: Array<Record<string, unknown>>;
+  is_privileged: boolean;
+  privileged_classification?: string;
+  detection_confidence?: number;
+  detection_method?: string;
+  ordinal_position: number;
+  max_length?: number;
+  precision?: number;
+  scale?: number;
+  item_comment?: string;
+}
+
+interface ContainerResponse {
+  object_name: string;
+  object_type: string;
+  database_type?: string;
+  container_classification?: string;
+  container_classification_confidence?: number;
+  container_classification_source?: string;
+  item_count?: number;
+  status?: string;
+  items?: SchemaItemResponse[];
+}
+
+interface TableResponse {
+  name: string;
+  columns: SchemaColumn[];
+}
 
 interface SchemaPageProps {
   params: Promise<{
@@ -33,7 +74,6 @@ export default function SchemaPage({ params }: SchemaPageProps) {
   const [selectedColumn, setSelectedColumn] = useState<SchemaColumn | null>(null);
   const [tableFilter, setTableFilter] = useState<string>('');
   const { showToast } = useToast();
-  const router = useRouter();
 
   // Initialize params
   useEffect(() => {
@@ -48,10 +88,70 @@ export default function SchemaPage({ params }: SchemaPageProps) {
 
   const isLoading = isDatabaseLoading || isSchemaLoading;
 
-  // Filter tables based on search query
-  const filteredTables = schema?.tables?.filter((table) =>
-    table.name.toLowerCase().includes(tableFilter.toLowerCase())
-  ) || [];
+  // Filter and sort containers/tables based on search query (alphabetically by name)
+  const filteredTables = useMemo(() => {
+    // Support both new containers and legacy tables
+    const items = (schema?.containers || schema?.tables || []) as unknown as (ContainerResponse | TableResponse)[];
+    return items
+      .filter((item) => {
+        const name = 'object_name' in item ? item.object_name : item.name;
+        return name.toLowerCase().includes(tableFilter.toLowerCase());
+      })
+      .sort((a, b) => {
+        const nameA = 'object_name' in a ? a.object_name : a.name;
+        const nameB = 'object_name' in b ? b.object_name : b.name;
+        return nameA.localeCompare(nameB);
+      })
+      .map((item) => {
+        // Normalize to a common structure
+        if ('object_name' in item) {
+          // New container format - map items to columns with proper field names
+          const normalizedColumns = (item.items || []).map((schemaItem: SchemaItemResponse): SchemaColumn => ({
+            name: schemaItem.item_name,
+            dataType: schemaItem.data_type,
+            data_type: schemaItem.data_type,
+            isNullable: schemaItem.is_nullable,
+            is_nullable: schemaItem.is_nullable,
+            isPrimaryKey: schemaItem.is_primary_key,
+            is_primary_key: schemaItem.is_primary_key,
+            isUnique: schemaItem.is_unique,
+            is_unique: schemaItem.is_unique,
+            isIndexed: schemaItem.is_indexed,
+            is_indexed: schemaItem.is_indexed,
+            isArray: schemaItem.is_array,
+            defaultValue: schemaItem.default_value,
+            default_value: schemaItem.default_value,
+            constraints: (schemaItem.constraints || []) as unknown as string[],
+            isPrivileged: schemaItem.is_privileged,
+            is_privileged: schemaItem.is_privileged,
+            privilegedClassification: schemaItem.privileged_classification,
+            privileged_classification: schemaItem.privileged_classification,
+            detectionConfidence: schemaItem.detection_confidence,
+            detection_confidence: schemaItem.detection_confidence,
+            detectionMethod: schemaItem.detection_method,
+            detection_method: schemaItem.detection_method,
+            ordinalPosition: schemaItem.ordinal_position,
+            ordinal_position: schemaItem.ordinal_position,
+          }));
+          
+          return {
+            name: item.object_name,
+            object_type: item.object_type,
+            database_type: item.database_type,
+            container_classification: item.container_classification,
+            container_classification_confidence: item.container_classification_confidence,
+            container_classification_source: item.container_classification_source,
+            item_count: item.item_count,
+            status: item.status,
+            columns: normalizedColumns,
+            primaryCategory: item.container_classification,
+            classificationConfidence: item.container_classification_confidence,
+          };
+        }
+        // Legacy table format - already has the correct structure
+        return item;
+      });
+  }, [schema, tableFilter]);
 
   // Handler functions for dialogs
   const handleDeploySchema = async (repoName: string, branchName: string, paradigm?: string) => {
@@ -91,14 +191,14 @@ export default function SchemaPage({ params }: SchemaPageProps) {
     }
   };
 
-  const handleAddColumn = async (tableName: string, columnDef: any) => {
+  const handleAddColumn = async (tableName: string, columnDef: Record<string, unknown>) => {
     try {
       // TODO: Implement actual API call to add column
       console.log('Add column:', { tableName, columnDef });
       showToast({
         type: 'success',
         title: 'Column Added',
-        message: `Column ${columnDef.name} added to ${tableName}`,
+        message: `Column ${columnDef.name as string} added to ${tableName}`,
       });
       refetch();
     } catch (err) {
@@ -110,7 +210,7 @@ export default function SchemaPage({ params }: SchemaPageProps) {
     }
   };
 
-  const handleModifyColumn = async (tableName: string, columnName: string, modifications: any) => {
+  const handleModifyColumn = async (tableName: string, columnName: string, modifications: Record<string, unknown>) => {
     try {
       // TODO: Implement actual API call to modify column
       console.log('Modify column:', { tableName, columnName, modifications });
@@ -277,11 +377,11 @@ export default function SchemaPage({ params }: SchemaPageProps) {
       />
 
       {/* Tables List */}
-      {schema.tables && schema.tables.length > 0 ? (
+      {((schema?.containers && schema.containers.length > 0) || (schema?.tables && schema.tables.length > 0)) ? (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-xl font-semibold text-foreground">
-              Tables ({filteredTables.length}{filteredTables.length !== schema.tables.length ? ` of ${schema.tables.length}` : ''})
+              {schema?.containers ? 'Containers' : 'Tables'} ({filteredTables.length}{filteredTables.length !== (schema?.containers || schema?.tables || []).length ? ` of ${(schema?.containers || schema?.tables || []).length}` : ''})
             </h3>
             <div className="flex items-center gap-3">
               {/* Search/Filter Input */}
@@ -334,7 +434,7 @@ export default function SchemaPage({ params }: SchemaPageProps) {
                     setShowAddColumnDialog(true);
                   }}
                   onModifyColumn={(tableName, columnName) => {
-                    const column = table.columns.find((c) => c.name === columnName);
+                    const column = table.columns.find((c: SchemaColumn) => c.name === columnName);
                     if (column) {
                       setSelectedTable(tableName);
                       setSelectedColumn(column);
@@ -350,7 +450,7 @@ export default function SchemaPage({ params }: SchemaPageProps) {
               <Database className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
               <h3 className="text-lg font-semibold text-foreground mb-1">No Tables Match Filter</h3>
               <p className="text-muted-foreground text-sm mb-4">
-                No tables found matching "{tableFilter}"
+                No tables found matching &ldquo;{tableFilter}&rdquo;
               </p>
               <button
                 onClick={() => setTableFilter('')}
@@ -366,7 +466,7 @@ export default function SchemaPage({ params }: SchemaPageProps) {
           <Database className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
           <h3 className="text-2xl font-semibold text-foreground mb-2">No Tables Found</h3>
           <p className="text-muted-foreground">
-            This database doesn't have any tables yet, or the schema couldn't be detected.
+            This database doesn&apos;t have any tables yet, or the schema couldn&apos;t be detected.
           </p>
         </div>
       )}

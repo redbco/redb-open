@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/mux"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	securityv1 "github.com/redbco/redb-open/api/proto/security/v1"
+	"github.com/redbco/redb-open/pkg/unifiedmodel/resource"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -78,6 +79,23 @@ func (mh *MappingHandlers) ListMappings(w http.ResponseWriter, r *http.Request) 
 	// Convert gRPC response to REST response
 	mappings := make([]Mapping, len(grpcResp.Mappings))
 	for i, mapping := range grpcResp.Mappings {
+		// Extract parsed database and table information
+		sourceDatabaseID, sourceDatabaseName, sourceTableName,
+			targetDatabaseID, targetDatabaseName, targetTableName := mh.extractParsedMappingInfo(
+			mapping.MappingObject,
+			mapping.MappingSourceIdentifier,
+			mapping.MappingTargetIdentifier,
+		)
+
+		// Convert relationship infos from gRPC to REST
+		relationshipInfos := make([]RelationshipInfo, len(mapping.RelationshipInfos))
+		for j, info := range mapping.RelationshipInfos {
+			relationshipInfos[j] = RelationshipInfo{
+				RelationshipName: info.RelationshipName,
+				Status:           convertStatus(info.Status),
+			}
+		}
+
 		mappings[i] = Mapping{
 			TenantID:           mapping.TenantId,
 			WorkspaceID:        mapping.WorkspaceId,
@@ -92,6 +110,20 @@ func (mh *MappingHandlers) ListMappings(w http.ResponseWriter, r *http.Request) 
 			ValidatedAt:        mapping.ValidatedAt,
 			ValidationErrors:   mapping.ValidationErrors,
 			ValidationWarnings: mapping.ValidationWarnings,
+			MappingSourceType:  mapping.MappingSourceType,
+			MappingTargetType:  mapping.MappingTargetType,
+			MappingSource:      mapping.MappingSourceIdentifier,
+			MappingTarget:      mapping.MappingTargetIdentifier,
+			SourceDatabaseID:   sourceDatabaseID,
+			SourceDatabaseName: sourceDatabaseName,
+			SourceTableName:    sourceTableName,
+			TargetDatabaseID:   targetDatabaseID,
+			TargetDatabaseName: targetDatabaseName,
+			TargetTableName:    targetTableName,
+			RelationshipNames:  mapping.RelationshipNames,
+			RelationshipInfos:  relationshipInfos,
+			MCPResourceNames:   mapping.McpResourceNames,
+			MCPToolNames:       mapping.McpToolNames,
 		}
 	}
 
@@ -165,22 +197,74 @@ func (mh *MappingHandlers) ShowMapping(w http.ResponseWriter, r *http.Request) {
 		ValidatedAt:        grpcResp.Mapping.ValidatedAt,
 		ValidationErrors:   grpcResp.Mapping.ValidationErrors,
 		ValidationWarnings: grpcResp.Mapping.ValidationWarnings,
+		MappingSourceType:  grpcResp.Mapping.MappingSourceType,
+		MappingTargetType:  grpcResp.Mapping.MappingTargetType,
+		MappingSource:      grpcResp.Mapping.MappingSourceIdentifier,
+		MappingTarget:      grpcResp.Mapping.MappingTargetIdentifier,
+		RelationshipNames:  grpcResp.Mapping.RelationshipNames,
+		MCPResourceNames:   grpcResp.Mapping.McpResourceNames,
+		MCPToolNames:       grpcResp.Mapping.McpToolNames,
+	}
+
+	// Extract parsed database and table information
+	sourceDatabaseID, sourceDatabaseName, sourceTableName,
+		targetDatabaseID, targetDatabaseName, targetTableName := mh.extractParsedMappingInfo(
+		grpcResp.Mapping.MappingObject,
+		grpcResp.Mapping.MappingSourceIdentifier,
+		grpcResp.Mapping.MappingTargetIdentifier,
+	)
+
+	mapping.SourceDatabaseID = sourceDatabaseID
+	mapping.SourceDatabaseName = sourceDatabaseName
+	mapping.SourceTableName = sourceTableName
+	mapping.TargetDatabaseID = targetDatabaseID
+	mapping.TargetDatabaseName = targetDatabaseName
+	mapping.TargetTableName = targetTableName
+
+	// Convert relationship infos from gRPC to REST
+	relationshipInfos := make([]RelationshipInfo, len(grpcResp.Mapping.RelationshipInfos))
+	for i, info := range grpcResp.Mapping.RelationshipInfos {
+		relationshipInfos[i] = RelationshipInfo{
+			RelationshipName: info.RelationshipName,
+			Status:           convertStatus(info.Status),
+		}
+	}
+	mapping.RelationshipInfos = relationshipInfos
+
+	// Parse mapping object to extract container items
+	if grpcResp.Mapping.MappingObject != "" {
+		var mappingObj map[string]interface{}
+		if err := json.Unmarshal([]byte(grpcResp.Mapping.MappingObject), &mappingObj); err == nil {
+			// Extract source container items
+			if sourceItemsData, ok := mappingObj["source_container_items"].([]interface{}); ok {
+				sourceItems := make([]ResourceItem, 0, len(sourceItemsData))
+				for _, itemData := range sourceItemsData {
+					if itemMap, ok := itemData.(map[string]interface{}); ok {
+						item := mh.mapToResourceItem(itemMap)
+						sourceItems = append(sourceItems, item)
+					}
+				}
+				mapping.SourceContainerItems = sourceItems
+			}
+
+			// Extract target container items
+			if targetItemsData, ok := mappingObj["target_container_items"].([]interface{}); ok {
+				targetItems := make([]ResourceItem, 0, len(targetItemsData))
+				for _, itemData := range targetItemsData {
+					if itemMap, ok := itemData.(map[string]interface{}); ok {
+						item := mh.mapToResourceItem(itemMap)
+						targetItems = append(targetItems, item)
+					}
+				}
+				mapping.TargetContainerItems = targetItems
+			}
+		}
 	}
 
 	// Convert mapping rules (always include, even if empty)
 	mappingRules := make([]MappingRuleInMapping, len(grpcResp.Mapping.MappingRules))
 	for i, rule := range grpcResp.Mapping.MappingRules {
-		mappingRules[i] = MappingRuleInMapping{
-			MappingRuleID:                    rule.MappingRuleId,
-			MappingRuleName:                  rule.MappingRuleName,
-			MappingRuleDescription:           rule.MappingRuleDescription,
-			MappingRuleMetadata:              mh.parseJSONString(rule.MappingRuleMetadata),
-			MappingRuleSource:                rule.MappingRuleSource,
-			MappingRuleTarget:                rule.MappingRuleTarget,
-			MappingRuleTransformationID:      rule.MappingRuleTransformationId,
-			MappingRuleTransformationName:    rule.MappingRuleTransformationName,
-			MappingRuleTransformationOptions: rule.MappingRuleTransformationOptions,
-		}
+		mappingRules[i] = mh.protoToMappingRuleInMapping(rule)
 	}
 	mapping.MappingRules = mappingRules
 
@@ -291,6 +375,13 @@ func (mh *MappingHandlers) AddMapping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Default generate_rules to true if not explicitly set in request
+	// Note: Using pointer allows us to distinguish between "not provided" and "explicitly set to false"
+	generateRules := true
+	if req.GenerateRules != nil {
+		generateRules = *req.GenerateRules
+	}
+
 	// Call core service gRPC with unified request
 	grpcReq := &corev1.AddMappingRequest{
 		TenantId:           profile.TenantId,
@@ -301,6 +392,7 @@ func (mh *MappingHandlers) AddMapping(w http.ResponseWriter, r *http.Request) {
 		Scope:              req.Scope,
 		Source:             req.Source,
 		Target:             req.Target,
+		GenerateRules:      generateRules,
 	}
 
 	if req.PolicyID != "" {
@@ -1337,12 +1429,41 @@ func (mh *MappingHandlers) writeErrorResponse(w http.ResponseWriter, statusCode 
 	mh.writeJSONResponse(w, statusCode, response)
 }
 
-// parseSourceTarget parses database[.table] format
+// parseSourceTarget parses database[.table] format or redb:// URI format
+// For URIs, it extracts the table name for validation purposes
+// The database field in the return value may be a database ID for URIs
 func (mh *MappingHandlers) parseSourceTarget(input string) (database, table string, err error) {
 	if input == "" {
 		return "", "", fmt.Errorf("source/target cannot be empty")
 	}
 
+	// Check if input is a URI (redb://, mcp://, stream://, webhook://)
+	if strings.Contains(input, "://") {
+		// Parse as URI
+		addr, err := resource.ParseResourceURI(input)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to parse URI: %w", err)
+		}
+
+		// For database resources (redb://), extract database ID and table name
+		if addr.Protocol == resource.ProtocolDatabase {
+			// Extract table name if present (for validation)
+			tableName := ""
+			if addr.ObjectType == resource.ObjectTypeTable {
+				tableName = addr.ObjectName
+			}
+
+			// Return database ID as the database identifier
+			// The core service will handle the actual resolution
+			return addr.DatabaseID, tableName, nil
+		}
+
+		// For non-database resources (MCP, stream, webhook), return the URI as-is in the database field
+		// The table field remains empty for these resources
+		return input, "", nil
+	}
+
+	// Legacy format: database[.table]
 	parts := strings.Split(input, ".")
 	if len(parts) == 1 {
 		// Only database name
@@ -1353,6 +1474,111 @@ func (mh *MappingHandlers) parseSourceTarget(input string) (database, table stri
 	} else {
 		return "", "", fmt.Errorf("invalid format '%s': expected 'database' or 'database.table'", input)
 	}
+}
+
+// getDatabaseNameByID is a placeholder for future database ID resolution
+// Currently not used as the core service handles ID resolution
+func (mh *MappingHandlers) getDatabaseNameByID(ctx context.Context, databaseID string) (string, error) {
+	// This method is kept for future use when client-side validation might need it
+	// For now, we return the database ID as-is since the core service will resolve it
+	return databaseID, nil
+}
+
+// parseResourceURI parses a redb:// URI and extracts database ID and table name
+// Format: redb://data/database/{db_id}/table/{table_name}
+// Returns empty table name for database-level URIs
+func parseResourceURI(uri string) (databaseID, tableName string, err error) {
+	if uri == "" {
+		return "", "", nil
+	}
+
+	// Check if it's a redb:// URI
+	if !strings.HasPrefix(uri, "redb://") && !strings.HasPrefix(uri, "redb:/") {
+		return "", "", fmt.Errorf("not a redb:// URI")
+	}
+
+	// Use the resource package parser
+	addr, parseErr := resource.ParseResourceURI(uri)
+	if parseErr != nil {
+		return "", "", fmt.Errorf("failed to parse URI: %w", parseErr)
+	}
+
+	// Extract database ID
+	databaseID = addr.DatabaseID
+
+	// Extract table name if it's a table-level resource
+	if addr.ObjectType == resource.ObjectTypeTable {
+		tableName = addr.ObjectName
+	}
+
+	return databaseID, tableName, nil
+}
+
+// extractParsedMappingInfo extracts parsed database and table information from mapping_object
+// and resource URIs. This is used to populate the convenience fields in the REST API response.
+func (mh *MappingHandlers) extractParsedMappingInfo(mappingObjectJSON, sourceURI, targetURI string) (
+	sourceDatabaseID, sourceDatabaseName, sourceTableName,
+	targetDatabaseID, targetDatabaseName, targetTableName string) {
+
+	// First, try to extract from mapping_object JSON (preferred method)
+	if mappingObjectJSON != "" {
+		var mappingObj map[string]interface{}
+		if err := json.Unmarshal([]byte(mappingObjectJSON), &mappingObj); err == nil {
+			// Extract source information
+			if val, ok := mappingObj["source_database_id"].(string); ok {
+				sourceDatabaseID = val
+			}
+			if val, ok := mappingObj["source_database_name"].(string); ok {
+				sourceDatabaseName = val
+			}
+			if val, ok := mappingObj["source_table_name"].(string); ok {
+				sourceTableName = val
+			}
+
+			// Extract target information
+			if val, ok := mappingObj["target_database_id"].(string); ok {
+				targetDatabaseID = val
+			}
+			if val, ok := mappingObj["target_database_name"].(string); ok {
+				targetDatabaseName = val
+			}
+			if val, ok := mappingObj["target_table_name"].(string); ok {
+				targetTableName = val
+			}
+
+			// If we found database names from mapping_object, we're done
+			if sourceDatabaseName != "" && targetDatabaseName != "" {
+				return
+			}
+		}
+	}
+
+	// Fallback: Parse the resource URIs to extract database IDs and table names
+	if sourceURI != "" {
+		dbID, tableName, err := parseResourceURI(sourceURI)
+		if err == nil {
+			if sourceDatabaseID == "" {
+				sourceDatabaseID = dbID
+			}
+			if sourceTableName == "" {
+				sourceTableName = tableName
+			}
+		}
+	}
+
+	if targetURI != "" {
+		dbID, tableName, err := parseResourceURI(targetURI)
+		if err == nil {
+			if targetDatabaseID == "" {
+				targetDatabaseID = dbID
+			}
+			if targetTableName == "" {
+				targetTableName = tableName
+			}
+		}
+	}
+
+	return
 }
 
 // convertToResourceURI converts database.table.column format to redb:// URI format
@@ -1956,11 +2182,36 @@ func (mh *MappingHandlers) protoToMappingRule(proto *corev1.MappingRule) Mapping
 // Helper function to convert proto MappingRule to REST MappingRuleInMapping
 func (mh *MappingHandlers) protoToMappingRuleInMapping(proto *corev1.MappingRule) MappingRuleInMapping {
 	var metadata interface{}
+	var sourceItems []ResourceItem
+	var targetItems []ResourceItem
+
 	if proto.MappingRuleMetadata != "" {
 		// Try to parse as JSON
 		var metadataObj map[string]interface{}
 		if err := json.Unmarshal([]byte(proto.MappingRuleMetadata), &metadataObj); err == nil {
 			metadata = metadataObj
+
+			// Extract source_items if present
+			if sourceItemsData, ok := metadataObj["source_items"].([]interface{}); ok {
+				sourceItems = make([]ResourceItem, 0, len(sourceItemsData))
+				for _, itemData := range sourceItemsData {
+					if itemMap, ok := itemData.(map[string]interface{}); ok {
+						item := mh.mapToResourceItem(itemMap)
+						sourceItems = append(sourceItems, item)
+					}
+				}
+			}
+
+			// Extract target_items if present
+			if targetItemsData, ok := metadataObj["target_items"].([]interface{}); ok {
+				targetItems = make([]ResourceItem, 0, len(targetItemsData))
+				for _, itemData := range targetItemsData {
+					if itemMap, ok := itemData.(map[string]interface{}); ok {
+						item := mh.mapToResourceItem(itemMap)
+						targetItems = append(targetItems, item)
+					}
+				}
+			}
 		} else {
 			metadata = proto.MappingRuleMetadata
 		}
@@ -1976,7 +2227,119 @@ func (mh *MappingHandlers) protoToMappingRuleInMapping(proto *corev1.MappingRule
 		MappingRuleTransformationID:      proto.MappingRuleTransformationId,
 		MappingRuleTransformationName:    proto.MappingRuleTransformationName,
 		MappingRuleTransformationOptions: proto.MappingRuleTransformationOptions,
+		SourceItems:                      sourceItems,
+		TargetItems:                      targetItems,
 	}
+}
+
+// Helper function to convert map to ResourceItem
+func (mh *MappingHandlers) mapToResourceItem(m map[string]interface{}) ResourceItem {
+	item := ResourceItem{}
+
+	if v, ok := m["item_id"].(string); ok {
+		item.ItemID = v
+	}
+	if v, ok := m["container_id"].(string); ok {
+		item.ContainerID = v
+	}
+	if v, ok := m["tenant_id"].(string); ok {
+		item.TenantID = v
+	}
+	if v, ok := m["workspace_id"].(string); ok {
+		item.WorkspaceID = v
+	}
+	if v, ok := m["resource_uri"].(string); ok {
+		item.ResourceURI = v
+	}
+	if v, ok := m["protocol"].(string); ok {
+		item.Protocol = v
+	}
+	if v, ok := m["scope"].(string); ok {
+		item.Scope = v
+	}
+	if v, ok := m["item_type"].(string); ok {
+		item.ItemType = v
+	}
+	if v, ok := m["item_name"].(string); ok {
+		item.ItemName = v
+	}
+	if v, ok := m["item_display_name"].(string); ok {
+		item.ItemDisplayName = v
+	}
+	if v, ok := m["item_path"].([]interface{}); ok {
+		paths := make([]string, 0, len(v))
+		for _, p := range v {
+			if ps, ok := p.(string); ok {
+				paths = append(paths, ps)
+			}
+		}
+		item.ItemPath = paths
+	}
+	if v, ok := m["data_type"].(string); ok {
+		item.DataType = v
+	}
+	if v, ok := m["unified_data_type"].(string); ok {
+		item.UnifiedDataType = &v
+	}
+	if v, ok := m["is_nullable"].(bool); ok {
+		item.IsNullable = v
+	}
+	if v, ok := m["is_primary_key"].(bool); ok {
+		item.IsPrimaryKey = v
+	}
+	if v, ok := m["is_unique"].(bool); ok {
+		item.IsUnique = v
+	}
+	if v, ok := m["is_indexed"].(bool); ok {
+		item.IsIndexed = v
+	}
+	if v, ok := m["is_required"].(bool); ok {
+		item.IsRequired = v
+	}
+	if v, ok := m["is_array"].(bool); ok {
+		item.IsArray = v
+	}
+	if v, ok := m["array_dimensions"].(float64); ok {
+		item.ArrayDimensions = int(v)
+	}
+	if v, ok := m["default_value"].(string); ok {
+		item.DefaultValue = &v
+	}
+	if v, ok := m["max_length"].(float64); ok {
+		intVal := int(v)
+		item.MaxLength = &intVal
+	}
+	if v, ok := m["precision"].(float64); ok {
+		intVal := int(v)
+		item.Precision = &intVal
+	}
+	if v, ok := m["scale"].(float64); ok {
+		intVal := int(v)
+		item.Scale = &intVal
+	}
+	if v, ok := m["description"].(string); ok {
+		item.Description = &v
+	}
+	if v, ok := m["is_privileged"].(bool); ok {
+		item.IsPrivileged = v
+	}
+	if v, ok := m["privileged_classification"].(string); ok {
+		item.PrivilegedClassification = &v
+	}
+	if v, ok := m["detection_confidence"].(float64); ok {
+		item.DetectionConfidence = &v
+	}
+	if v, ok := m["detection_method"].(string); ok {
+		item.DetectionMethod = &v
+	}
+	if v, ok := m["created"].(string); ok {
+		item.Created = v
+	}
+	if v, ok := m["updated"].(string); ok {
+		item.Updated = v
+	}
+
+	return item
 }
 
 // ValidateMapping handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/mappings/{mapping_name}/validate

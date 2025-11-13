@@ -123,12 +123,38 @@ type ModifyDatabaseResponse struct {
 type DisconnectDatabaseRequest struct {
 	DeleteDatabaseObject *bool `json:"delete_database_object,omitempty"`
 	DeleteRepo           *bool `json:"delete_repo,omitempty"`
+	DeleteBranch         *bool `json:"delete_branch,omitempty"`
+	DisconnectInstance   *bool `json:"disconnect_instance,omitempty"`
 }
 
 type DisconnectDatabaseResponse struct {
 	Message string `json:"message"`
 	Success bool   `json:"success"`
 	Status  Status `json:"status"`
+}
+
+type DatabaseDisconnectMetadata struct {
+	DatabaseName                string `json:"database_name"`
+	InstanceName                string `json:"instance_name"`
+	IsLastDatabaseInInstance    bool   `json:"is_last_database_in_instance"`
+	TotalDatabasesInInstance    int32  `json:"total_databases_in_instance"`
+	HasAttachedBranch           bool   `json:"has_attached_branch"`
+	AttachedRepoName            string `json:"attached_repo_name,omitempty"`
+	AttachedBranchName          string `json:"attached_branch_name,omitempty"`
+	IsOnlyBranchInRepo          bool   `json:"is_only_branch_in_repo"`
+	TotalBranchesInRepo         int32  `json:"total_branches_in_repo"`
+	HasOtherDatabasesOnBranch   bool   `json:"has_other_databases_on_branch"`
+	CanDeleteBranchOnly         bool   `json:"can_delete_branch_only"`
+	CanDeleteEntireRepo         bool   `json:"can_delete_entire_repo"`
+	ShouldDeleteRepo            bool   `json:"should_delete_repo"`
+	ShouldDeleteBranch          bool   `json:"should_delete_branch"`
+}
+
+type GetDatabaseDisconnectMetadataResponse struct {
+	Message  string                      `json:"message"`
+	Success  bool                        `json:"success"`
+	Status   Status                      `json:"status"`
+	Metadata DatabaseDisconnectMetadata  `json:"metadata"`
 }
 
 type GetLatestStoredDatabaseSchemaResponse struct {

@@ -15,17 +15,22 @@ interface ColumnRowProps {
 export function ColumnRow({ column, tableName, onModify, onDrop }: ColumnRowProps) {
   const [showActions, setShowActions] = useState(false);
 
-  // Normalize field names (handle both camelCase and snake_case)
+  // Normalize field names (handle both camelCase and snake_case) - data from enriched schema endpoint
   const isPrimaryKey = column.isPrimaryKey || column.is_primary_key || false;
   const isAutoIncrement = column.isAutoIncrement || column.is_auto_increment || false;
-  const isNullable = column.isNullable ?? true;
-  const isUnique = column.isUnique || false;
+  const isNullable = column.isNullable ?? column.is_nullable ?? true;
+  const isUnique = column.isUnique || column.is_unique || false;
+  const isIndexed = column.isIndexed || column.is_indexed || false;
   const varcharLength = column.varcharLength || column.varchar_length;
   const dataCategory = column.dataCategory || column.data_category || 'standard';
-  const isPrivileged = column.isPrivilegedData || column.is_privileged_data || false;
-  const privilegedConfidence = column.privilegedConfidence || column.privileged_confidence || 0;
+  const isPrivileged = column.isPrivileged || column.is_privileged || false;
+  const privilegedConfidence = column.detectionConfidence || column.detection_confidence || 0;
   const privilegedDescription = column.privilegedDescription || column.privileged_description;
-  const dataType = column.dataType || column.type || 'unknown';
+  const privilegedClassification = column.privilegedClassification || column.privileged_classification;
+  const detectionMethod = column.detectionMethod || column.detection_method;
+  const dataType = column.dataType || column.type || column.data_type || 'unknown';
+  const columnDefault = column.columnDefault || column.column_default || column.defaultValue || column.default_value;
+  const constraints = column.constraints || [];
 
   // Format data type with length if applicable
   const formattedType = varcharLength ? `${dataType}(${varcharLength})` : dataType;
@@ -66,7 +71,7 @@ export function ColumnRow({ column, tableName, onModify, onDrop }: ColumnRowProp
         </div>
 
         {/* Constraints */}
-        <div className="md:col-span-2 flex items-center gap-1">
+        <div className="md:col-span-2 flex items-center gap-1 flex-wrap">
           {!isNullable && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 text-xs">
               NOT NULL
@@ -77,17 +82,32 @@ export function ColumnRow({ column, tableName, onModify, onDrop }: ColumnRowProp
               UNIQUE
             </span>
           )}
+          {isIndexed && !isPrimaryKey && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 text-xs">
+              INDEXED
+            </span>
+          )}
+          {columnDefault && (
+            <span 
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400 text-xs"
+              title={`Default: ${columnDefault}`}
+            >
+              DEFAULT
+            </span>
+          )}
         </div>
 
-        {/* Data Category & Privileged Data */}
+        {/* Data Category & Privileged Data (from enriched schema endpoint) */}
         <div className="md:col-span-4">
           <PrivilegedDataBadge
             dataCategory={dataCategory}
             isPrivileged={isPrivileged}
             confidence={privilegedConfidence}
             description={privilegedDescription}
+            classification={privilegedClassification}
+            detectionMethod={detectionMethod}
           />
-          {!isPrivileged && dataCategory !== 'standard' && (
+          {!isPrivileged && dataCategory !== 'standard' && dataCategory && (
             <span className="inline-flex items-center px-2 py-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 text-xs font-medium">
               {dataCategory}
             </span>

@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -632,4 +633,419 @@ func (s *Service) GetDatabaseTables(ctx context.Context, databaseID string) (str
 	}
 
 	return tables, nil
+}
+
+// SchemaItem represents an item in a resource container
+type SchemaItem struct {
+	ItemName                 string                   `json:"item_name"`
+	ItemDisplayName          string                   `json:"item_display_name,omitempty"`
+	DataType                 string                   `json:"data_type"`
+	UnifiedDataType          *string                  `json:"unified_data_type,omitempty"`
+	IsNullable               bool                     `json:"is_nullable"`
+	IsPrimaryKey             bool                     `json:"is_primary_key"`
+	IsUnique                 bool                     `json:"is_unique"`
+	IsIndexed                bool                     `json:"is_indexed"`
+	IsRequired               bool                     `json:"is_required"`
+	IsArray                  bool                     `json:"is_array"`
+	DefaultValue             *string                  `json:"default_value,omitempty"`
+	Constraints              []map[string]interface{} `json:"constraints,omitempty"`
+	IsPrivileged             bool                     `json:"is_privileged"`
+	PrivilegedClassification *string                  `json:"privileged_classification,omitempty"`
+	DetectionConfidence      *float64                 `json:"detection_confidence,omitempty"`
+	DetectionMethod          *string                  `json:"detection_method,omitempty"`
+	OrdinalPosition          int32                    `json:"ordinal_position"`
+	MaxLength                *int                     `json:"max_length,omitempty"`
+	Precision                *int                     `json:"precision,omitempty"`
+	Scale                    *int                     `json:"scale,omitempty"`
+	ItemComment              *string                  `json:"item_comment,omitempty"`
+}
+
+// SchemaContainer represents a resource container with its items
+type SchemaContainer struct {
+	ObjectType                        string                 `json:"object_type"`
+	ObjectName                        string                 `json:"object_name"`
+	ContainerClassification           *string                `json:"container_classification,omitempty"`
+	ContainerClassificationConfidence *float64               `json:"container_classification_confidence,omitempty"`
+	ContainerClassificationSource     string                 `json:"container_classification_source"`
+	ContainerMetadata                 map[string]interface{} `json:"container_metadata,omitempty"`
+	EnrichedMetadata                  map[string]interface{} `json:"enriched_metadata,omitempty"`
+	DatabaseType                      *string                `json:"database_type,omitempty"`
+	Vendor                            *string                `json:"vendor,omitempty"`
+	ItemCount                         int                    `json:"item_count"`
+	Status                            string                 `json:"status"`
+	Items                             []SchemaItem           `json:"items"`
+}
+
+// SchemaResponse represents the complete schema response
+type SchemaResponse struct {
+	Containers []SchemaContainer `json:"containers"`
+}
+
+// GetSchemaFromResourceRegistry retrieves the database schema from resource_containers and resource_items tables
+func (s *Service) GetSchemaFromResourceRegistry(ctx context.Context, tenantID, databaseID string) (*SchemaResponse, error) {
+	s.logger.Infof("Getting schema from resource registry for database: %s", databaseID)
+
+	// Query resource_containers for this database
+	containersQuery := `
+		SELECT 
+			container_id,
+			object_type,
+			object_name,
+			container_classification,
+			container_classification_confidence,
+			container_classification_source,
+			container_metadata,
+			enriched_metadata,
+			database_type,
+			vendor,
+			item_count,
+			status
+		FROM resource_containers
+		WHERE database_id = $1 AND tenant_id = $2
+		ORDER BY object_type, object_name
+	`
+
+	containerRows, err := s.db.Pool().Query(ctx, containersQuery, databaseID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query resource_containers: %w", err)
+	}
+	defer containerRows.Close()
+
+	schemaResponse := &SchemaResponse{
+		Containers: []SchemaContainer{},
+	}
+
+	// Process each container
+	for containerRows.Next() {
+		var containerID string
+		var objectType, objectName, classificationSource, statusStr string
+		var classification, databaseType, vendor *string
+		var classificationConfidence *float64
+		var containerMetadataJSON, enrichedMetadataJSON []byte
+		var itemCount int
+
+		err := containerRows.Scan(
+			&containerID,
+			&objectType,
+			&objectName,
+			&classification,
+			&classificationConfidence,
+			&classificationSource,
+			&containerMetadataJSON,
+			&enrichedMetadataJSON,
+			&databaseType,
+			&vendor,
+			&itemCount,
+			&statusStr,
+		)
+		if err != nil {
+			s.logger.Warnf("Failed to scan container row: %v", err)
+			continue
+		}
+
+		container := SchemaContainer{
+			ObjectType:                        objectType,
+			ObjectName:                        objectName,
+			ContainerClassification:           classification,
+			ContainerClassificationConfidence: classificationConfidence,
+			ContainerClassificationSource:     classificationSource,
+			DatabaseType:                      databaseType,
+			Vendor:                            vendor,
+			ItemCount:                         itemCount,
+			Status:                            statusStr,
+			Items:                             []SchemaItem{},
+		}
+
+		// Parse container metadata
+		if len(containerMetadataJSON) > 0 {
+			var metadata map[string]interface{}
+			if err := json.Unmarshal(containerMetadataJSON, &metadata); err == nil {
+				container.ContainerMetadata = metadata
+			}
+		}
+
+		// Parse enriched metadata
+		if len(enrichedMetadataJSON) > 0 {
+			var enriched map[string]interface{}
+			if err := json.Unmarshal(enrichedMetadataJSON, &enriched); err == nil {
+				container.EnrichedMetadata = enriched
+			}
+		}
+
+		// Query resource_items for this container
+		itemsQuery := `
+			SELECT 
+				item_name,
+				item_display_name,
+				data_type,
+				unified_data_type,
+				is_nullable,
+				is_primary_key,
+				is_unique,
+				is_indexed,
+				is_required,
+				is_array,
+				default_value,
+				constraints,
+				is_privileged,
+				privileged_classification,
+				detection_confidence,
+				detection_method,
+				ordinal_position,
+				max_length,
+				precision,
+				scale,
+				item_comment
+			FROM resource_items
+			WHERE container_id = $1 AND tenant_id = $2
+			ORDER BY COALESCE(ordinal_position, 999999), item_name
+		`
+
+		itemRows, err := s.db.Pool().Query(ctx, itemsQuery, containerID, tenantID)
+		if err != nil {
+			s.logger.Warnf("Failed to query resource_items for container %s: %v", containerID, err)
+			continue
+		}
+
+		// Process each item
+		for itemRows.Next() {
+			var itemName, itemDisplayName, dataType string
+			var unifiedDataType, defaultValue, privClass, detectionMethod, itemComment *string
+			var isNullable, isPrimaryKey, isUnique, isIndexed, isRequired, isArray, isPrivileged bool
+			var constraintsJSON []byte
+			var detectionConfidence *float64
+			var ordinalPosition *int32
+			var maxLength, precision, scale *int32
+
+			err := itemRows.Scan(
+				&itemName,
+				&itemDisplayName,
+				&dataType,
+				&unifiedDataType,
+				&isNullable,
+				&isPrimaryKey,
+				&isUnique,
+				&isIndexed,
+				&isRequired,
+				&isArray,
+				&defaultValue,
+				&constraintsJSON,
+				&isPrivileged,
+				&privClass,
+				&detectionConfidence,
+				&detectionMethod,
+				&ordinalPosition,
+				&maxLength,
+				&precision,
+				&scale,
+				&itemComment,
+			)
+			if err != nil {
+				s.logger.Warnf("Failed to scan item row: %v", err)
+				continue
+			}
+
+			item := SchemaItem{
+				ItemName:                 itemName,
+				ItemDisplayName:          itemDisplayName,
+				DataType:                 dataType,
+				UnifiedDataType:          unifiedDataType,
+				IsNullable:               isNullable,
+				IsPrimaryKey:             isPrimaryKey,
+				IsUnique:                 isUnique,
+				IsIndexed:                isIndexed,
+				IsRequired:               isRequired,
+				IsArray:                  isArray,
+				IsPrivileged:             isPrivileged,
+				PrivilegedClassification: privClass,
+				DetectionConfidence:      detectionConfidence,
+				DetectionMethod:          detectionMethod,
+				DefaultValue:             defaultValue,
+				ItemComment:              itemComment,
+			}
+
+			if ordinalPosition != nil {
+				item.OrdinalPosition = *ordinalPosition
+			} else {
+				item.OrdinalPosition = 0
+			}
+
+			if maxLength != nil {
+				maxLenInt := int(*maxLength)
+				item.MaxLength = &maxLenInt
+			}
+			if precision != nil {
+				precInt := int(*precision)
+				item.Precision = &precInt
+			}
+			if scale != nil {
+				scaleInt := int(*scale)
+				item.Scale = &scaleInt
+			}
+
+			// Parse constraints
+			if len(constraintsJSON) > 0 {
+				var constraints []map[string]interface{}
+				if err := json.Unmarshal(constraintsJSON, &constraints); err == nil {
+					item.Constraints = constraints
+				}
+			}
+
+			container.Items = append(container.Items, item)
+		}
+		itemRows.Close()
+
+		schemaResponse.Containers = append(schemaResponse.Containers, container)
+	}
+
+	return schemaResponse, nil
+}
+
+// GetTableSchemaFromResourceRegistry retrieves column schema for a specific table from resource_containers and resource_items
+func (s *Service) GetTableSchemaFromResourceRegistry(ctx context.Context, tenantID, databaseID, tableName string) ([]SchemaItem, error) {
+	s.logger.Infof("Getting table schema from resource registry for table: %s in database: %s", tableName, databaseID)
+
+	// First, find the container_id for this table
+	containerQuery := `
+		SELECT container_id
+		FROM resource_containers
+		WHERE database_id = $1 AND tenant_id = $2 AND object_type = 'table' AND object_name = $3
+		LIMIT 1
+	`
+
+	var containerID string
+	err := s.db.Pool().QueryRow(ctx, containerQuery, databaseID, tenantID, tableName).Scan(&containerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find table container: %w", err)
+	}
+
+	// Query resource_items for this container
+	itemsQuery := `
+		SELECT 
+			item_name,
+			item_display_name,
+			data_type,
+			unified_data_type,
+			is_nullable,
+			is_primary_key,
+			is_unique,
+			is_indexed,
+			is_required,
+			is_array,
+			default_value,
+			constraints,
+			is_privileged,
+			privileged_classification,
+			detection_confidence,
+			detection_method,
+			ordinal_position,
+			max_length,
+			precision,
+			scale,
+			item_comment
+		FROM resource_items
+		WHERE container_id = $1 AND tenant_id = $2
+		ORDER BY COALESCE(ordinal_position, 999999), item_name
+	`
+
+	itemRows, err := s.db.Pool().Query(ctx, itemsQuery, containerID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query resource_items: %w", err)
+	}
+	defer itemRows.Close()
+
+	var items []SchemaItem
+
+	// Process each item
+	for itemRows.Next() {
+		var itemName, itemDisplayName, dataType string
+		var unifiedDataType, defaultValue, privClass, detectionMethod, itemComment *string
+		var isNullable, isPrimaryKey, isUnique, isIndexed, isRequired, isArray, isPrivileged bool
+		var constraintsJSON []byte
+		var detectionConfidence *float64
+		var ordinalPosition *int32
+		var maxLength, precision, scale *int32
+
+		err := itemRows.Scan(
+			&itemName,
+			&itemDisplayName,
+			&dataType,
+			&unifiedDataType,
+			&isNullable,
+			&isPrimaryKey,
+			&isUnique,
+			&isIndexed,
+			&isRequired,
+			&isArray,
+			&defaultValue,
+			&constraintsJSON,
+			&isPrivileged,
+			&privClass,
+			&detectionConfidence,
+			&detectionMethod,
+			&ordinalPosition,
+			&maxLength,
+			&precision,
+			&scale,
+			&itemComment,
+		)
+		if err != nil {
+			s.logger.Warnf("Failed to scan item row: %v", err)
+			continue
+		}
+
+		item := SchemaItem{
+			ItemName:                 itemName,
+			ItemDisplayName:          itemDisplayName,
+			DataType:                 dataType,
+			UnifiedDataType:          unifiedDataType,
+			IsNullable:               isNullable,
+			IsPrimaryKey:             isPrimaryKey,
+			IsUnique:                 isUnique,
+			IsIndexed:                isIndexed,
+			IsRequired:               isRequired,
+			IsArray:                  isArray,
+			IsPrivileged:             isPrivileged,
+			PrivilegedClassification: privClass,
+			DetectionConfidence:      detectionConfidence,
+			DetectionMethod:          detectionMethod,
+			DefaultValue:             defaultValue,
+			ItemComment:              itemComment,
+		}
+
+		if ordinalPosition != nil {
+			item.OrdinalPosition = *ordinalPosition
+		} else {
+			item.OrdinalPosition = 0
+		}
+
+		if maxLength != nil {
+			maxLenInt := int(*maxLength)
+			item.MaxLength = &maxLenInt
+		}
+		if precision != nil {
+			precInt := int(*precision)
+			item.Precision = &precInt
+		}
+		if scale != nil {
+			scaleInt := int(*scale)
+			item.Scale = &scaleInt
+		}
+
+		// Parse constraints
+		if len(constraintsJSON) > 0 {
+			var constraints []map[string]interface{}
+			if err := json.Unmarshal(constraintsJSON, &constraints); err == nil {
+				item.Constraints = constraints
+			}
+		}
+
+		items = append(items, item)
+	}
+
+	if err := itemRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating item rows: %w", err)
+	}
+
+	return items, nil
 }

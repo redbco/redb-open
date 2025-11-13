@@ -166,73 +166,31 @@ export function useDatabaseSchema(workspaceName: string, databaseName: string) {
     
     try {
       setIsLoading(true);
-      // Fetch the database details which includes schema and tables data
-      const response = await api.databases.show(workspaceName, databaseName);
+      // Use the dedicated schema endpoint which enriches data from resource_items
+      const response = await api.databases.getSchema(workspaceName, databaseName);
       
-      // Parse the schema from database_tables (primary) or database_schema (fallback)
-      let parsedSchema: DatabaseSchema | null = null;
-      
-      if (response.database.database_tables) {
-        try {
-          // The database_tables field contains the schema with table information
-          let tablesString = response.database.database_tables;
-          
-          // Unescape if needed (handle double-encoded JSON)
-          if (tablesString.startsWith('"') && tablesString.endsWith('"')) {
-            tablesString = tablesString.slice(1, -1);
-            tablesString = tablesString.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-          }
-          
-          const tablesData = JSON.parse(tablesString);
-          
-          // The parsed data might be a TablesData structure with a 'tables' field,
-          // or it might already be a DatabaseSchema structure
-          if (tablesData.tables && Array.isArray(tablesData.tables)) {
-            parsedSchema = tablesData;
-          } else if (Array.isArray(tablesData)) {
-            // If it's directly an array, wrap it in the expected structure
-            parsedSchema = { tables: tablesData };
-          } else {
-            parsedSchema = tablesData;
-          }
-          
-          console.log('Parsed schema from database_tables:', parsedSchema);
-        } catch (parseErr) {
-          console.error('Failed to parse database_tables:', parseErr, response.database.database_tables);
-        }
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to fetch schema');
       }
       
-      // Fallback to database_schema if database_tables is not available
-      if (!parsedSchema && response.database.database_schema) {
-        try {
-          let schemaString = response.database.database_schema;
-          
-          // Unescape if needed (handle double-encoded JSON)
-          if (schemaString.startsWith('"') && schemaString.endsWith('"')) {
-            schemaString = schemaString.slice(1, -1);
-            schemaString = schemaString.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-          }
-          
-          parsedSchema = JSON.parse(schemaString);
-          console.log('Parsed schema from database_schema:', parsedSchema);
-        } catch (parseErr) {
-          console.error('Failed to parse database_schema:', parseErr, response.database.database_schema);
-        }
-      }
+      // The schema is already parsed and enriched with resource_items data
+      const parsedSchema = response.schema;
       
       if (!parsedSchema) {
         throw new Error('No schema data available for this database');
       }
       
-      // Ensure we have a tables array
-      if (!parsedSchema.tables) {
-        console.warn('Schema does not contain tables array:', parsedSchema);
-        parsedSchema = { ...parsedSchema, tables: [] };
+      // Check for new containers structure first, then fall back to legacy tables
+      if (!parsedSchema.containers && !parsedSchema.tables) {
+        console.warn('Schema does not contain containers or tables:', parsedSchema);
+        setSchema({ ...parsedSchema, containers: [], tables: [] });
+      } else {
+        setSchema(parsedSchema);
       }
       
-      setSchema(parsedSchema);
       setError(null);
     } catch (err) {
+      console.error('Failed to fetch schema:', err);
       setError(err instanceof Error ? err : new Error('Failed to fetch schema'));
     } finally {
       setIsLoading(false);

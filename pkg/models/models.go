@@ -396,20 +396,22 @@ type Commit struct {
 
 // Mapping represents the mappings table
 type Mapping struct {
-	MappingID               string                 `json:"mapping_id" db:"mapping_id"`
-	TenantID                string                 `json:"tenant_id" db:"tenant_id"`
-	WorkspaceID             string                 `json:"workspace_id" db:"workspace_id"`
-	MappingName             string                 `json:"mapping_name" db:"mapping_name"`
-	MappingDescription      string                 `json:"mapping_description" db:"mapping_description"`
-	MappingSourceType       string                 `json:"mapping_source_type" db:"mapping_source_type"`
-	MappingTargetType       string                 `json:"mapping_target_type" db:"mapping_target_type"`
-	MappingSourceIdentifier string                 `json:"mapping_source_identifier" db:"mapping_source_identifier"`
-	MappingTargetIdentifier string                 `json:"mapping_target_identifier" db:"mapping_target_identifier"`
-	MappingObject           map[string]interface{} `json:"mapping_object" db:"mapping_object"`
-	PolicyIDs               []string               `json:"policy_ids" db:"policy_ids"`
-	OwnerID                 string                 `json:"owner_id" db:"owner_id"`
-	Created                 time.Time              `json:"created" db:"created"`
-	Updated                 time.Time              `json:"updated" db:"updated"`
+	MappingID                string                 `json:"mapping_id" db:"mapping_id"`
+	TenantID                 string                 `json:"tenant_id" db:"tenant_id"`
+	WorkspaceID              string                 `json:"workspace_id" db:"workspace_id"`
+	MappingName              string                 `json:"mapping_name" db:"mapping_name"`
+	MappingDescription       string                 `json:"mapping_description" db:"mapping_description"`
+	MappingSourceType        string                 `json:"mapping_source_type" db:"mapping_source_type"`
+	MappingTargetType        string                 `json:"mapping_target_type" db:"mapping_target_type"`
+	MappingSourceIdentifier  string                 `json:"mapping_source_identifier" db:"mapping_source_identifier"`
+	MappingTargetIdentifier  string                 `json:"mapping_target_identifier" db:"mapping_target_identifier"`
+	MappingSourceContainerID *string                `json:"mapping_source_container_id" db:"mapping_source_container_id"`
+	MappingTargetContainerID *string                `json:"mapping_target_container_id" db:"mapping_target_container_id"`
+	MappingObject            map[string]interface{} `json:"mapping_object" db:"mapping_object"`
+	PolicyIDs                []string               `json:"policy_ids" db:"policy_ids"`
+	OwnerID                  string                 `json:"owner_id" db:"owner_id"`
+	Created                  time.Time              `json:"created" db:"created"`
+	Updated                  time.Time              `json:"updated" db:"updated"`
 }
 
 // Relationship represents the relationships table

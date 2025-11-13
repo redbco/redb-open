@@ -10,14 +10,18 @@ import (
 	anchorv1 "github.com/redbco/redb-open/api/proto/anchor/v1"
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
+	"github.com/redbco/redb-open/services/core/internal/services/branch"
 	"github.com/redbco/redb-open/services/core/internal/services/database"
 	"github.com/redbco/redb-open/services/core/internal/services/instance"
 	"github.com/redbco/redb-open/services/core/internal/services/mapping"
+	"github.com/redbco/redb-open/services/core/internal/services/repo"
 	"github.com/redbco/redb-open/services/core/internal/services/workspace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 func (s *Server) ListDatabases(ctx context.Context, req *corev1.ListDatabasesRequest) (*corev1.ListDatabasesResponse, error) {
@@ -111,49 +115,92 @@ func (s *Server) ConnectDatabase(ctx context.Context, req *corev1.ConnectDatabas
 		sslMode = *req.SslMode
 	}
 
-	// Generate unique instance name for this database
-	instanceName := fmt.Sprintf("%s_instance", req.DatabaseName)
-
-	// Handle optional environment ID
-	environmentID := ""
-	if req.EnvironmentId != nil {
-		environmentID = *req.EnvironmentId
-	}
-
-	// Create instance object
-	instanceObj, err := instanceService.Create(
-		ctx,
-		req.TenantId,
-		req.WorkspaceName,
-		instanceName,
-		fmt.Sprintf("Instance for database %s", req.DatabaseName),
-		req.DatabaseType,
-		req.DatabaseVendor,
-		req.Host,
-		req.Username,
-		req.Password,
-		req.NodeId,
-		req.Port,
-		enabled,
-		ssl,
-		sslMode,
-		environmentID,
-		req.OwnerId,
-		req.SslCert,
-		req.SslKey,
-		req.SslRootCert,
-		&req.DbName,
-	)
-	if err != nil {
-		s.engine.IncrementErrors()
-		return nil, status.Errorf(codes.Internal, "failed to create instance: %v", err)
-	}
-
-	// Resolve workspace ID from workspace name for database creation
+	// Resolve workspace ID from workspace name for looking up existing instances
 	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
 	if err != nil {
 		s.engine.IncrementErrors()
 		return nil, status.Errorf(codes.Internal, "failed to get workspace ID: %v", err)
+	}
+
+	// Determine the node ID to use
+	var finalNodeID string
+	if req.NodeId != nil && *req.NodeId != "" {
+		finalNodeID = *req.NodeId
+	} else {
+		// Default to the identity_id from localidentity table (BIGINT)
+		var identityID int64
+		err = s.engine.db.Pool().QueryRow(ctx, "SELECT identity_id FROM localidentity LIMIT 1").Scan(&identityID)
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.Internal, "failed to get local identity: %v", err)
+		}
+		finalNodeID = fmt.Sprintf("%d", identityID)
+	}
+
+	// Check if an instance already exists for this host/port combination
+	var instanceObj *instance.Instance
+	existingInstance, err := instanceService.FindByHostPortAndNode(ctx, req.TenantId, workspaceID, req.Host, req.Port, finalNodeID)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to check for existing instance: %v", err)
+	}
+
+	if existingInstance != nil {
+		// Use existing instance
+		instanceObj = existingInstance
+		if s.engine.logger != nil {
+			s.engine.logger.Infof("Using existing instance '%s' (ID: %s) for host:port %s:%d",
+				instanceObj.Name, instanceObj.ID, req.Host, req.Port)
+		}
+	} else {
+		// Create new instance
+		// Generate unique instance name for this database
+		instanceName := fmt.Sprintf("%s_instance", req.DatabaseName)
+
+		// Handle optional environment ID
+		environmentID := ""
+		if req.EnvironmentId != nil {
+			environmentID = *req.EnvironmentId
+		}
+
+		instanceObj, err = instanceService.Create(
+			ctx,
+			req.TenantId,
+			req.WorkspaceName,
+			instanceName,
+			fmt.Sprintf("Instance for database %s", req.DatabaseName),
+			req.DatabaseType,
+			req.DatabaseVendor,
+			req.Host,
+			req.Username,
+			req.Password,
+			req.NodeId,
+			req.Port,
+			enabled,
+			ssl,
+			sslMode,
+			environmentID,
+			req.OwnerId,
+			req.SslCert,
+			req.SslKey,
+			req.SslRootCert,
+			&req.DbName,
+		)
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.Internal, "failed to create instance: %v", err)
+		}
+
+		if s.engine.logger != nil {
+			s.engine.logger.Infof("Created new instance '%s' (ID: %s) for host:port %s:%d",
+				instanceObj.Name, instanceObj.ID, req.Host, req.Port)
+		}
+	}
+
+	// Handle optional environment ID for database
+	environmentID := ""
+	if req.EnvironmentId != nil {
+		environmentID = *req.EnvironmentId
 	}
 
 	// Create database object
@@ -716,6 +763,92 @@ func (s *Server) DisconnectDatabase(ctx context.Context, req *corev1.DisconnectD
 		}
 	}
 
+	// Handle branch deletion if requested
+	if req.DeleteBranch != nil && *req.DeleteBranch {
+		repoService := repo.NewService(s.engine.db, s.engine.logger)
+		branchService := branch.NewService(s.engine.db, s.engine.logger)
+
+		repoAndBranch, err := repoService.FindRepoAndBranchByDatabaseID(ctx, db.ID)
+		if err == nil && repoAndBranch.Success {
+			// Get repo and branch names
+			var repoName, branchName string
+			s.engine.db.Pool().QueryRow(ctx, "SELECT repo_name FROM repos WHERE repo_id = $1", repoAndBranch.RepoID).Scan(&repoName)
+			s.engine.db.Pool().QueryRow(ctx, "SELECT branch_name FROM branches WHERE branch_id = $1", repoAndBranch.BranchID).Scan(&branchName)
+
+			if branchName != "" {
+				// Delete the branch
+				err = branchService.Delete(ctx, req.TenantId, workspaceID, repoAndBranch.RepoID, branchName, true)
+				if err != nil {
+					s.engine.logger.Warnf("Failed to delete branch %s: %v", branchName, err)
+				} else {
+					message += fmt.Sprintf(", branch '%s' deleted", branchName)
+				}
+			}
+		}
+	}
+
+	// Handle repo deletion if requested
+	if req.DeleteRepo != nil && *req.DeleteRepo {
+		repoService := repo.NewService(s.engine.db, s.engine.logger)
+
+		repoAndBranch, err := repoService.FindRepoAndBranchByDatabaseID(ctx, db.ID)
+		if err == nil && repoAndBranch.Success {
+			// Get repo name
+			var repoName string
+			err = s.engine.db.Pool().QueryRow(ctx, "SELECT repo_name FROM repos WHERE repo_id = $1", repoAndBranch.RepoID).Scan(&repoName)
+
+			if err == nil && repoName != "" {
+				// Delete the entire repo
+				err = repoService.Delete(ctx, req.TenantId, workspaceID, repoName, true)
+				if err != nil {
+					s.engine.logger.Warnf("Failed to delete repository %s: %v", repoName, err)
+				} else {
+					message += fmt.Sprintf(", repository '%s' deleted", repoName)
+				}
+			}
+		}
+	}
+
+	// Handle instance disconnection if requested and this is the last database
+	if req.DisconnectInstance != nil && *req.DisconnectInstance {
+		if db.InstanceID != "" {
+			// Count databases on this instance
+			var dbCount int
+			err = s.engine.db.Pool().QueryRow(ctx,
+				"SELECT COUNT(*) FROM databases WHERE instance_id = $1",
+				db.InstanceID).Scan(&dbCount)
+
+			if err == nil && dbCount <= 1 {
+				// This is the last database, disconnect instance
+				instanceService := instance.NewService(s.engine.db, s.engine.logger)
+
+				// Get instance name
+				var instanceName string
+				err = s.engine.db.Pool().QueryRow(ctx, "SELECT instance_name FROM instances WHERE instance_id = $1", db.InstanceID).Scan(&instanceName)
+
+				if err == nil && instanceName != "" {
+					// Call anchor to disconnect instance
+					anchorReq := &anchorv1.DisconnectInstanceRequest{
+						TenantId:    req.TenantId,
+						WorkspaceId: db.WorkspaceID,
+						InstanceId:  db.InstanceID,
+					}
+
+					anchorResp, err := anchorClient.DisconnectInstance(ctx, anchorReq)
+					if err == nil && anchorResp.Success {
+						// Disable the instance
+						err = instanceService.Disable(ctx, req.TenantId, workspaceID, instanceName)
+						if err != nil {
+							s.engine.logger.Warnf("Failed to disable instance %s: %v", instanceName, err)
+						} else {
+							message += fmt.Sprintf(", instance '%s' disconnected", instanceName)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return &corev1.DisconnectDatabaseResponse{
 		Message: message,
 		Success: true,
@@ -723,15 +856,189 @@ func (s *Server) DisconnectDatabase(ctx context.Context, req *corev1.DisconnectD
 	}, nil
 }
 
+func (s *Server) GetDatabaseDisconnectMetadata(ctx context.Context, req *corev1.GetDatabaseDisconnectMetadataRequest) (*corev1.GetDatabaseDisconnectMetadataResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+	s.engine.IncrementRequestsProcessed()
+
+	// Get services
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+	repoService := repo.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get workspace ID: %v", err)
+	}
+
+	// Get the database
+	db, err := databaseService.Get(ctx, req.TenantId, workspaceID, req.DatabaseName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "database not found: %v", err)
+	}
+
+	// Verify tenant access
+	if db.TenantID != req.TenantId {
+		return nil, status.Errorf(codes.PermissionDenied, "database not found in tenant")
+	}
+
+	// Initialize response
+	response := &corev1.GetDatabaseDisconnectMetadataResponse{
+		Message:      "Metadata retrieved successfully",
+		Success:      true,
+		Status:       commonv1.Status_STATUS_SUCCESS,
+		DatabaseName: db.Name,
+	}
+
+	// Get instance information
+	var instanceName string
+	if db.InstanceID != "" {
+		err = s.engine.db.Pool().QueryRow(ctx, "SELECT instance_name FROM instances WHERE instance_id = $1", db.InstanceID).Scan(&instanceName)
+		if err == nil {
+			response.InstanceName = instanceName
+
+			// Count databases on this instance
+			var dbCount int32
+			err = s.engine.db.Pool().QueryRow(ctx,
+				"SELECT COUNT(*) FROM databases WHERE instance_id = $1",
+				db.InstanceID).Scan(&dbCount)
+			if err == nil {
+				response.TotalDatabasesInInstance = dbCount
+				response.IsLastDatabaseInInstance = (dbCount == 1)
+			}
+		}
+	}
+
+	// Check for branch/repo attachment
+	repoAndBranch, err := repoService.FindRepoAndBranchByDatabaseID(ctx, db.ID)
+	if err == nil && repoAndBranch.Success {
+		response.HasAttachedBranch = true
+
+		// Get repo details
+		var repoName string
+		err = s.engine.db.Pool().QueryRow(ctx,
+			"SELECT repo_name FROM repos WHERE repo_id = $1",
+			repoAndBranch.RepoID).Scan(&repoName)
+		if err == nil {
+			response.AttachedRepoName = repoName
+		}
+
+		// Get branch details
+		var branchName string
+		err = s.engine.db.Pool().QueryRow(ctx,
+			"SELECT branch_name FROM branches WHERE branch_id = $1",
+			repoAndBranch.BranchID).Scan(&branchName)
+		if err == nil {
+			response.AttachedBranchName = branchName
+		}
+
+		// Count total branches in repo
+		var branchCount int32
+		err = s.engine.db.Pool().QueryRow(ctx,
+			"SELECT COUNT(*) FROM branches WHERE repo_id = $1",
+			repoAndBranch.RepoID).Scan(&branchCount)
+		if err == nil {
+			response.TotalBranchesInRepo = branchCount
+			response.IsOnlyBranchInRepo = (branchCount == 1)
+		}
+
+		// Check if other databases are attached to the same branch
+		var otherDbCount int32
+		err = s.engine.db.Pool().QueryRow(ctx,
+			"SELECT COUNT(*) FROM branches WHERE branch_id = $1 AND connected_database_id != $2 AND connected_to_database = true",
+			repoAndBranch.BranchID, db.ID).Scan(&otherDbCount)
+		if err == nil {
+			response.HasOtherDatabasesOnBranch = (otherDbCount > 0)
+		}
+
+		// Compute business logic flags
+		// Can delete branch only if: not the only branch, or if there are other branches
+		response.CanDeleteBranchOnly = !response.IsOnlyBranchInRepo
+
+		// Can delete entire repo if: this is the only branch, or if there are no other active databases
+		response.CanDeleteEntireRepo = response.IsOnlyBranchInRepo
+
+		// Should delete repo: only if it's the only branch (no other choice)
+		response.ShouldDeleteRepo = response.IsOnlyBranchInRepo && !response.CanDeleteBranchOnly
+
+		// Should delete branch: only if there are other branches and repo has other content
+		response.ShouldDeleteBranch = !response.IsOnlyBranchInRepo && response.HasOtherDatabasesOnBranch
+	} else {
+		response.HasAttachedBranch = false
+		response.CanDeleteBranchOnly = false
+		response.CanDeleteEntireRepo = false
+		response.ShouldDeleteRepo = false
+		response.ShouldDeleteBranch = false
+	}
+
+	return response, nil
+}
+
 func (s *Server) GetLatestStoredDatabaseSchema(ctx context.Context, req *corev1.GetLatestStoredDatabaseSchemaRequest) (*corev1.GetLatestStoredDatabaseSchemaResponse, error) {
 	s.engine.TrackOperation()
 	defer s.engine.UntrackOperation()
 	s.engine.IncrementRequestsProcessed()
 
-	// TODO: Implement this
+	// Get services
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
 
-	// Get database service
-	return nil, status.Errorf(codes.Unimplemented, "method GetLatestStoredDatabaseSchema not implemented")
+	// Get workspace ID from name
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get workspace ID: %v", err)
+	}
+
+	// Get the database to get database_id
+	db, err := databaseService.Get(ctx, req.TenantId, workspaceID, req.DatabaseName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get database: %v", err)
+	}
+
+	// Get schema from resource registry using database service
+	schemaResponse, err := databaseService.GetSchemaFromResourceRegistry(ctx, req.TenantId, db.ID)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get schema from resource registry: %v", err)
+	}
+
+	// If no containers found, return empty schema
+	if len(schemaResponse.Containers) == 0 {
+		emptySchemaBytes, _ := json.Marshal(schemaResponse)
+		emptySchema, _ := anypb.New(wrapperspb.Bytes(emptySchemaBytes))
+		return &corev1.GetLatestStoredDatabaseSchemaResponse{
+			Message: "No schema data available",
+			Success: true,
+			Status:  commonv1.Status_STATUS_SUCCESS,
+			Schema:  emptySchema,
+		}, nil
+	}
+
+	// Marshal the schema to JSON
+	schemaBytes, err := json.Marshal(schemaResponse)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to marshal schema: %v", err)
+	}
+
+	// Wrap the bytes in a protobuf Any
+	schemaAny, err := anypb.New(wrapperspb.Bytes(schemaBytes))
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to wrap schema in Any: %v", err)
+	}
+
+	return &corev1.GetLatestStoredDatabaseSchemaResponse{
+		Message: "Database schema retrieved successfully",
+		Success: true,
+		Status:  commonv1.Status_STATUS_SUCCESS,
+		Schema:  schemaAny,
+	}, nil
 }
 
 func (s *Server) WipeDatabase(ctx context.Context, req *corev1.WipeDatabaseRequest) (*corev1.WipeDatabaseResponse, error) {
@@ -797,6 +1104,381 @@ func (s *Server) WipeDatabase(ctx context.Context, req *corev1.WipeDatabaseReque
 		Message: "Database wiped successfully",
 		Success: true,
 		Status:  commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+func (s *Server) FetchTableData(ctx context.Context, req *corev1.FetchTableDataRequest) (*corev1.FetchTableDataResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+	s.engine.IncrementRequestsProcessed()
+
+	// Get services
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get workspace ID: %v", err)
+	}
+
+	// Get the database
+	db, err := databaseService.Get(ctx, req.TenantId, workspaceID, req.DatabaseName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "database not found: %v", err)
+	}
+
+	// Verify tenant access
+	if db.TenantID != req.TenantId {
+		return nil, status.Errorf(codes.PermissionDenied, "database not found in tenant")
+	}
+
+	// Set defaults for pagination
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 25 // Default page size
+	}
+	page := req.Page
+	if page <= 0 {
+		page = 1 // Default to first page
+	}
+
+	// Calculate offset
+	offset := (page - 1) * pageSize
+
+	// Get anchor service address
+	anchorAddr := s.engine.getServiceAddress("anchor")
+	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to connect to anchor service: %v", err)
+	}
+	defer anchorConn.Close()
+
+	anchorClient := anchorv1.NewAnchorServiceClient(anchorConn)
+
+	// Build options for pagination
+	options := map[string]interface{}{
+		"limit":  pageSize,
+		"offset": offset,
+	}
+	optionsJSON, _ := json.Marshal(options)
+
+	// Fetch data from anchor
+	anchorReq := &anchorv1.FetchDataRequest{
+		TenantId:    req.TenantId,
+		WorkspaceId: db.WorkspaceID,
+		DatabaseId:  db.ID,
+		TableName:   req.TableName,
+		Options:     optionsJSON,
+	}
+
+	anchorResp, err := anchorClient.FetchData(ctx, anchorReq)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to fetch table data: %v", err)
+	}
+
+	if !anchorResp.Success {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "anchor service failed to fetch data: %s", anchorResp.Message)
+	}
+
+	// Get column schema information from resource registry
+	schemaItems, err := databaseService.GetTableSchemaFromResourceRegistry(ctx, req.TenantId, db.ID, req.TableName)
+	if err != nil {
+		// Log warning but continue
+		if s.engine.logger != nil {
+			s.engine.logger.Warnf("Failed to fetch column schemas from resource registry: %v", err)
+		}
+		schemaItems = []database.SchemaItem{}
+	}
+
+	// Convert database.SchemaItem to protobuf TableColumnSchema
+	columnSchemas := make([]*corev1.TableColumnSchema, len(schemaItems))
+	for i, item := range schemaItems {
+		schema := &corev1.TableColumnSchema{
+			Name:            item.ItemName,
+			ItemDisplayName: item.ItemDisplayName,
+			DataType:        item.DataType,
+			IsNullable:      item.IsNullable,
+			IsPrimaryKey:    item.IsPrimaryKey,
+			IsUnique:        item.IsUnique,
+			IsIndexed:       item.IsIndexed,
+			IsRequired:      item.IsRequired,
+			IsArray:         item.IsArray,
+			IsPrivileged:    item.IsPrivileged,
+			OrdinalPosition: item.OrdinalPosition,
+		}
+
+		// Set optional string fields
+		if item.UnifiedDataType != nil {
+			schema.UnifiedDataType = *item.UnifiedDataType
+		}
+		if item.DefaultValue != nil {
+			schema.DefaultValue = *item.DefaultValue
+		}
+		if item.PrivilegedClassification != nil {
+			schema.PrivilegedClassification = *item.PrivilegedClassification
+		}
+		if item.DetectionMethod != nil {
+			schema.DetectionMethod = *item.DetectionMethod
+		}
+		if item.ItemComment != nil {
+			schema.ItemComment = *item.ItemComment
+		}
+
+		// Set detection confidence and classification confidence
+		if item.DetectionConfidence != nil {
+			schema.PrivilegedConfidence = float32(*item.DetectionConfidence)
+		}
+
+		// Set numeric fields
+		if item.MaxLength != nil {
+			schema.MaxLength = int32(*item.MaxLength)
+		}
+		if item.Precision != nil {
+			schema.Precision = int32(*item.Precision)
+		}
+		if item.Scale != nil {
+			schema.Scale = int32(*item.Scale)
+		}
+
+		// Convert constraints to string slice
+		if len(item.Constraints) > 0 {
+			constraints := make([]string, 0, len(item.Constraints))
+			for _, constraint := range item.Constraints {
+				// Convert each constraint map to a simple string representation
+				if constraintType, ok := constraint["type"].(string); ok {
+					constraints = append(constraints, constraintType)
+				}
+			}
+			schema.Constraints = constraints
+		}
+
+		columnSchemas[i] = schema
+	}
+
+	// Calculate total pages
+	// Note: We'll need to get total row count separately - for now estimate
+	var totalRows int64
+	var totalPages int32
+	// Unmarshal data to count rows (not ideal but works for now)
+	var rows []map[string]interface{}
+	json.Unmarshal(anchorResp.Data, &rows)
+	totalRows = int64(len(rows)) // This is just the current page
+	totalPages = int32((totalRows + int64(pageSize) - 1) / int64(pageSize))
+
+	return &corev1.FetchTableDataResponse{
+		Message:       "Table data fetched successfully",
+		Success:       true,
+		Status:        commonv1.Status_STATUS_SUCCESS,
+		Data:          anchorResp.Data,
+		TotalRows:     totalRows,
+		Page:          page,
+		PageSize:      pageSize,
+		TotalPages:    totalPages,
+		ColumnSchemas: columnSchemas,
+	}, nil
+}
+
+func (s *Server) WipeTable(ctx context.Context, req *corev1.WipeTableRequest) (*corev1.WipeTableResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+	s.engine.IncrementRequestsProcessed()
+
+	// Get services
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get workspace ID: %v", err)
+	}
+
+	// Get the database
+	db, err := databaseService.Get(ctx, req.TenantId, workspaceID, req.DatabaseName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "database not found: %v", err)
+	}
+
+	// Verify tenant access
+	if db.TenantID != req.TenantId {
+		return nil, status.Errorf(codes.PermissionDenied, "database not found in tenant")
+	}
+
+	// Get anchor service address
+	anchorAddr := s.engine.getServiceAddress("anchor")
+	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to connect to anchor service: %v", err)
+	}
+	defer anchorConn.Close()
+
+	anchorClient := anchorv1.NewAnchorServiceClient(anchorConn)
+
+	// Send WipeTable request to anchor
+	anchorReq := &anchorv1.WipeTableRequest{
+		TenantId:    req.TenantId,
+		WorkspaceId: db.WorkspaceID,
+		DatabaseId:  db.ID,
+		TableName:   req.TableName,
+	}
+
+	anchorResp, err := anchorClient.WipeTable(ctx, anchorReq)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to wipe table: %v", err)
+	}
+
+	if !anchorResp.Success {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "anchor service failed to wipe table: %s", anchorResp.Message)
+	}
+
+	return &corev1.WipeTableResponse{
+		Message:      fmt.Sprintf("Table %s wiped successfully", req.TableName),
+		Success:      true,
+		Status:       commonv1.Status_STATUS_SUCCESS,
+		RowsAffected: anchorResp.RowsAffected,
+	}, nil
+}
+
+func (s *Server) DropTable(ctx context.Context, req *corev1.DropTableRequest) (*corev1.DropTableResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+	s.engine.IncrementRequestsProcessed()
+
+	// Get services
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get workspace ID: %v", err)
+	}
+
+	// Get the database
+	db, err := databaseService.Get(ctx, req.TenantId, workspaceID, req.DatabaseName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "database not found: %v", err)
+	}
+
+	// Verify tenant access
+	if db.TenantID != req.TenantId {
+		return nil, status.Errorf(codes.PermissionDenied, "database not found in tenant")
+	}
+
+	// Get anchor service address
+	anchorAddr := s.engine.getServiceAddress("anchor")
+	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to connect to anchor service: %v", err)
+	}
+	defer anchorConn.Close()
+
+	anchorClient := anchorv1.NewAnchorServiceClient(anchorConn)
+
+	// Send DropTable request to anchor
+	anchorReq := &anchorv1.DropTableRequest{
+		TenantId:    req.TenantId,
+		WorkspaceId: db.WorkspaceID,
+		DatabaseId:  db.ID,
+		TableName:   req.TableName,
+	}
+
+	anchorResp, err := anchorClient.DropTable(ctx, anchorReq)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to drop table: %v", err)
+	}
+
+	if !anchorResp.Success {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "anchor service failed to drop table: %s", anchorResp.Message)
+	}
+
+	return &corev1.DropTableResponse{
+		Message: fmt.Sprintf("Table %s dropped successfully", req.TableName),
+		Success: true,
+		Status:  commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+func (s *Server) UpdateTableData(ctx context.Context, req *corev1.UpdateTableDataRequest) (*corev1.UpdateTableDataResponse, error) {
+	s.engine.TrackOperation()
+	defer s.engine.UntrackOperation()
+	s.engine.IncrementRequestsProcessed()
+
+	// Get services
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to get workspace ID: %v", err)
+	}
+
+	// Get the database
+	db, err := databaseService.Get(ctx, req.TenantId, workspaceID, req.DatabaseName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "database not found: %v", err)
+	}
+
+	// Verify tenant access
+	if db.TenantID != req.TenantId {
+		return nil, status.Errorf(codes.PermissionDenied, "database not found in tenant")
+	}
+
+	// Get anchor service address
+	anchorAddr := s.engine.getServiceAddress("anchor")
+	anchorConn, err := grpc.Dial(anchorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to connect to anchor service: %v", err)
+	}
+	defer anchorConn.Close()
+
+	anchorClient := anchorv1.NewAnchorServiceClient(anchorConn)
+
+	// Send UpdateTableData request to anchor
+	anchorReq := &anchorv1.UpdateTableDataRequest{
+		TenantId:    req.TenantId,
+		WorkspaceId: db.WorkspaceID,
+		DatabaseId:  db.ID,
+		TableName:   req.TableName,
+		Updates:     req.Updates,
+	}
+
+	anchorResp, err := anchorClient.UpdateTableData(ctx, anchorReq)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to update table data: %v", err)
+	}
+
+	if !anchorResp.Success {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "anchor service failed to update table data: %s", anchorResp.Message)
+	}
+
+	return &corev1.UpdateTableDataResponse{
+		Message:      fmt.Sprintf("Updated %d rows in table %s", anchorResp.RowsAffected, req.TableName),
+		Success:      true,
+		Status:       commonv1.Status_STATUS_SUCCESS,
+		RowsAffected: anchorResp.RowsAffected,
 	}, nil
 }
 

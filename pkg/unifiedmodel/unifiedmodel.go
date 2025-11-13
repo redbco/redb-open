@@ -564,6 +564,7 @@ type Column struct {
 	IsClusteringKey     bool           `json:"is_clustering_key,omitempty"`
 	AutoIncrement       bool           `json:"auto_increment,omitempty"`
 	Collation           string         `json:"collation,omitempty"`
+	OrdinalPosition     *int           `json:"ordinal_position,omitempty"`
 	Options             map[string]any `json:"options,omitempty"`
 }
 

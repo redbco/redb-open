@@ -23,7 +23,7 @@ CHECK (
     AND
     -- Ensure prefix is from allowed list
     substring(VALUE from '^([a-z]+)_') IN (
-        'mesh', 'node', 'route', 'region', 'tenant', 'user', 'group', 'role', 'perm', 'pol', 'ws', 'env', 'instance', 'db', 'repo', 'branch', 'commit', 'map', 'maprule','rel', 'transform', 'mcpserver', 'mcpresource', 'mcptool', 'mcpprompt', 'audit', 'satellite', 'anchor', 'template', 'apitoken', 'cdcs', 'integration', 'intjob'
+        'mesh', 'node', 'route', 'region', 'tenant', 'user', 'group', 'role', 'perm', 'pol', 'ws', 'env', 'instance', 'db', 'repo', 'branch', 'commit', 'map', 'maprule','rel', 'transform', 'mcpserver', 'mcpresource', 'mcptool', 'mcpprompt', 'audit', 'satellite', 'anchor', 'template', 'apitoken', 'cdcs', 'integration', 'intjob', 'container', 'item'
     )
 );
 
@@ -584,6 +584,13 @@ CREATE TABLE mappings (
     mapping_name VARCHAR(255) NOT NULL,
     mapping_description TEXT DEFAULT '',
     mapping_type VARCHAR(255) NOT NULL DEFAULT 'table',
+    mapping_source_type VARCHAR(255),
+    mapping_target_type VARCHAR(255),
+    mapping_source_identifier VARCHAR(255),
+    mapping_target_identifier VARCHAR(255),
+    mapping_source_container_id ulid REFERENCES resource_containers(container_id) ON DELETE CASCADE,
+    mapping_target_container_id ulid REFERENCES resource_containers(container_id) ON DELETE CASCADE,
+    mapping_object JSONB DEFAULT '{}',
     policy_ids ulid[] DEFAULT '{}',
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     validated BOOLEAN DEFAULT false,
@@ -613,6 +620,7 @@ CREATE TABLE mapping_rules (
     mapping_rule_description TEXT NOT NULL DEFAULT '',
     mapping_rule_metadata JSONB NOT NULL DEFAULT '{}',
     mapping_rule_workflow_type VARCHAR(50) DEFAULT 'simple',
+    mapping_rule_cardinality VARCHAR(50) DEFAULT 'one-to-one' CHECK (mapping_rule_cardinality IN ('one-to-one', 'one-to-many', 'many-to-one', 'many-to-many', 'generator', 'sink')),
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -625,6 +633,36 @@ CREATE TABLE mapping_rule_mappings (
     mapping_rule_order INTEGER NOT NULL DEFAULT 0,
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (mapping_rule_id, mapping_id)
+);
+
+-- Mapping rule source items (many-to-many for flexible cardinality)
+CREATE TABLE mapping_rule_source_items (
+    mapping_rule_id ulid NOT NULL REFERENCES mapping_rules(mapping_rule_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    resource_item_id ulid NOT NULL REFERENCES resource_items(item_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    item_order INTEGER NOT NULL DEFAULT 0,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (mapping_rule_id, resource_item_id)
+);
+
+-- Mapping rule target items (many-to-many for flexible cardinality)
+CREATE TABLE mapping_rule_target_items (
+    mapping_rule_id ulid NOT NULL REFERENCES mapping_rules(mapping_rule_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    resource_item_id ulid NOT NULL REFERENCES resource_items(item_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    item_order INTEGER NOT NULL DEFAULT 0,
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (mapping_rule_id, resource_item_id)
+);
+
+-- Mapping filters for data filtering (one mapping -> many filters)
+CREATE TABLE mapping_filters (
+    filter_id ulid PRIMARY KEY DEFAULT generate_ulid('filter'),
+    mapping_id ulid NOT NULL REFERENCES mappings(mapping_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    filter_type VARCHAR(50) NOT NULL CHECK (filter_type IN ('where_clause', 'column_condition', 'json_path', 'null_check', 'range')),
+    filter_expression JSONB NOT NULL,
+    filter_order INTEGER NOT NULL DEFAULT 0,
+    filter_operator VARCHAR(10) NOT NULL DEFAULT 'AND' CHECK (filter_operator IN ('AND', 'OR')),
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Relationships between data sources
@@ -879,6 +917,180 @@ CREATE TABLE mcp_server_prompts (
     mcpprompt_id ulid NOT NULL REFERENCES mcpprompts(mcpprompt_id) ON DELETE CASCADE ON UPDATE CASCADE,
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (mcpserver_id, mcpprompt_id)
+);
+
+-- =============================================================================
+-- RESOURCE REGISTRY (URI-based resource tracking)
+-- =============================================================================
+
+-- Container-level resources (tables, collections, nodes, topics, endpoints, etc.)
+CREATE TABLE resource_containers (
+    container_id ulid PRIMARY KEY DEFAULT generate_ulid('container'),
+    tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    workspace_id ulid NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    
+    -- URI Components
+    resource_uri TEXT UNIQUE NOT NULL,
+    protocol VARCHAR(50) NOT NULL, -- redb, stream, webhook, mcp
+    scope VARCHAR(50) NOT NULL, -- data, metadata, schema
+    
+    -- Object Identification
+    object_type VARCHAR(100) NOT NULL, -- table, collection, node, topic, etc.
+    object_name VARCHAR(255) NOT NULL,
+    
+    -- Protocol-specific Identifiers
+    database_id ulid REFERENCES databases(database_id) ON DELETE CASCADE,
+    instance_id ulid REFERENCES instances(instance_id) ON DELETE SET NULL,
+    integration_id ulid REFERENCES integrations(integration_id) ON DELETE CASCADE,
+    mcpserver_id ulid REFERENCES mcpservers(mcpserver_id) ON DELETE CASCADE,
+    
+    -- Ownership and Location
+    connected_to_node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    
+    -- State Management
+    status status_enum DEFAULT 'STATUS_CREATED',
+    status_message VARCHAR(255) DEFAULT '',
+    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    online BOOLEAN DEFAULT true,
+    
+    -- Metadata and Enrichment
+    container_metadata JSONB DEFAULT '{}',
+    enriched_metadata JSONB DEFAULT '{}',
+    database_type VARCHAR(100), -- postgres, mongodb, neo4j, kafka, etc.
+    vendor VARCHAR(100),
+    
+    -- Statistics
+    item_count INTEGER DEFAULT 0,
+    size_bytes BIGINT DEFAULT 0,
+    
+    -- Timestamps
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Constraints
+    UNIQUE(workspace_id, object_type, object_name, database_id),
+    CHECK (protocol IN ('redb', 'stream', 'webhook', 'mcp')),
+    CHECK (scope IN ('data', 'metadata', 'schema'))
+);
+
+-- Item-level resources (columns, fields, properties, parameters, etc.)
+CREATE TABLE resource_items (
+    item_id ulid PRIMARY KEY DEFAULT generate_ulid('item'),
+    container_id ulid NOT NULL REFERENCES resource_containers(container_id) ON DELETE CASCADE,
+    tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+    workspace_id ulid NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    
+    -- URI Components
+    resource_uri TEXT UNIQUE NOT NULL,
+    protocol VARCHAR(50) NOT NULL,
+    scope VARCHAR(50) NOT NULL,
+    
+    -- Item Identification
+    item_type VARCHAR(100) NOT NULL, -- column, field, property, parameter, etc.
+    item_name VARCHAR(255) NOT NULL,
+    item_path TEXT[], -- Hierarchical path for nested items
+    
+    -- Data Type Information
+    data_type VARCHAR(255) NOT NULL,
+    unified_data_type VARCHAR(100), -- Mapped to UnifiedDataType
+    is_nullable BOOLEAN DEFAULT true,
+    is_primary_key BOOLEAN DEFAULT false,
+    is_unique BOOLEAN DEFAULT false,
+    is_indexed BOOLEAN DEFAULT false,
+    is_required BOOLEAN DEFAULT false,
+    is_array BOOLEAN DEFAULT false,
+    array_dimensions INTEGER DEFAULT 1,
+    
+    -- Default and Constraints
+    default_value TEXT,
+    constraints JSONB DEFAULT '[]',
+    
+    -- Complex Type Definitions (self-contained)
+    is_custom_type BOOLEAN DEFAULT false,
+    custom_type_name VARCHAR(255), -- enum, composite, domain, etc.
+    custom_type_definition JSONB, -- Complete type definition
+    
+    -- For ENUM types: {"type": "enum", "values": ["value1", "value2", ...]}
+    -- For Composite types: {"type": "composite", "fields": [{"name": "x", "type": "int"}, ...]}
+    -- For Domain types: {"type": "domain", "base_type": "int", "constraints": [...]}
+    
+    -- JSON/Document Schema Definition
+    has_schema BOOLEAN DEFAULT false,
+    schema_format VARCHAR(50), -- json_schema, avro, protobuf, xml_schema, cbor_schema, etc.
+    schema_definition JSONB, -- Complete schema definition (JSON Schema, Avro schema, etc.)
+    schema_version VARCHAR(50), -- Schema version (e.g., "draft-07" for JSON Schema)
+    schema_evolution_version INTEGER DEFAULT 1, -- Auto-incremented on schema changes
+    
+    -- Schema Validation and Evolution Behavior
+    schema_validation_mode VARCHAR(50) DEFAULT 'strict', 
+    -- Options: strict, permissive, evolving, disabled
+    -- strict: Reject payloads that don't match schema
+    -- permissive: Accept payloads, log warnings for mismatches
+    -- evolving: Accept payloads and auto-update schema
+    -- disabled: No schema validation
+    
+    schema_mismatch_action VARCHAR(50) DEFAULT 'reject',
+    -- Options: reject, accept, accept_and_log, coerce, evolve_schema
+    -- reject: Reject the payload completely
+    -- accept: Accept payload as-is without validation
+    -- accept_and_log: Accept but log the mismatch
+    -- coerce: Try to coerce data to match schema
+    -- evolve_schema: Update schema to include new fields/types
+    
+    allow_new_fields BOOLEAN DEFAULT false, -- Auto-append new fields to schema
+    allow_field_type_widening BOOLEAN DEFAULT false, -- Allow string->any, int->float, etc.
+    allow_field_removal BOOLEAN DEFAULT false, -- Remove fields not in incoming payload
+    
+    schema_evolution_log JSONB DEFAULT '[]',
+    -- Track all schema changes: [{"version": 2, "timestamp": "...", "changes": [...], "reason": "auto_evolution"}]
+    
+    -- For nested structures in JSON/JSONB columns
+    nested_items JSONB DEFAULT '[]', -- Array of nested field definitions
+    -- Example: [{"path": ["address", "city"], "type": "string", "required": true}, ...]
+    
+    -- Length and Precision
+    max_length INTEGER, -- For string types
+    precision INTEGER, -- For numeric types
+    scale INTEGER, -- For decimal types
+    
+    -- Ownership and Location (inherited from container)
+    connected_to_node_id ulid NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    
+    -- State Management
+    status status_enum DEFAULT 'STATUS_CREATED',
+    online BOOLEAN DEFAULT true,
+    
+    -- Metadata
+    item_metadata JSONB DEFAULT '{}',
+    enriched_metadata JSONB DEFAULT '{}',
+    item_comment TEXT, -- Column/field comment or description
+    
+    -- Sensitive Data Detection
+    is_privileged BOOLEAN DEFAULT false,
+    privileged_classification VARCHAR(100), -- pii, phi, pci, secrets, etc.
+    detection_confidence DECIMAL(3,2), -- 0.00 to 1.00
+    detection_method VARCHAR(100), -- pattern, ml_model, keyword, manual
+    
+    -- Position and Order
+    ordinal_position INTEGER,
+    
+    -- Display name (user-editable)
+    item_display_name VARCHAR(255), -- User-friendly display name
+    
+    -- Timestamps
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Constraints
+    UNIQUE(container_id, item_name, item_path),
+    CHECK (protocol IN ('redb', 'stream', 'webhook', 'mcp')),
+    CHECK (scope IN ('data', 'metadata', 'schema')),
+    CHECK (detection_confidence IS NULL OR (detection_confidence >= 0.00 AND detection_confidence <= 1.00)),
+    CHECK (schema_format IN ('json_schema', 'avro', 'protobuf', 'xml_schema', 'cbor_schema', 'thrift', NULL)),
+    CHECK (array_dimensions > 0),
+    CHECK (schema_validation_mode IN ('strict', 'permissive', 'evolving', 'disabled')),
+    CHECK (schema_mismatch_action IN ('reject', 'accept', 'accept_and_log', 'coerce', 'evolve_schema'))
 );
 
 -- =============================================================================
@@ -1161,9 +1373,16 @@ CREATE INDEX idx_commits_tenant_workspace_repo ON commits(tenant_id, workspace_i
 
 -- Data mapping and relationship queries
 CREATE INDEX idx_mappings_tenant_workspace ON mappings(tenant_id, workspace_id);
+CREATE INDEX idx_mappings_source_container ON mappings(mapping_source_container_id);
+CREATE INDEX idx_mappings_target_container ON mappings(mapping_target_container_id);
 CREATE INDEX idx_mapping_rules_tenant_workspace ON mapping_rules(tenant_id, workspace_id);
 CREATE INDEX idx_mapping_rule_mappings_mapping_rule_id ON mapping_rule_mappings(mapping_rule_id);
 CREATE INDEX idx_mapping_rule_mappings_mapping_id ON mapping_rule_mappings(mapping_id);
+CREATE INDEX idx_mapping_rule_source_items_rule_id ON mapping_rule_source_items(mapping_rule_id);
+CREATE INDEX idx_mapping_rule_source_items_item_id ON mapping_rule_source_items(resource_item_id);
+CREATE INDEX idx_mapping_rule_target_items_rule_id ON mapping_rule_target_items(mapping_rule_id);
+CREATE INDEX idx_mapping_rule_target_items_item_id ON mapping_rule_target_items(resource_item_id);
+CREATE INDEX idx_mapping_filters_mapping_id ON mapping_filters(mapping_id, filter_order);
 CREATE INDEX idx_relationships_tenant_workspace ON relationships(tenant_id, workspace_id);
 CREATE INDEX idx_relationships_mapping_id ON relationships(mapping_id);
 
@@ -1187,6 +1406,41 @@ CREATE INDEX idx_mcp_server_tools_server ON mcp_server_tools(mcpserver_id);
 CREATE INDEX idx_mcp_server_tools_tool ON mcp_server_tools(mcptool_id);
 CREATE INDEX idx_mcp_server_prompts_server ON mcp_server_prompts(mcpserver_id);
 CREATE INDEX idx_mcp_server_prompts_prompt ON mcp_server_prompts(mcpprompt_id);
+
+-- Resource registry queries
+CREATE INDEX idx_rc_tenant_workspace ON resource_containers(tenant_id, workspace_id);
+CREATE INDEX idx_rc_database_id ON resource_containers(database_id) WHERE database_id IS NOT NULL;
+CREATE INDEX idx_rc_instance_id ON resource_containers(instance_id) WHERE instance_id IS NOT NULL;
+CREATE INDEX idx_rc_integration_id ON resource_containers(integration_id) WHERE integration_id IS NOT NULL;
+CREATE INDEX idx_rc_mcpserver_id ON resource_containers(mcpserver_id) WHERE mcpserver_id IS NOT NULL;
+CREATE INDEX idx_rc_node_id ON resource_containers(connected_to_node_id);
+CREATE INDEX idx_rc_protocol ON resource_containers(protocol);
+CREATE INDEX idx_rc_object_type ON resource_containers(object_type);
+CREATE INDEX idx_rc_status ON resource_containers(status);
+CREATE INDEX idx_rc_online ON resource_containers(online);
+CREATE INDEX idx_rc_database_type ON resource_containers(database_type) WHERE database_type IS NOT NULL;
+CREATE INDEX idx_rc_uri_search ON resource_containers USING gin(to_tsvector('english', resource_uri));
+CREATE INDEX idx_rc_metadata_gin ON resource_containers USING gin(container_metadata);
+CREATE INDEX idx_rc_last_seen ON resource_containers(last_seen);
+CREATE INDEX idx_rc_db_type_status ON resource_containers(database_id, object_type, status) WHERE database_id IS NOT NULL;
+
+CREATE INDEX idx_ri_container_id ON resource_items(container_id);
+CREATE INDEX idx_ri_tenant_workspace ON resource_items(tenant_id, workspace_id);
+CREATE INDEX idx_ri_item_type ON resource_items(item_type);
+CREATE INDEX idx_ri_data_type ON resource_items(data_type);
+CREATE INDEX idx_ri_unified_type ON resource_items(unified_data_type) WHERE unified_data_type IS NOT NULL;
+CREATE INDEX idx_ri_primary_key ON resource_items(container_id, is_primary_key) WHERE is_primary_key = true;
+CREATE INDEX idx_ri_node_id ON resource_items(connected_to_node_id);
+CREATE INDEX idx_ri_privileged ON resource_items(is_privileged) WHERE is_privileged = true;
+CREATE INDEX idx_ri_classification ON resource_items(privileged_classification) WHERE privileged_classification IS NOT NULL;
+CREATE INDEX idx_ri_uri_search ON resource_items USING gin(to_tsvector('english', resource_uri));
+CREATE INDEX idx_ri_metadata_gin ON resource_items USING gin(item_metadata);
+CREATE INDEX idx_ri_online ON resource_items(online);
+CREATE INDEX idx_ri_status ON resource_items(status);
+CREATE INDEX idx_ri_container_type ON resource_items(container_id, item_type);
+CREATE INDEX idx_ri_custom_type ON resource_items(is_custom_type) WHERE is_custom_type = true;
+CREATE INDEX idx_ri_has_schema ON resource_items(has_schema) WHERE has_schema = true;
+CREATE INDEX idx_ri_schema_format ON resource_items(schema_format) WHERE schema_format IS NOT NULL;
 
 -- Authorization system queries
 CREATE INDEX idx_groups_tenant_id ON groups(tenant_id);

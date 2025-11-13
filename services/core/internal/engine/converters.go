@@ -482,6 +482,10 @@ func statusStringToProto(status string) commonv1.Status {
 
 // Helper function to convert mapping to protobuf
 func (s *Server) mappingToProto(m *mapping.Mapping) (*corev1.Mapping, error) {
+	return s.mappingToProtoWithContext(context.Background(), m)
+}
+
+func (s *Server) mappingToProtoWithContext(ctx context.Context, m *mapping.Mapping) (*corev1.Mapping, error) {
 	var policyId string
 	if len(m.PolicyIDs) > 0 {
 		policyId = m.PolicyIDs[0] // Use first policy ID for protobuf
@@ -492,20 +496,120 @@ func (s *Server) mappingToProto(m *mapping.Mapping) (*corev1.Mapping, error) {
 		validatedAt = m.ValidatedAt.Format(time.RFC3339)
 	}
 
+	// Marshal mapping_object to JSON string
+	var mappingObjectJSON string
+	if len(m.MappingObject) > 0 {
+		bytes, err := json.Marshal(m.MappingObject)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to marshal mapping_object: %v", err)
+			mappingObjectJSON = "{}"
+		} else {
+			mappingObjectJSON = string(bytes)
+		}
+	} else {
+		mappingObjectJSON = "{}"
+	}
+
+	// Get mapping service to fetch relationships and MCP assignments
+	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
+
+	// Fetch relationship names
+	relationshipNames, err := mappingService.GetRelationshipNamesByMappingID(ctx, m.ID)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get relationship names for mapping %s: %v", m.ID, err)
+		relationshipNames = []string{}
+	}
+
+	// Fetch relationship infos (names and statuses)
+	relationshipInfos, err := mappingService.GetRelationshipInfosByMappingID(ctx, m.ID)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get relationship infos for mapping %s: %v", m.ID, err)
+		relationshipInfos = []mapping.RelationshipInfo{}
+	}
+
+	// Convert relationship infos to protobuf
+	protoRelationshipInfos := make([]*corev1.RelationshipInfo, len(relationshipInfos))
+	for i, info := range relationshipInfos {
+		protoRelationshipInfos[i] = &corev1.RelationshipInfo{
+			RelationshipName: info.Name,
+			Status:           statusStringToProto(info.Status),
+		}
+	}
+
+	// Fetch MCP resource names
+	mcpResourceNames, err := mappingService.GetMCPResourceNamesByMappingID(ctx, m.ID)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get MCP resource names for mapping %s: %v", m.ID, err)
+		mcpResourceNames = []string{}
+	}
+
+	// Fetch MCP tool names
+	mcpToolNames, err := mappingService.GetMCPToolNamesByMappingID(ctx, m.ID)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get MCP tool names for mapping %s: %v", m.ID, err)
+		mcpToolNames = []string{}
+	}
+
+	// Convert filters to protobuf
+	protoFilters := make([]*corev1.MappingFilter, len(m.Filters))
+	for i, filter := range m.Filters {
+		// Convert filter expression to JSON string
+		expressionJSON := "{}"
+		if len(filter.FilterExpression) > 0 {
+			bytes, err := json.Marshal(filter.FilterExpression)
+			if err != nil {
+				s.engine.logger.Warnf("Failed to marshal filter expression: %v", err)
+			} else {
+				expressionJSON = string(bytes)
+			}
+		}
+
+		protoFilters[i] = &corev1.MappingFilter{
+			FilterId:         filter.FilterID,
+			MappingId:        filter.MappingID,
+			FilterType:       filter.FilterType,
+			FilterExpression: expressionJSON,
+			FilterOrder:      int32(filter.FilterOrder),
+			FilterOperator:   filter.FilterOperator,
+		}
+	}
+
+	// Set container IDs if present
+	sourceContainerID := ""
+	if m.SourceContainerID != nil {
+		sourceContainerID = *m.SourceContainerID
+	}
+	targetContainerID := ""
+	if m.TargetContainerID != nil {
+		targetContainerID = *m.TargetContainerID
+	}
+
 	return &corev1.Mapping{
-		TenantId:           m.TenantID,
-		WorkspaceId:        m.WorkspaceID,
-		MappingId:          m.ID,
-		MappingName:        m.Name,
-		MappingDescription: m.Description,
-		MappingType:        m.MappingType,
-		PolicyId:           policyId,
-		OwnerId:            m.OwnerID,
-		MappingRuleCount:   m.MappingRuleCount,
-		Validated:          m.Validated,
-		ValidatedAt:        validatedAt,
-		ValidationErrors:   m.ValidationErrors,
-		ValidationWarnings: m.ValidationWarnings,
+		TenantId:                 m.TenantID,
+		WorkspaceId:              m.WorkspaceID,
+		MappingId:                m.ID,
+		MappingName:              m.Name,
+		MappingDescription:       m.Description,
+		MappingType:              m.MappingType,
+		MappingSourceType:        m.SourceType,
+		MappingTargetType:        m.TargetType,
+		MappingSourceIdentifier:  m.SourceIdentifier,
+		MappingTargetIdentifier:  m.TargetIdentifier,
+		MappingSourceContainerId: sourceContainerID,
+		MappingTargetContainerId: targetContainerID,
+		MappingObject:            mappingObjectJSON,
+		PolicyId:                 policyId,
+		OwnerId:                  m.OwnerID,
+		MappingRuleCount:         m.MappingRuleCount,
+		Validated:                m.Validated,
+		ValidatedAt:              validatedAt,
+		ValidationErrors:         m.ValidationErrors,
+		ValidationWarnings:       m.ValidationWarnings,
+		RelationshipNames:        relationshipNames,
+		RelationshipInfos:        protoRelationshipInfos,
+		McpResourceNames:         mcpResourceNames,
+		McpToolNames:             mcpToolNames,
+		Filters:                  protoFilters,
 	}, nil
 }
 
@@ -569,6 +673,107 @@ func (s *Server) mappingRuleToProto(m *mapping.Rule) (*corev1.MappingRule, error
 	}, nil
 }
 
+// mappingRuleToProtoWithItems converts a mapping rule to protobuf format and includes full item details in metadata
+func (s *Server) mappingRuleToProtoWithItems(m *mapping.Rule) (*corev1.MappingRule, error) {
+	// Start with base conversion
+	protoRule, err := s.mappingRuleToProto(m)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the existing metadata
+	metadata := make(map[string]interface{})
+	if protoRule.MappingRuleMetadata != "" && protoRule.MappingRuleMetadata != "{}" {
+		if err := json.Unmarshal([]byte(protoRule.MappingRuleMetadata), &metadata); err != nil {
+			s.engine.logger.Warnf("Failed to parse existing metadata: %v", err)
+		}
+	}
+
+	// Add full source item details if available
+	if len(m.SourceItems) > 0 {
+		sourceItemsData := make([]map[string]interface{}, len(m.SourceItems))
+		for i, item := range m.SourceItems {
+			sourceItemsData[i] = map[string]interface{}{
+				"item_id":                   item.ItemID,
+				"container_id":              item.ContainerID,
+				"resource_uri":              item.ResourceURI,
+				"item_type":                 item.ItemType,
+				"item_name":                 item.ItemName,
+				"item_display_name":         item.ItemDisplayName,
+				"item_path":                 item.ItemPath,
+				"data_type":                 item.DataType,
+				"unified_data_type":         item.UnifiedDataType,
+				"is_nullable":               item.IsNullable,
+				"is_primary_key":            item.IsPrimaryKey,
+				"is_unique":                 item.IsUnique,
+				"is_indexed":                item.IsIndexed,
+				"is_required":               item.IsRequired,
+				"is_array":                  item.IsArray,
+				"array_dimensions":          item.ArrayDimensions,
+				"default_value":             item.DefaultValue,
+				"max_length":                item.MaxLength,
+				"precision":                 item.Precision,
+				"scale":                     item.Scale,
+				"description":               item.Description,
+				"is_privileged":             item.IsPrivileged,
+				"privileged_classification": item.PrivilegedClassification,
+				"detection_confidence":      item.DetectionConfidence,
+				"detection_method":          item.DetectionMethod,
+			}
+		}
+		metadata["source_items"] = sourceItemsData
+	}
+
+	// Add full target item details if available
+	if len(m.TargetItems) > 0 {
+		targetItemsData := make([]map[string]interface{}, len(m.TargetItems))
+		for i, item := range m.TargetItems {
+			targetItemsData[i] = map[string]interface{}{
+				"item_id":                   item.ItemID,
+				"container_id":              item.ContainerID,
+				"resource_uri":              item.ResourceURI,
+				"item_type":                 item.ItemType,
+				"item_name":                 item.ItemName,
+				"item_display_name":         item.ItemDisplayName,
+				"item_path":                 item.ItemPath,
+				"data_type":                 item.DataType,
+				"unified_data_type":         item.UnifiedDataType,
+				"is_nullable":               item.IsNullable,
+				"is_primary_key":            item.IsPrimaryKey,
+				"is_unique":                 item.IsUnique,
+				"is_indexed":                item.IsIndexed,
+				"is_required":               item.IsRequired,
+				"is_array":                  item.IsArray,
+				"array_dimensions":          item.ArrayDimensions,
+				"default_value":             item.DefaultValue,
+				"max_length":                item.MaxLength,
+				"precision":                 item.Precision,
+				"scale":                     item.Scale,
+				"description":               item.Description,
+				"is_privileged":             item.IsPrivileged,
+				"privileged_classification": item.PrivilegedClassification,
+				"detection_confidence":      item.DetectionConfidence,
+				"detection_method":          item.DetectionMethod,
+			}
+		}
+		metadata["target_items"] = targetItemsData
+	}
+
+	// Re-serialize metadata with item details
+	metadataJSON := "{}"
+	if len(metadata) > 0 {
+		if jsonBytes, err := json.Marshal(metadata); err == nil {
+			metadataJSON = string(jsonBytes)
+		} else {
+			s.engine.logger.Warnf("Failed to convert metadata with items to JSON: %v", err)
+			return protoRule, nil // Return without item details rather than failing
+		}
+	}
+
+	protoRule.MappingRuleMetadata = metadataJSON
+	return protoRule, nil
+}
+
 // Helper function to convert relationship to protobuf
 func (s *Server) relationshipToProto(r *relationship.Relationship) *corev1.Relationship {
 	var policyId string
@@ -576,22 +781,64 @@ func (s *Server) relationshipToProto(r *relationship.Relationship) *corev1.Relat
 		policyId = r.PolicyIDs[0] // Use first policy ID for protobuf
 	}
 
+	// Fetch mapping name
+	mappingName := ""
+	if r.MappingID != "" {
+		mappingService := mapping.NewService(s.engine.db, s.engine.logger)
+		if m, err := mappingService.GetByID(context.Background(), r.MappingID); err == nil {
+			mappingName = m.Name
+		} else {
+			s.engine.logger.Warnf("Failed to fetch mapping name for ID %s: %v", r.MappingID, err)
+		}
+	}
+
+	// Fetch source database details
+	sourceDatabaseName := ""
+	sourceDatabaseType := ""
+	if r.SourceDatabaseID != "" {
+		databaseService := database.NewService(s.engine.db, s.engine.logger)
+		if db, err := databaseService.GetByID(context.Background(), r.SourceDatabaseID); err == nil {
+			sourceDatabaseName = db.Name
+			sourceDatabaseType = db.Type
+		} else {
+			s.engine.logger.Warnf("Failed to fetch source database details for ID %s: %v", r.SourceDatabaseID, err)
+		}
+	}
+
+	// Fetch target database details
+	targetDatabaseName := ""
+	targetDatabaseType := ""
+	if r.TargetDatabaseID != "" {
+		databaseService := database.NewService(s.engine.db, s.engine.logger)
+		if db, err := databaseService.GetByID(context.Background(), r.TargetDatabaseID); err == nil {
+			targetDatabaseName = db.Name
+			targetDatabaseType = db.Type
+		} else {
+			s.engine.logger.Warnf("Failed to fetch target database details for ID %s: %v", r.TargetDatabaseID, err)
+		}
+	}
+
 	return &corev1.Relationship{
-		TenantId:                     r.TenantID,
-		WorkspaceId:                  r.WorkspaceID,
-		RelationshipId:               r.ID,
-		RelationshipName:             r.Name,
-		RelationshipDescription:      r.Description,
-		RelationshipType:             r.Type,
-		RelationshipSourceDatabaseId: r.SourceDatabaseID,
-		RelationshipSourceTableName:  r.SourceTableName,
-		RelationshipTargetDatabaseId: r.TargetDatabaseID,
-		RelationshipTargetTableName:  r.TargetTableName,
-		MappingId:                    r.MappingID,
-		PolicyId:                     policyId,
-		StatusMessage:                r.StatusMessage,
-		Status:                       statusStringToProto(r.Status),
-		OwnerId:                      r.OwnerID,
+		TenantId:                       r.TenantID,
+		WorkspaceId:                    r.WorkspaceID,
+		RelationshipId:                 r.ID,
+		RelationshipName:               r.Name,
+		RelationshipDescription:        r.Description,
+		RelationshipType:               r.Type,
+		RelationshipSourceDatabaseId:   r.SourceDatabaseID,
+		RelationshipSourceTableName:    r.SourceTableName,
+		RelationshipTargetDatabaseId:   r.TargetDatabaseID,
+		RelationshipTargetTableName:    r.TargetTableName,
+		MappingId:                      r.MappingID,
+		PolicyId:                       policyId,
+		StatusMessage:                  r.StatusMessage,
+		Status:                         statusStringToProto(r.Status),
+		OwnerId:                        r.OwnerID,
+		MappingName:                    mappingName,
+		RelationshipSourceDatabaseName: sourceDatabaseName,
+		RelationshipTargetDatabaseName: targetDatabaseName,
+		RelationshipSourceDatabaseType: sourceDatabaseType,
+		RelationshipTargetDatabaseType: targetDatabaseType,
 	}
 }
 

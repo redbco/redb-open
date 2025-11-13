@@ -188,8 +188,8 @@ export function InstanceCard({ instance, workspaceId, onUpdate }: InstanceCardPr
         </div>
         {instance.instance_version && (
           <div className="flex items-center text-sm">
-            <Server className="h-4 w-4 mr-2 text-muted-foreground" />
-            <span className="text-muted-foreground">
+            <Server className="h-4 w-4 mr-2 text-muted-foreground flex-shrink-0" />
+            <span className="text-muted-foreground truncate">
               Version {instance.instance_version}
             </span>
           </div>

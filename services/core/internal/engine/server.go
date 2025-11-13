@@ -36,6 +36,8 @@ type Server struct {
 	corev1.UnimplementedTemplateServiceServer
 	corev1.UnimplementedAuditServiceServer
 	corev1.UnimplementedImportExportServiceServer
+	corev1.UnimplementedResourceServiceServer
+	corev1.UnimplementedDataProductServiceServer
 
 	// Engine reference for tracking operations
 	engine *Engine

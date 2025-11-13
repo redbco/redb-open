@@ -16,6 +16,7 @@ import (
 	"github.com/redbco/redb-open/pkg/logger"
 	internalconfig "github.com/redbco/redb-open/services/anchor/internal/config"
 	internaldatabase "github.com/redbco/redb-open/services/anchor/internal/database"
+	"github.com/redbco/redb-open/services/anchor/internal/resources"
 	"github.com/redbco/redb-open/services/anchor/internal/state"
 	"github.com/redbco/redb-open/services/anchor/internal/watcher"
 	"google.golang.org/grpc"
@@ -23,18 +24,19 @@ import (
 )
 
 type Engine struct {
-	config             *config.Config
-	grpcServer         *grpc.Server
-	database           *database.PostgreSQL
-	coreConn           *grpc.ClientConn
-	umConn             *grpc.ClientConn
-	configWatcher      *watcher.ConfigWatcher
-	schemaWatcher      *watcher.SchemaWatcher
-	replicationWatcher *watcher.ReplicationWatcher
-	nodeID             string
-	standalone         bool
-	logger             *logger.Logger
-	state              struct {
+	config               *config.Config
+	grpcServer           *grpc.Server
+	database             *database.PostgreSQL
+	coreConn             *grpc.ClientConn
+	umConn               *grpc.ClientConn
+	configWatcher        *watcher.ConfigWatcher
+	schemaWatcher        *watcher.SchemaWatcher
+	replicationWatcher   *watcher.ReplicationWatcher
+	resourceStatusMonitor *watcher.ResourceStatusMonitor
+	nodeID               string
+	standalone           bool
+	logger               *logger.Logger
+	state                struct {
 		sync.Mutex
 		isRunning         bool
 		ongoingOperations int32
@@ -151,11 +153,15 @@ func (e *Engine) Start(ctx context.Context) error {
 
 		// Create watchers
 		e.configWatcher = watcher.NewConfigWatcher(globalState.GetConfigRepository(), "", e.logger)
-		e.schemaWatcher = watcher.NewSchemaWatcher(globalState.GetDB(), e.umConn, e.coreConn, "", e.logger)
-		e.replicationWatcher = watcher.NewReplicationWatcher(globalState.GetConfigRepository(), e.logger)
+	e.schemaWatcher = watcher.NewSchemaWatcher(globalState.GetDB(), e.umConn, e.coreConn, "", e.logger)
+	e.replicationWatcher = watcher.NewReplicationWatcher(globalState.GetConfigRepository(), e.logger)
 
-		// Create context for watchers with cancellation
-		e.watcherCtx, e.watcherCancel = context.WithCancel(ctx)
+	// Create resource repository and status monitor
+	resourceRepo := resources.NewRepository(e.database.Pool())
+	e.resourceStatusMonitor = watcher.NewResourceStatusMonitor(e.database.Pool(), resourceRepo, e.logger)
+
+	// Create context for watchers with cancellation
+	e.watcherCtx, e.watcherCancel = context.WithCancel(ctx)
 
 		// Perform initial database connections with retry logic
 		maxRetries := 3
@@ -178,13 +184,14 @@ func (e *Engine) Start(ctx context.Context) error {
 		}
 
 		// Start watchers with the cancellable context
-		go e.configWatcher.Start(e.watcherCtx)
-		go e.schemaWatcher.Start(e.watcherCtx)
-		go e.replicationWatcher.Start(e.watcherCtx)
-	} else {
-		// In standalone mode, initialize state without external dependencies
-		globalState.Initialize(nil, e.nodeID)
-	}
+	go e.configWatcher.Start(e.watcherCtx)
+	go e.schemaWatcher.Start(e.watcherCtx)
+	go e.replicationWatcher.Start(e.watcherCtx)
+	go e.resourceStatusMonitor.Start(e.watcherCtx)
+} else {
+	// In standalone mode, initialize state without external dependencies
+	globalState.Initialize(nil, e.nodeID)
+}
 
 	// Service is already registered in SetGRPCServer, just mark as running
 	e.state.isRunning = true

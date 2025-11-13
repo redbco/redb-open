@@ -182,6 +182,7 @@ func discoverTablesAndColumnsUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) 
             t.table_schema,
             t.table_name,
             c.column_name,
+            c.ordinal_position,
             c.data_type,
             c.is_nullable,
             c.column_default,
@@ -202,12 +203,13 @@ func discoverTablesAndColumnsUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) 
 
 	for rows.Next() {
 		var schemaName, tableName, columnName, dataType, isNullable string
+		var ordinalPosition int
 		var columnDefault, columnComment sql.NullString
 		var varcharLength sql.NullInt64
 		var extra string
 
 		if err := rows.Scan(
-			&schemaName, &tableName, &columnName, &dataType, &isNullable, &columnDefault, &columnComment,
+			&schemaName, &tableName, &columnName, &ordinalPosition, &dataType, &isNullable, &columnDefault, &columnComment,
 			&varcharLength, &extra,
 		); err != nil {
 			return fmt.Errorf("error scanning table and column row: %v", err)
@@ -226,9 +228,10 @@ func discoverTablesAndColumnsUnified(db *sql.DB, um *unifiedmodel.UnifiedModel) 
 
 		// Create column
 		column := unifiedmodel.Column{
-			Name:     columnName,
-			DataType: dataType,
-			Nullable: isNullable == "YES",
+			Name:            columnName,
+			DataType:        dataType,
+			Nullable:        isNullable == "YES",
+			OrdinalPosition: &ordinalPosition,
 		}
 
 		if columnDefault.Valid {

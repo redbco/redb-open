@@ -2,12 +2,25 @@
 
 import { Commit } from '@/lib/api/types';
 import { GitCommit, Calendar, User } from 'lucide-react';
+import Link from 'next/link';
 
 interface CommitCardProps {
   commit: Commit;
+  workspaceId?: string;
+  repoName?: string;
+  branchName?: string;
+  isHead?: boolean;
+  isDeployed?: boolean;
 }
 
-export function CommitCard({ commit }: CommitCardProps) {
+export function CommitCard({ 
+  commit, 
+  workspaceId, 
+  repoName, 
+  branchName,
+  isHead = false,
+  isDeployed = false,
+}: CommitCardProps) {
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     try {
@@ -23,17 +36,41 @@ export function CommitCard({ commit }: CommitCardProps) {
     }
   };
 
+  const commitUrl = workspaceId && repoName && branchName
+    ? `/workspaces/${workspaceId}/repositories/${encodeURIComponent(repoName)}/branches/${encodeURIComponent(branchName)}/commits/${encodeURIComponent(commit.commit_code)}`
+    : undefined;
+
+  const CardWrapper = commitUrl ? Link : 'div';
+  const cardProps = commitUrl 
+    ? { href: commitUrl, className: "block bg-card border border-border rounded-lg p-4 hover:border-primary/50 hover:bg-accent/50 transition-all duration-200 cursor-pointer" }
+    : { className: "bg-card border border-border rounded-lg p-4" };
+
   return (
-    <div className="bg-card border border-border rounded-lg p-4 hover:border-primary/50 transition-all duration-200">
+    <CardWrapper {...cardProps as any}>
       <div className="flex items-start space-x-3">
         <div className="p-2 bg-primary/10 rounded-lg flex-shrink-0">
           <GitCommit className="h-5 w-5 text-primary" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold text-foreground font-mono">
-              {commit.commit_code}
-            </h4>
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-semibold text-foreground font-mono">
+                {commit.commit_code}
+              </h4>
+              
+              {isHead && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                  HEAD
+                </span>
+              )}
+              
+              {isDeployed && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border border-green-200 dark:border-green-800">
+                  DEPLOYED
+                </span>
+              )}
+            </div>
+            
             <span className="text-xs text-muted-foreground">
               {formatDate(commit.created)}
             </span>
@@ -59,7 +96,7 @@ export function CommitCard({ commit }: CommitCardProps) {
           )}
         </div>
       </div>
-    </div>
+    </CardWrapper>
   );
 }
 

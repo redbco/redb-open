@@ -18,32 +18,90 @@ export function SchemaOverview({
   onDeploySchema,
   isRefreshing = false,
 }: SchemaOverviewProps) {
+  // Helper function to get containers or tables
+  const getContainersOrTables = () => {
+    if (schema.containers && schema.containers.length > 0) {
+      return schema.containers.map(container => ({
+        name: container.object_name,
+        columns: container.items || [],
+        object_type: container.object_type,
+      }));
+    }
+    // Fallback to legacy tables
+    return (schema.tables || []).map(table => ({
+      name: table.name,
+      columns: table.columns || [],
+      object_type: 'table',
+    }));
+  };
+
+  const containers = getContainersOrTables();
+
   // Calculate statistics
-  const tableCount = schema.tables?.length || 0;
-  const columnCount = schema.tables?.reduce((acc, table) => acc + table.columns.length, 0) || 0;
+  const tableCount = containers.length;
+  const columnCount = containers.reduce((acc, container) => {
+    if (schema.containers && schema.containers.length > 0) {
+      // New format: items
+      return acc + (container.columns?.length || 0);
+    }
+    // Legacy format: columns
+    return acc + (container.columns?.length || 0);
+  }, 0);
   
+  // Count privileged columns by confidence level (using enriched schema endpoint data)
+  const privilegedColumnStats = containers.reduce(
+    (acc, container) => {
+      const columns = container.columns || [];
+      columns.forEach((col: any) => {
+        // Check for both new and legacy field names
+        const isPrivileged = col.is_privileged || col.isPrivilegedData || col.is_privileged_data;
+        const confidence = col.detection_confidence || col.privilegedConfidence || col.privileged_confidence || 0;
+        
+        if (isPrivileged) {
+          acc.total++;
+          if (confidence > 0.7) {
+            acc.high++;
+          } else if (confidence >= 0.4) {
+            acc.medium++;
+          } else if (confidence > 0) {
+            acc.low++;
+          }
+        }
+      });
+      return acc;
+    },
+    { total: 0, high: 0, medium: 0, low: 0 }
+  );
+
   // Count privileged columns (high confidence > 0.7)
-  const privilegedColumnCount =
-    schema.tables?.reduce(
-      (acc, table) =>
-        acc +
-        table.columns.filter(
-          (col) =>
-            (col.isPrivilegedData || col.is_privileged_data) &&
-            (col.privilegedConfidence || col.privileged_confidence || 0) > 0.7
-        ).length,
-      0
-    ) || 0;
+  const privilegedColumnCount = privilegedColumnStats.high;
 
   // Count tables with privileged data
-  const privilegedTableCount =
-    schema.tables?.filter((table) =>
-      table.columns.some(
-        (col) =>
-          (col.isPrivilegedData || col.is_privileged_data) &&
-          (col.privilegedConfidence || col.privileged_confidence || 0) > 0.7
-      )
-    ).length || 0;
+  const privilegedTableCount = containers.filter((container) => {
+    const columns = container.columns || [];
+    return columns.some((col: any) => {
+      const isPrivileged = col.is_privileged || col.isPrivilegedData || col.is_privileged_data;
+      const confidence = col.detection_confidence || col.privilegedConfidence || col.privileged_confidence || 0;
+      return isPrivileged && confidence > 0.7;
+    });
+  }).length;
+  
+  // Count data categories from enriched schema data
+  const dataCategoryCounts = containers.reduce((acc, container) => {
+    const columns = container.columns || [];
+    columns.forEach((col: any) => {
+      const category = col.data_category || col.dataCategory;
+      const isPrivileged = col.is_privileged || col.isPrivilegedData || col.is_privileged_data;
+      if (category && isPrivileged) {
+        acc[category] = (acc[category] || 0) + 1;
+      }
+    });
+    return acc;
+  }, {} as Record<string, number>);
+  
+  const topCategories = Object.entries(dataCategoryCounts)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 3);
 
   return (
     <div className="space-y-6">
@@ -124,7 +182,27 @@ export function SchemaOverview({
             <div>
               <p className="text-sm font-medium text-muted-foreground">Privileged Data</p>
               <p className="text-3xl font-bold text-foreground mt-1">{privilegedColumnCount}</p>
-              <p className="text-xs text-muted-foreground mt-1">High confidence columns</p>
+              <div className="flex items-center gap-2 mt-1 text-xs">
+                <span className="text-red-600 dark:text-red-400" title="High confidence (>70%)">
+                  High: {privilegedColumnStats.high}
+                </span>
+                {privilegedColumnStats.medium > 0 && (
+                  <>
+                    <span className="text-muted-foreground">•</span>
+                    <span className="text-yellow-600 dark:text-yellow-400" title="Medium confidence (40-70%)">
+                      Med: {privilegedColumnStats.medium}
+                    </span>
+                  </>
+                )}
+                {privilegedColumnStats.low > 0 && (
+                  <>
+                    <span className="text-muted-foreground">•</span>
+                    <span className="text-gray-600 dark:text-gray-400" title="Low confidence (<40%)">
+                      Low: {privilegedColumnStats.low}
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
             <div className="w-12 h-12 rounded-lg bg-red-100 dark:bg-red-900/20 flex items-center justify-center">
               <Shield className="h-6 w-6 text-red-600 dark:text-red-400" />
@@ -154,12 +232,24 @@ export function SchemaOverview({
           </div>
           <div className="flex-1">
             <p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
-              Real-time Schema View
+              Real-time Schema with Enhanced Privileged Data Detection
             </p>
             <p className="text-sm text-blue-800 dark:text-blue-200 mt-1">
-              This view shows the current live state of the database <strong>{databaseName}</strong>. 
-              Any changes made directly to the database will be reflected here immediately upon refresh. 
-              For version-controlled schemas, use the Repository feature.
+              This view shows the current live state of the database <strong>{databaseName}</strong> with 
+              enriched privileged data classifications from automatic detection. 
+              {topCategories.length > 0 && (
+                <>
+                  {' '}Top detected categories:{' '}
+                  {topCategories.map(([category, count], idx) => (
+                    <span key={category}>
+                      <strong>{category}</strong> ({count})
+                      {idx < topCategories.length - 1 ? ', ' : ''}
+                    </span>
+                  ))}
+                  .
+                </>
+              )}
+              {' '}Any changes made directly to the database will be reflected here immediately upon refresh.
             </p>
           </div>
         </div>

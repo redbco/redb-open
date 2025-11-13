@@ -611,6 +611,7 @@ message Column {
   bool is_clustering_key = 8;
   bool auto_increment = 9;
   string collation = 10;
+  int32 ordinal_position = 11;
 }
 
 // Collection definition for document databases

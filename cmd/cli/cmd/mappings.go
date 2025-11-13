@@ -61,8 +61,9 @@ Examples:
 		name, _ := cmd.Flags().GetString("name")
 		description, _ := cmd.Flags().GetString("description")
 		policyID, _ := cmd.Flags().GetString("policy-id")
+		clean, _ := cmd.Flags().GetBool("clean")
 
-		return mappings.AddMapping(scope, source, target, name, description, policyID)
+		return mappings.AddMapping(scope, source, target, name, description, policyID, clean)
 	},
 }
 
@@ -246,6 +247,7 @@ func init() {
 	addMappingCmd.Flags().String("name", "", "Mapping name (optional, auto-generated if not provided)")
 	addMappingCmd.Flags().String("description", "", "Mapping description (optional, auto-generated if not provided)")
 	addMappingCmd.Flags().String("policy-id", "", "Policy ID (optional)")
+	addMappingCmd.Flags().Bool("clean", false, "Create empty mapping without auto-generating rules (default: false)")
 
 	// Mark required flags
 	addMappingCmd.MarkFlagRequired("scope")

@@ -20,9 +20,15 @@ func FetchData(pool *pgxpool.Pool, tableName string, limit int) ([]map[string]in
 		return nil, err
 	}
 
-	// Build and execute query
+	// Build and execute query - cast all columns to text to handle custom types like ENUMs
+	quotedColumns := make([]string, len(columns))
+	for i, col := range columns {
+		// Cast each column to text to handle custom types (ENUMs, etc.)
+		quotedColumns[i] = fmt.Sprintf("%s::text", quoteIdentifier(col))
+	}
+
 	query := fmt.Sprintf("SELECT %s FROM %s",
-		strings.Join(columns, ", "),
+		strings.Join(quotedColumns, ", "),
 		quoteIdentifier(tableName))
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)

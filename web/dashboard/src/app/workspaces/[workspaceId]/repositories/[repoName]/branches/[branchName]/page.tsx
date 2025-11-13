@@ -40,6 +40,17 @@ export default function BranchDetailPage({ params }: BranchDetailPageProps) {
 
   const commits = branch?.commits || [];
 
+  // Sort commits by created date (latest first)
+  const sortedCommits = [...commits].sort((a, b) => {
+    const dateA = new Date(a.created || 0).getTime();
+    const dateB = new Date(b.created || 0).getTime();
+    return dateB - dateA;
+  });
+
+  // Determine HEAD commit and if it's deployed
+  const headCommit = sortedCommits.find((c) => (c as any).is_head || (c as any).isHead);
+  const isHeadDeployed = !!branch?.attached_database_id;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -118,9 +129,22 @@ export default function BranchDetailPage({ params }: BranchDetailPageProps) {
           </div>
         ) : (
           <div className="space-y-4">
-            {commits.map((commit) => (
-              <CommitCard key={commit.commit_id} commit={commit} />
-            ))}
+            {sortedCommits.map((commit) => {
+              const isHead = headCommit?.commit_id === commit.commit_id;
+              const isDeployed = isHead && isHeadDeployed;
+              
+              return (
+                <CommitCard 
+                  key={commit.commit_id} 
+                  commit={commit}
+                  workspaceId={workspaceId}
+                  repoName={repoName}
+                  branchName={branchName}
+                  isHead={isHead}
+                  isDeployed={isDeployed}
+                />
+              );
+            })}
           </div>
         )}
       </div>
