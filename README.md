@@ -1,10 +1,12 @@
 ## reDB Node
-### The Data Portability Platform for the AI Era
+### The Open Data Infrastructure for the AI Era
 
-reDB is a distributed, policy-driven data mesh that unifies access, mobility, and transformation across heterogeneous databases and clouds. Built for developers, data platform teams, and AI agents.
+reDB is a mesh-based overlay network for all data stores, streams and environments. It delivers one unified layer for access, replication, and control - across clouds, databases, and on-prem systems.
 
 ### What's new
 
+- 🌐 Web Dashboard: Modern web interface for managing databases, mappings, streams, and MCP servers
+- 📡 Stream Service: First-class support for message brokers (Kafka, MQTT, Kinesis, Pub/Sub, Event Hubs) with stream-to-database integration
 - 💻 CLI Interactive mode: Interactive REPL mode to CLI with command history and tab completion
 - 🔏 Data Transformations: Mappings now support built-in data transformations with copy-data, CDC replication and MCP server
 - 🤖 MCP Server: Tables can be represented through mappings as MCP Resources or Tools
@@ -12,10 +14,11 @@ reDB is a distributed, policy-driven data mesh that unifies access, mobility, an
 
 ### Why reDB
 
-- 🔌 Connect any mix of SQL/NoSQL/vector/graph without brittle pipelines
+- 🔌 Connect any mix of SQL/NoSQL/vector/graph/streams without brittle pipelines
 - 🧠 Unified schema model across paradigms with conversion and diffing
 - 🚀 Real-time CDC replication with cross-database change capture
 - 🔄 Zero-downtime migration workflows with automatic initial data sync
+- 📡 Stream integration with message brokers (Kafka, MQTT, Kinesis, Pub/Sub, Event Hubs) and event routing
 - 🔐 Policy-first access with masking and tenant isolation
 - 🤖 AI-native via MCP: expose data resources and tools to LLMs safely
 
@@ -162,6 +165,33 @@ mcptools attach --tool query_users --server mcp-server
 
 Now your MCP server is running and can be used by AI agents like Claude Desktop, Cline, or any MCP-compatible client. For detailed MCP server management, see `docs/MCP_SERVER_MANAGEMENT.md`.
 
+### Stream Integration
+
+Connect to message brokers and integrate streaming data with your databases:
+
+```bash
+# Connect to a Kafka stream
+streams connect --name kafka-prod --type kafka --string "localhost:9092"
+
+# Connect to an MQTT broker
+streams connect --name mqtt-local --type mqtt --string "tcp://localhost:1883"
+
+# List connected streams
+streams list
+
+# Show stream details
+streams show kafka-prod
+
+# Create a mapping from a stream topic to a database table
+mappings add --scope table --source kafka-prod.events --target pg.events
+
+# Set up real-time stream-to-database routing
+relationships add --mapping kafka_events_to_pg_events --type stream-routing
+relationships start kafka_to_pg
+```
+
+For detailed information on stream adapters and integration patterns, see `docs/STREAM.md`.
+
 ### Mesh Networking
 
 Create or join a distributed mesh for multi-node deployments:
@@ -184,7 +214,7 @@ mesh join localhost:10001
 
 ## Architecture (short)
 
-Supervisor orchestrates microservices for Security, Core, Unified Model, Anchor, Transformation, Integration, Mesh, Client API, Webhook, MCP Server, and clients (CLI, Dashboard). Ports and deeper details in `docs/ARCHITECTURE.md`.
+Supervisor orchestrates microservices for Security, Core, Unified Model, Anchor, Stream, Transformation, Integration, Mesh, Client API, Webhook, MCP Server, and clients (CLI, Dashboard). Ports and deeper details in `docs/ARCHITECTURE.md`.
 
 ## Database support
 
@@ -214,6 +244,7 @@ redb-open/
 │   ├── queryapi/         # Database query execution interface
 │   ├── security/         # Authentication and authorization
 │   ├── serviceapi/       # Administrative and service management
+│   ├── stream/           # Stream broker integration (Kafka, MQTT, etc.)
 │   ├── transformation/   # Internal data processing (no external integrations)
 │   ├── integration/      # External integrations (LLMs, RAG, custom)
 │   ├── unifiedmodel/     # Database abstraction and schema translation
@@ -242,6 +273,7 @@ redb-open/
 - CLI reference: `docs/CLI_REFERENCE.md`
 - Dashboard: `docs/DASHBOARD.md`
 - Anchor service: `docs/ANCHOR.md`
+- Stream service: `docs/STREAM.md`
 - MCP Server Management: `docs/MCP_SERVER_MANAGEMENT.md`
 
 ## Contributing
