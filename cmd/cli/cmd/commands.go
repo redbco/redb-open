@@ -39,6 +39,9 @@ func setupCommands() {
 	// Add databases commands
 	rootCmd.AddCommand(databasesCmd)
 
+	// Add streams commands
+	rootCmd.AddCommand(streamsCmd)
+
 	// Add mappings commands
 	rootCmd.AddCommand(mappingsCmd)
 

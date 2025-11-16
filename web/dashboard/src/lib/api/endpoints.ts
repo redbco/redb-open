@@ -111,6 +111,17 @@ import type {
   ListResourceItemsResponse,
   Webhook,
   Stream,
+  ListStreamsResponse,
+  ShowStreamResponse,
+  ConnectStreamRequest,
+  ConnectStreamResponse,
+  ModifyStreamRequest,
+  ModifyStreamResponse,
+  ReconnectStreamResponse,
+  DisconnectStreamRequest,
+  DisconnectStreamResponse,
+  ListTopicsResponse,
+  GetTopicSchemaResponse,
 } from './types';
 
 // Authentication Endpoints
@@ -630,15 +641,31 @@ export const webhookEndpoints = {
     Promise.reject(new Error('Webhooks not yet implemented')),
 };
 
-// Stream Endpoints (Placeholders)
+// Stream Endpoints
 export const streamEndpoints = {
   list: (workspaceName: string) =>
-    // Placeholder: Returns empty array until streams are implemented
-    Promise.resolve({ streams: [] as Stream[] }),
+    apiClient.get<ListStreamsResponse>(`api/v1/workspaces/${workspaceName}/streams`),
 
-  show: (workspaceName: string, streamId: string) =>
-    // Placeholder: Returns 404 until streams are implemented
-    Promise.reject(new Error('Streams not yet implemented')),
+  show: (workspaceName: string, streamName: string) =>
+    apiClient.get<ShowStreamResponse>(`api/v1/workspaces/${workspaceName}/streams/${streamName}`),
+
+  connect: (workspaceName: string, request: ConnectStreamRequest) =>
+    apiClient.post<ConnectStreamResponse>(`api/v1/workspaces/${workspaceName}/streams/connect`, request),
+
+  modify: (workspaceName: string, streamName: string, request: ModifyStreamRequest) =>
+    apiClient.put<ModifyStreamResponse>(`api/v1/workspaces/${workspaceName}/streams/${streamName}`, request),
+
+  reconnect: (workspaceName: string, streamName: string) =>
+    apiClient.post<ReconnectStreamResponse>(`api/v1/workspaces/${workspaceName}/streams/${streamName}/reconnect`, {}),
+
+  disconnect: (workspaceName: string, streamName: string, request?: DisconnectStreamRequest) =>
+    apiClient.post<DisconnectStreamResponse>(`api/v1/workspaces/${workspaceName}/streams/${streamName}/disconnect`, request || { delete_stream: false }),
+
+  listTopics: (workspaceName: string, streamName: string) =>
+    apiClient.get<ListTopicsResponse>(`api/v1/workspaces/${workspaceName}/streams/${streamName}/topics`),
+
+  getTopicSchema: (workspaceName: string, streamName: string, topicName: string) =>
+    apiClient.get<GetTopicSchemaResponse>(`api/v1/workspaces/${workspaceName}/streams/${streamName}/topics/${topicName}/schema`),
 };
 
 // Export all endpoints

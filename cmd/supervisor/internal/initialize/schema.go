@@ -352,6 +352,26 @@ CREATE TABLE anchors (
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Stream components for data streaming platform connections
+CREATE TABLE streams (
+    stream_id ulid PRIMARY KEY DEFAULT generate_ulid('stream'),
+    tenant_id ulid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    stream_name VARCHAR(255) UNIQUE NOT NULL,
+    stream_description TEXT DEFAULT '',
+    stream_platform VARCHAR(255) DEFAULT 'kafka',
+    stream_version VARCHAR(255) DEFAULT '1.0.0',
+    stream_region_id ulid REFERENCES regions(region_id),
+    connection_config JSONB NOT NULL DEFAULT '{}',
+    credential_key TEXT DEFAULT '',
+    stream_metadata JSONB NOT NULL DEFAULT '{}',
+    monitored_topics JSONB DEFAULT '[]',
+    connected_to_node_id BIGINT NOT NULL REFERENCES nodes(node_id),
+    owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    status status_enum DEFAULT 'STATUS_PENDING',
+    created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- =============================================================================
 -- WORKSPACE AND DEVELOPMENT STRUCTURE
 -- =============================================================================
@@ -1490,5 +1510,13 @@ CREATE INDEX idx_data_products_metadata_gin ON data_products USING gin(metadata)
 CREATE INDEX idx_data_product_items_product_id ON data_product_items(product_id);
 CREATE INDEX idx_data_product_items_resource_item_id ON data_product_items(resource_item_id);
 CREATE INDEX idx_data_product_items_order ON data_product_items(product_id, item_order);
+
+-- Stream queries
+CREATE INDEX idx_streams_tenant_id ON streams(tenant_id);
+CREATE INDEX idx_streams_node_id ON streams(connected_to_node_id);
+CREATE INDEX idx_streams_platform ON streams(stream_platform);
+CREATE INDEX idx_streams_status ON streams(status);
+CREATE INDEX idx_streams_config_gin ON streams USING gin(connection_config);
+CREATE INDEX idx_streams_metadata_gin ON streams USING gin(stream_metadata);
 
 `

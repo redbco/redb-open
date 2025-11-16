@@ -13,6 +13,7 @@ type Server struct {
 	corev1.UnimplementedWorkspaceServiceServer
 	corev1.UnimplementedSatelliteServiceServer
 	corev1.UnimplementedAnchorServiceServer
+	corev1.UnimplementedStreamServiceServer
 	corev1.UnimplementedRegionServiceServer
 	corev1.UnimplementedEnvironmentServiceServer
 	corev1.UnimplementedInstanceServiceServer

@@ -12,6 +12,7 @@ use (
 	./services/integration
 	./services/mcpserver
 	./services/security
+	./services/stream
 	./services/transformation
 	./services/unifiedmodel
 	./services/webhook

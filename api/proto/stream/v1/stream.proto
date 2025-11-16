@@ -1,0 +1,201 @@
+syntax = "proto3";
+
+package redbco.redbopen.stream.v1;
+
+option go_package = "github.com/redbco/redb-open/api/proto/stream/v1;streamv1";
+
+import "api/proto/common/v1/common.proto";
+
+service StreamService {
+    // Stream connection management
+    rpc ConnectStream(ConnectStreamRequest) returns (ConnectStreamResponse) {}
+    rpc UpdateStreamConnection(UpdateStreamConnectionRequest) returns (UpdateStreamConnectionResponse) {}
+    rpc DisconnectStream(DisconnectStreamRequest) returns (DisconnectStreamResponse) {}
+    
+    // Stream metadata and information
+    rpc GetStreamMetadata(GetStreamMetadataRequest) returns (GetStreamMetadataResponse) {}
+    rpc ListTopics(ListTopicsRequest) returns (ListTopicsResponse) {}
+    rpc GetTopicMetadata(GetTopicMetadataRequest) returns (GetTopicMetadataResponse) {}
+    rpc GetTopicSchema(GetTopicSchemaRequest) returns (GetTopicSchemaResponse) {}
+    
+    // Topic management
+    rpc CreateTopic(CreateTopicRequest) returns (CreateTopicResponse) {}
+    rpc DeleteTopic(DeleteTopicRequest) returns (DeleteTopicResponse) {}
+    
+    // Message operations
+    rpc ProduceMessages(ProduceMessagesRequest) returns (ProduceMessagesResponse) {}
+    rpc ConsumeMessages(ConsumeMessagesRequest) returns (stream ConsumeMessagesResponse) {}
+}
+
+// Connection management messages
+message ConnectStreamRequest {
+    string tenant_id = 1;
+    string stream_id = 2;
+}
+
+message ConnectStreamResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string stream_id = 4;
+}
+
+message UpdateStreamConnectionRequest {
+    string tenant_id = 1;
+    string stream_id = 2;
+}
+
+message UpdateStreamConnectionResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string stream_id = 4;
+}
+
+message DisconnectStreamRequest {
+    string tenant_id = 1;
+    string stream_id = 2;
+}
+
+message DisconnectStreamResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string stream_id = 4;
+}
+
+// Metadata messages
+message GetStreamMetadataRequest {
+    string tenant_id = 1;
+    string stream_id = 2;
+}
+
+message GetStreamMetadataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string stream_id = 4;
+    bytes metadata = 5;
+}
+
+message ListTopicsRequest {
+    string tenant_id = 1;
+    string stream_id = 2;
+}
+
+message ListTopicsResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    repeated TopicInfo topics = 4;
+}
+
+message TopicInfo {
+    string name = 1;
+    int32 partitions = 2;
+    int32 replicas = 3;
+    map<string, string> config = 4;
+}
+
+message GetTopicMetadataRequest {
+    string tenant_id = 1;
+    string stream_id = 2;
+    string topic_name = 3;
+}
+
+message GetTopicMetadataResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string topic_name = 4;
+    bytes metadata = 5;
+}
+
+message GetTopicSchemaRequest {
+    string tenant_id = 1;
+    string stream_id = 2;
+    string topic_name = 3;
+}
+
+message GetTopicSchemaResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string topic_name = 4;
+    bytes schema = 5;
+    int64 messages_sampled = 6;
+    double confidence_score = 7;
+}
+
+// Topic management messages
+message CreateTopicRequest {
+    string tenant_id = 1;
+    string stream_id = 2;
+    string topic_name = 3;
+    int32 num_partitions = 4;
+    int32 replication_factor = 5;
+    map<string, string> config = 6;
+}
+
+message CreateTopicResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string topic_name = 4;
+}
+
+message DeleteTopicRequest {
+    string tenant_id = 1;
+    string stream_id = 2;
+    string topic_name = 3;
+}
+
+message DeleteTopicResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string topic_name = 4;
+}
+
+// Message operation messages
+message ProduceMessagesRequest {
+    string tenant_id = 1;
+    string stream_id = 2;
+    string topic_name = 3;
+    repeated StreamMessage messages = 4;
+}
+
+message ProduceMessagesResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    int32 messages_produced = 4;
+}
+
+message ConsumeMessagesRequest {
+    string tenant_id = 1;
+    string stream_id = 2;
+    repeated string topic_names = 3;
+    string consumer_group_id = 4;
+    int32 max_messages = 5;
+    int32 timeout_seconds = 6;
+}
+
+message ConsumeMessagesResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    repeated StreamMessage messages = 4;
+    bool has_more = 5;
+}
+
+message StreamMessage {
+    string topic = 1;
+    int32 partition = 2;
+    int64 offset = 3;
+    bytes key = 4;
+    bytes value = 5;
+    map<string, string> headers = 6;
+    int64 timestamp = 7;
+}
+

@@ -19,6 +19,7 @@ type Server struct {
 	meshHandler           *MeshHandlers
 	satelliteHandler      *SatelliteHandlers
 	anchorHandler         *AnchorHandlers
+	streamHandler         *StreamHandlers
 	instanceHandler       *InstanceHandlers
 	databaseHandler       *DatabaseHandlers
 	repoHandler           *RepoHandlers
@@ -47,6 +48,7 @@ func NewServer(engine *Engine) *Server {
 		meshHandler:           NewMeshHandlers(engine),
 		satelliteHandler:      NewSatelliteHandlers(engine),
 		anchorHandler:         NewAnchorHandlers(engine),
+		streamHandler:         NewStreamHandlers(engine),
 		instanceHandler:       NewInstanceHandlers(engine),
 		databaseHandler:       NewDatabaseHandlers(engine),
 		repoHandler:           NewRepoHandlers(engine),
@@ -282,6 +284,17 @@ func (s *Server) setupRoutes() {
 	databases.HandleFunc("/{database_name}/tables/{table_name}/data", s.databaseHandler.UpdateTableData).Methods(http.MethodPut)
 	databases.HandleFunc("/{database_name}/tables/{table_name}/wipe", s.databaseHandler.WipeTable).Methods(http.MethodPost)
 	databases.HandleFunc("/{database_name}/tables/{table_name}/drop", s.databaseHandler.DropTable).Methods(http.MethodPost)
+
+	// Stream endpoints (workspace-level)
+	streams := workspaces.PathPrefix("/{workspace_name}/streams").Subrouter()
+	streams.HandleFunc("", s.streamHandler.ListStreams).Methods(http.MethodGet)
+	streams.HandleFunc("/connect", s.streamHandler.ConnectStream).Methods(http.MethodPost)
+	streams.HandleFunc("/{stream_name}", s.streamHandler.ShowStream).Methods(http.MethodGet)
+	streams.HandleFunc("/{stream_name}", s.streamHandler.ModifyStream).Methods(http.MethodPut)
+	streams.HandleFunc("/{stream_name}/reconnect", s.streamHandler.ReconnectStream).Methods(http.MethodPost)
+	streams.HandleFunc("/{stream_name}/disconnect", s.streamHandler.DisconnectStream).Methods(http.MethodPost)
+	streams.HandleFunc("/{stream_name}/topics", s.streamHandler.ListTopics).Methods(http.MethodGet)
+	streams.HandleFunc("/{stream_name}/topics/{topic_name}/schema", s.streamHandler.GetTopicSchema).Methods(http.MethodGet)
 
 	// Repo endpoints (workspace-level)
 	repos := workspaces.PathPrefix("/{workspace_name}/repos").Subrouter()

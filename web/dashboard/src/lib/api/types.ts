@@ -358,6 +358,97 @@ export interface GetDatabaseDisconnectMetadataResponse {
   metadata: DatabaseDisconnectMetadata;
 }
 
+// ==================== Stream Types ====================
+
+export interface Stream {
+  tenant_id: string;
+  workspace_id: string;
+  stream_id: string;
+  stream_name: string;
+  stream_description?: string;
+  stream_platform: string;
+  stream_version?: string;
+  region_id?: string;
+  connection_config: Record<string, any>;
+  credential_key?: string;
+  metadata?: Record<string, any>;
+  monitored_topics: string[];
+  connected_to_node_id: number;
+  owner_id?: string;
+  status: string;
+  created?: string;
+  updated?: string;
+}
+
+export interface TopicInfo {
+  name: string;
+  partitions: number;
+  replicas: number;
+  config: Record<string, string>;
+}
+
+export interface TopicSchema {
+  topic_name: string;
+  schema: any;
+  messages_sampled: number;
+  confidence_score: number;
+}
+
+export interface ConnectStreamRequest {
+  stream_name: string;
+  stream_description?: string;
+  stream_platform: string;
+  region_name?: string;
+  connection_config: Record<string, any>;
+  monitored_topics: string[];
+  node_id?: number;
+}
+
+export interface ConnectStreamResponse {
+  stream: Stream;
+}
+
+export interface ListStreamsResponse {
+  streams: Stream[];
+}
+
+export interface ShowStreamResponse {
+  stream: Stream;
+}
+
+export interface ModifyStreamRequest {
+  stream_description?: string;
+  connection_config?: Record<string, any>;
+  monitored_topics?: string[];
+}
+
+export interface ModifyStreamResponse {
+  stream: Stream;
+}
+
+export interface ReconnectStreamResponse {
+  stream: Stream;
+}
+
+export interface DisconnectStreamRequest {
+  delete_stream?: boolean;
+}
+
+export interface DisconnectStreamResponse {
+  // 204 No Content - empty response
+}
+
+export interface ListTopicsResponse {
+  topics: TopicInfo[];
+}
+
+export interface GetTopicSchemaResponse {
+  topic_name: string;
+  schema: any;
+  messages_sampled: number;
+  confidence_score: number;
+}
+
 // Schema Column Structure
 export interface SchemaColumn {
   name: string;
@@ -1430,31 +1521,6 @@ export interface ListWebhooksResponse {
 
 export interface ShowWebhookResponse {
   webhook: Webhook;
-}
-
-// Stream Types (Placeholder for future implementation)
-export interface Stream {
-  tenant_id: string;
-  workspace_id: string;
-  stream_id: string;
-  stream_name: string;
-  stream_description?: string;
-  stream_type?: string;
-  stream_config?: Record<string, any>;
-  mapping_id?: string;
-  policy_ids?: string[];
-  owner_id?: string;
-  status?: string;
-  created?: string;
-  updated?: string;
-}
-
-export interface ListStreamsResponse {
-  streams: Stream[];
-}
-
-export interface ShowStreamResponse {
-  stream: Stream;
 }
 
 // User Types

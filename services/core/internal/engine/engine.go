@@ -109,6 +109,7 @@ func (e *Engine) RegisterCoreServices() error {
 	corev1.RegisterWorkspaceServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterSatelliteServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterAnchorServiceServer(e.grpcServer, e.coreSvc)
+	corev1.RegisterStreamServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterRegionServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterEnvironmentServiceServer(e.grpcServer, e.coreSvc)
 	corev1.RegisterInstanceServiceServer(e.grpcServer, e.coreSvc)

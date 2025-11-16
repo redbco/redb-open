@@ -3,7 +3,7 @@
 # Project variables
 BINARY_DIR := bin
 BUILD_DIR := build
-GO_SERVICES := supervisor security unifiedmodel transformation integration anchor core webhook clientapi mcpserver cli
+GO_SERVICES := supervisor security unifiedmodel transformation integration anchor core webhook clientapi mcpserver cli stream
 RUST_SERVICES := mesh
 SERVICES := $(GO_SERVICES) $(RUST_SERVICES)
 
@@ -77,7 +77,8 @@ PROTO_FILES := api/proto/common/v1/common.proto \
                api/proto/anchor/v1/anchor.proto \
 			   api/proto/core/v1/core.proto \
 			   api/proto/webhook/v1/webhook.proto \
-			   api/proto/integration/v1/integration.proto
+			   api/proto/integration/v1/integration.proto \
+			   api/proto/stream/v1/stream.proto
 
 .PHONY: all clean build test proto dev local
 

@@ -61,6 +61,7 @@ func getDefaultServiceAddress(serviceName string) string {
 		"integration":    "localhost:50058",
 		"clientapi":      "localhost:50059",
 		"mcpserver":      "localhost:50060",
+		"stream":         "localhost:50061",
 	}
 
 	if addr, exists := defaults[serviceName]; exists {
@@ -124,6 +125,7 @@ func getServiceBasePort(serviceName string) int {
 		"integration":    50058,
 		"clientapi":      50059,
 		"mcpserver":      50060,
+		"stream":         50061,
 	}
 
 	if port, exists := servicePorts[serviceName]; exists {

@@ -56,6 +56,16 @@ service AnchorService {
   rpc DeleteAnchor(DeleteAnchorRequest) returns (DeleteAnchorResponse);
 }
 
+// Stream service for stream management
+service StreamService {
+  rpc ListStreams(ListStreamsRequest) returns (ListStreamsResponse);
+  rpc ShowStream(ShowStreamRequest) returns (ShowStreamResponse);
+  rpc ConnectStream(ConnectStreamRequest) returns (ConnectStreamResponse);
+  rpc ReconnectStream(ReconnectStreamRequest) returns (ReconnectStreamResponse);
+  rpc ModifyStream(ModifyStreamRequest) returns (ModifyStreamResponse);
+  rpc DisconnectStream(DisconnectStreamRequest) returns (DisconnectStreamResponse);
+}
+
 // Region service for region management
 service RegionService {
   rpc ListRegions(ListRegionsRequest) returns (ListRegionsResponse);
@@ -4904,4 +4914,121 @@ message ForkCommitResponse {
     string target_branch_id = 6;
     string target_commit_id = 7;
     repeated string warnings = 8;
+}
+
+// ============================================================================
+// Stream Service Messages
+// ============================================================================
+
+// Stream object
+message Stream {
+    string stream_id = 1;
+    string tenant_id = 2;
+    string stream_name = 3;
+    string stream_description = 4;
+    string stream_platform = 5;
+    string stream_version = 6;
+    string stream_region_id = 7;
+    google.protobuf.Struct connection_config = 8;
+    string credential_key = 9;
+    google.protobuf.Struct stream_metadata = 10;
+    repeated string monitored_topics = 11;
+    int64 connected_to_node_id = 12;
+    string owner_id = 13;
+    string status = 14;
+    string created = 15;
+    string updated = 16;
+}
+
+// List streams
+message ListStreamsRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+}
+
+message ListStreamsResponse {
+    repeated Stream streams = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Show stream
+message ShowStreamRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string stream_name = 3;
+}
+
+message ShowStreamResponse {
+    Stream stream = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Connect stream
+message ConnectStreamRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string stream_name = 3;
+    string stream_description = 4;
+    string stream_platform = 5;
+    string region_name = 6;
+    google.protobuf.Struct connection_config = 7;
+    repeated string monitored_topics = 8;
+    int64 node_id = 9;
+    string owner_id = 10;
+}
+
+message ConnectStreamResponse {
+    Stream stream = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Reconnect stream
+message ReconnectStreamRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string stream_name = 3;
+}
+
+message ReconnectStreamResponse {
+    Stream stream = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Modify stream
+message ModifyStreamRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string stream_name = 3;
+    optional string stream_description = 4;
+    optional google.protobuf.Struct connection_config = 5;
+    repeated string monitored_topics = 6;
+}
+
+message ModifyStreamResponse {
+    Stream stream = 1;
+    string message = 2;
+    bool success = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Disconnect stream
+message DisconnectStreamRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string stream_name = 3;
+    optional bool delete_stream = 4;
+}
+
+message DisconnectStreamResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
 }

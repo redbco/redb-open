@@ -16,7 +16,8 @@ import {
   Link as LucideLink,
   GitBranch,
   Layers,
-  Package
+  Package,
+  Activity
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useWorkspace } from '@/lib/hooks/useWorkspace';
@@ -52,6 +53,12 @@ const workspaceNavigationItems: NavItem[] = [
     href: '/databases',
     icon: Database,
     description: 'Logical databases across instances'
+  },
+  {
+    name: 'Streams',
+    href: '/streams',
+    icon: Activity,
+    description: 'Messaging and streaming platforms'
   },
   {
     name: 'Repositories',

@@ -134,6 +134,19 @@ services:
     environment:
       SERVICE_NAME: anchor
 
+  stream:
+    enabled: true
+    required: true
+    executable: ./redb-stream
+    args:
+      - --port=50061
+      - --supervisor=localhost:50000
+    dependencies:
+      - mesh
+      - anchor
+    environment:
+      SERVICE_NAME: stream
+
   core:
     enabled: true
     required: true

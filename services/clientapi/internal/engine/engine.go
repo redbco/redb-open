@@ -15,6 +15,7 @@ import (
 
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	securityv1 "github.com/redbco/redb-open/api/proto/security/v1"
+	streamv1 "github.com/redbco/redb-open/api/proto/stream/v1"
 	"github.com/redbco/redb-open/pkg/config"
 	"github.com/redbco/redb-open/pkg/grpcconfig"
 	"github.com/redbco/redb-open/pkg/keyring"
@@ -38,6 +39,8 @@ type Engine struct {
 	workspaceClient      corev1.WorkspaceServiceClient
 	satelliteClient      corev1.SatelliteServiceClient
 	anchorClient         corev1.AnchorServiceClient
+	streamClient         corev1.StreamServiceClient
+	streamServiceClient  streamv1.StreamServiceClient // Direct connection to stream service
 	regionClient         corev1.RegionServiceClient
 	environmentClient    corev1.EnvironmentServiceClient
 	instanceClient       corev1.InstanceServiceClient
@@ -140,6 +143,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.workspaceClient = corev1.NewWorkspaceServiceClient(coreConn)
 	e.satelliteClient = corev1.NewSatelliteServiceClient(coreConn)
 	e.anchorClient = corev1.NewAnchorServiceClient(coreConn)
+	e.streamClient = corev1.NewStreamServiceClient(coreConn)
 	e.regionClient = corev1.NewRegionServiceClient(coreConn)
 	e.environmentClient = corev1.NewEnvironmentServiceClient(coreConn)
 	e.instanceClient = corev1.NewInstanceServiceClient(coreConn)
@@ -208,6 +212,43 @@ func (e *Engine) Start(ctx context.Context) error {
 
 	if e.logger != nil {
 		e.logger.Infof("Security client initialized successfully")
+	}
+
+	// Connect to stream service using dynamic address resolution
+	// This connection is non-blocking to allow the client API to start even if stream service is not available
+	streamAddr := grpcconfig.GetServiceAddress(e.config, "stream")
+
+	if e.logger != nil {
+		e.logger.Infof("Connecting to stream service at: %s", streamAddr)
+	}
+
+	// Create connection without blocking - connection will be established in background
+	streamDialOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// Removed grpc.WithBlock() to allow non-blocking connection
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                10 * time.Second, // Send keepalive pings every 10 seconds
+			Timeout:             3 * time.Second,  // Wait 3 seconds for ping ack before considering connection dead
+			PermitWithoutStream: true,             // Send keepalive pings even when there are no active streams
+		}),
+		grpc.WithDefaultCallOptions(
+			grpc.WaitForReady(false), // Don't wait for connection, fail fast if not ready
+		),
+	}
+
+	streamConn, err := grpc.Dial(streamAddr, streamDialOpts...)
+	if err != nil {
+		if e.logger != nil {
+			e.logger.Warnf("Failed to create stream service connection at %s: %v (connection will be retried)", streamAddr, err)
+		}
+		// Don't return error - allow client API to start without stream service
+	} else {
+		// Initialize the stream service client
+		e.streamServiceClient = streamv1.NewStreamServiceClient(streamConn)
+
+		if e.logger != nil {
+			e.logger.Infof("Stream service client initialized (connection will be established in background)")
+		}
 	}
 
 	// Initialize HTTP server
