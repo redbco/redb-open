@@ -5,7 +5,7 @@ import { ReactNode, useState, createContext, useContext, useEffect, useRef } fro
 interface TooltipContextValue {
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
-  triggerRef: React.RefObject<HTMLDivElement> | null;
+  triggerRef: React.RefObject<HTMLDivElement | null> | null;
 }
 
 const TooltipContext = createContext<TooltipContextValue | undefined>(undefined);

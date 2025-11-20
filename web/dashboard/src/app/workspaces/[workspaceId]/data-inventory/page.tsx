@@ -247,7 +247,7 @@ export default function DataInventoryPage({ params }: DataInventoryPageProps) {
                   <EmptyState
                     icon={Database}
                     title="No resource items found"
-                    message="Connect databases to see resource items here"
+                    description="Connect databases to see resource items here"
                   />
                 ) : (
                   <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -316,7 +316,7 @@ export default function DataInventoryPage({ params }: DataInventoryPageProps) {
                   <EmptyState
                     icon={Box}
                     title="No data products yet"
-                    message="Select resource items and create your first data product"
+                    description="Select resource items and create your first data product"
                   />
                 ) : (
                   <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

@@ -309,7 +309,7 @@ export function CreateRelationshipDialog({
               className="w-full px-3 py-2 bg-muted border border-input rounded-md text-muted-foreground"
             />
             <p className="mt-1 text-sm text-muted-foreground">
-              Currently only 'replication' is supported
+              Currently only &apos;replication&apos; is supported
             </p>
           </div>
 

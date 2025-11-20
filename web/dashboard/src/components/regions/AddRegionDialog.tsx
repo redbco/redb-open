@@ -26,7 +26,7 @@ export function AddRegionDialog({ onClose, onSuccess }: AddRegionDialogProps) {
     e.preventDefault();
     
     if (!formData.region_name.trim()) {
-      showToast('Region name is required', 'error');
+      showToast({ type: 'error', title: 'Validation Error', message: 'Region name is required' });
       return;
     }
 
@@ -41,12 +41,12 @@ export function AddRegionDialog({ onClose, onSuccess }: AddRegionDialogProps) {
         region_longitude: formData.region_longitude ? parseFloat(formData.region_longitude) : undefined,
       });
 
-      showToast('Region created successfully', 'success');
+      showToast({ type: 'success', title: 'Success', message: 'Region created successfully' });
       onSuccess();
       onClose();
     } catch (error) {
       console.error('Error creating region:', error);
-      showToast('Failed to create region', 'error');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to create region' });
     } finally {
       setIsSubmitting(false);
     }

@@ -1,4 +1,5 @@
-import { ResourceSelection, ResourceType } from '@/lib/api/types';
+import { ResourceSelection, ResourceType, ContainerType } from '@/lib/api/types';
+import { getContainerTypeName } from './container-type-detector';
 
 /**
  * Generates an auto-generated mapping name based on source and target resources
@@ -9,58 +10,87 @@ export function generateMappingName(
   target: ResourceSelection
 ): string {
   const sourceDB = source.databaseName || source.resourceName;
-  const sourceTable = source.tableName || '';
+  const sourceContainer = source.tableName || source.containerName || '';
   const targetDB = target.databaseName || target.resourceName;
-  const targetTable = target.tableName || '';
+  const targetContainer = target.tableName || target.containerName || '';
 
   // Database to Database
   if (source.type === 'database' && target.type === 'database') {
     return `${sourceDB}_to_${targetDB}`;
   }
 
-  // Table to Table
-  if (source.type === 'table' && target.type === 'table') {
-    return `${sourceDB}_${sourceTable}_to_${targetDB}_${targetTable}`;
+  // Container to Container (including legacy table type)
+  const isSourceContainer =
+    source.type === 'table' ||
+    source.containerType ||
+    [
+      'tabular-record-set',
+      'document',
+      'keyvalue-item',
+      'graph-node',
+      'graph-relationship',
+      'search-document',
+      'vector',
+      'timeseries-point',
+      'blob-object',
+    ].includes(source.type as any);
+
+  const isTargetContainer =
+    target.type === 'table' ||
+    target.containerType ||
+    [
+      'tabular-record-set',
+      'document',
+      'keyvalue-item',
+      'graph-node',
+      'graph-relationship',
+      'search-document',
+      'vector',
+      'timeseries-point',
+      'blob-object',
+    ].includes(target.type as any);
+
+  if (isSourceContainer && isTargetContainer) {
+    return `${sourceDB}_${sourceContainer}_to_${targetDB}_${targetContainer}`;
   }
 
-  // Table to MCP Resource
-  if (source.type === 'table' && target.type === 'mcp-resource') {
-    return `${sourceDB}_${sourceTable}_to_mcp_${target.resourceName}`;
+  // Container to MCP Resource
+  if (isSourceContainer && target.type === 'mcp-resource') {
+    return `${sourceDB}_${sourceContainer}_to_mcp_${target.resourceName}`;
   }
 
-  // Table to MCP Tool
-  if (source.type === 'table' && target.type === 'mcp-tool') {
-    return `${sourceDB}_${sourceTable}_to_mcp_${target.resourceName}`;
+  // Container to MCP Tool
+  if (isSourceContainer && target.type === 'mcp-tool') {
+    return `${sourceDB}_${sourceContainer}_to_mcp_${target.resourceName}`;
   }
 
-  // Database to MCP Resource
-  if (source.type === 'database' && target.type === 'mcp-resource') {
-    return `${sourceDB}_to_mcp_${target.resourceName}`;
+  // Container to Webhook
+  if (isSourceContainer && target.type === 'webhook') {
+    return `${sourceDB}_${sourceContainer}_to_webhook_${target.resourceName}`;
   }
 
-  // Database to MCP Tool
-  if (source.type === 'database' && target.type === 'mcp-tool') {
-    return `${sourceDB}_to_mcp_${target.resourceName}`;
+  // Container to Stream
+  if (isSourceContainer && target.type === 'stream') {
+    const targetName = (target as any).topicName || target.resourceName;
+    return `${sourceDB}_${sourceContainer}_to_stream_${targetName}`;
   }
 
-  // Table to Webhook
-  if (source.type === 'table' && target.type === 'webhook') {
-    return `${sourceDB}_${sourceTable}_to_webhook_${target.resourceName}`;
+  // Webhook to Container
+  if (source.type === 'webhook' && isTargetContainer) {
+    return `webhook_${source.resourceName}_to_${targetDB}_${targetContainer}`;
   }
 
-  // Table to Stream
-  if (source.type === 'table' && target.type === 'stream') {
-    return `${sourceDB}_${sourceTable}_to_stream_${target.resourceName}`;
+  // Stream to Container
+  if (source.type === 'stream' && isTargetContainer) {
+    const sourceName = (source as any).topicName || source.resourceName;
+    return `stream_${sourceName}_to_${targetDB}_${targetContainer}`;
   }
 
-  // Webhook to Table
-  if (source.type === 'webhook' && target.type === 'table') {
-    return `webhook_${source.resourceName}_to_${targetDB}_${targetTable}`;
-  }
-
-  // Stream to Table
-  if (source.type === 'stream' && target.type === 'table') {
-    return `stream_${source.resourceName}_to_${targetDB}_${targetTable}`;
+  // Stream to Stream
+  if (source.type === 'stream' && target.type === 'stream') {
+    const sourceName = (source as any).topicName || source.resourceName;
+    const targetName = (target as any).topicName || target.resourceName;
+    return `stream_${sourceName}_to_stream_${targetName}`;
   }
 
   // Generic fallback (shouldn't normally reach here)
@@ -76,64 +106,126 @@ export function generateMappingDescription(
   target: ResourceSelection
 ): string {
   const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-  
+
   const sourceDB = source.databaseName || source.resourceName;
-  const sourceTable = source.tableName || '';
+  const sourceContainer = source.tableName || source.containerName || '';
   const targetDB = target.databaseName || target.resourceName;
-  const targetTable = target.tableName || '';
+  const targetContainer = target.tableName || target.containerName || '';
+
+  // Get friendly type names
+  const sourceTypeName = source.containerType
+    ? getContainerTypeName(source.containerType)
+    : getResourceTypeDisplayName(source.type);
+  const targetTypeName = target.containerType
+    ? getContainerTypeName(target.containerType)
+    : getResourceTypeDisplayName(target.type);
 
   // Database to Database
   if (source.type === 'database' && target.type === 'database') {
     return `Auto-generated database mapping from '${sourceDB}' to '${targetDB}' created on ${timestamp}`;
   }
 
-  // Table to Table
-  if (source.type === 'table' && target.type === 'table') {
-    return `Auto-generated table mapping from '${sourceDB}.${sourceTable}' to '${targetDB}.${targetTable}' created on ${timestamp}`;
+  // Container to Container
+  const isSourceContainer =
+    source.type === 'table' ||
+    source.containerType ||
+    [
+      'tabular-record-set',
+      'document',
+      'keyvalue-item',
+      'graph-node',
+      'graph-relationship',
+      'search-document',
+      'vector',
+      'timeseries-point',
+      'blob-object',
+    ].includes(source.type as any);
+
+  const isTargetContainer =
+    target.type === 'table' ||
+    target.containerType ||
+    [
+      'tabular-record-set',
+      'document',
+      'keyvalue-item',
+      'graph-node',
+      'graph-relationship',
+      'search-document',
+      'vector',
+      'timeseries-point',
+      'blob-object',
+    ].includes(target.type as any);
+
+  if (isSourceContainer && isTargetContainer) {
+    return `Auto-generated ${sourceTypeName} to ${targetTypeName} mapping from '${sourceDB}.${sourceContainer}' to '${targetDB}.${targetContainer}' created on ${timestamp}`;
   }
 
-  // Table to MCP Resource
-  if (source.type === 'table' && target.type === 'mcp-resource') {
-    return `Auto-generated MCP resource mapping from '${sourceDB}.${sourceTable}' to MCP resource '${target.resourceName}' created on ${timestamp}`;
+  // Container to MCP Resource
+  if (isSourceContainer && target.type === 'mcp-resource') {
+    return `Auto-generated MCP resource mapping from ${sourceTypeName} '${sourceDB}.${sourceContainer}' to MCP resource '${target.resourceName}' created on ${timestamp}`;
   }
 
-  // Table to MCP Tool
-  if (source.type === 'table' && target.type === 'mcp-tool') {
-    return `Auto-generated MCP tool mapping from '${sourceDB}.${sourceTable}' to MCP tool '${target.resourceName}' created on ${timestamp}`;
+  // Container to MCP Tool
+  if (isSourceContainer && target.type === 'mcp-tool') {
+    return `Auto-generated MCP tool mapping from ${sourceTypeName} '${sourceDB}.${sourceContainer}' to MCP tool '${target.resourceName}' created on ${timestamp}`;
   }
 
-  // Database to MCP Resource
-  if (source.type === 'database' && target.type === 'mcp-resource') {
-    return `Auto-generated MCP resource mapping from database '${sourceDB}' to MCP resource '${target.resourceName}' created on ${timestamp}`;
+  // Container to Webhook
+  if (isSourceContainer && target.type === 'webhook') {
+    return `Auto-generated webhook mapping from ${sourceTypeName} '${sourceDB}.${sourceContainer}' to webhook '${target.resourceName}' for CDC events created on ${timestamp}`;
   }
 
-  // Database to MCP Tool
-  if (source.type === 'database' && target.type === 'mcp-tool') {
-    return `Auto-generated MCP tool mapping from database '${sourceDB}' to MCP tool '${target.resourceName}' created on ${timestamp}`;
+  // Container to Stream
+  if (isSourceContainer && target.type === 'stream') {
+    const targetName = (target as any).topicName || target.resourceName;
+    return `Auto-generated stream mapping from ${sourceTypeName} '${sourceDB}.${sourceContainer}' to stream '${targetName}' for CDC events created on ${timestamp}`;
   }
 
-  // Table to Webhook
-  if (source.type === 'table' && target.type === 'webhook') {
-    return `Auto-generated webhook mapping from '${sourceDB}.${sourceTable}' to webhook '${target.resourceName}' for CDC events created on ${timestamp}`;
+  // Webhook to Container
+  if (source.type === 'webhook' && isTargetContainer) {
+    return `Auto-generated webhook-to-${targetTypeName} mapping from webhook '${source.resourceName}' to '${targetDB}.${targetContainer}' created on ${timestamp}`;
   }
 
-  // Table to Stream
-  if (source.type === 'table' && target.type === 'stream') {
-    return `Auto-generated stream mapping from '${sourceDB}.${sourceTable}' to stream '${target.resourceName}' for CDC events created on ${timestamp}`;
+  // Stream to Container
+  if (source.type === 'stream' && isTargetContainer) {
+    const sourceName = (source as any).topicName || source.resourceName;
+    return `Auto-generated stream-to-${targetTypeName} mapping from stream '${sourceName}' to '${targetDB}.${targetContainer}' created on ${timestamp}`;
   }
 
-  // Webhook to Table
-  if (source.type === 'webhook' && target.type === 'table') {
-    return `Auto-generated webhook-to-table mapping from webhook '${source.resourceName}' to '${targetDB}.${targetTable}' created on ${timestamp}`;
-  }
-
-  // Stream to Table
-  if (source.type === 'stream' && target.type === 'table') {
-    return `Auto-generated stream-to-table mapping from stream '${source.resourceName}' to '${targetDB}.${targetTable}' created on ${timestamp}`;
+  // Stream to Stream
+  if (source.type === 'stream' && target.type === 'stream') {
+    const sourceName = (source as any).topicName || source.resourceName;
+    const targetName = (target as any).topicName || target.resourceName;
+    return `Auto-generated stream-to-stream mapping from stream '${sourceName}' to stream '${targetName}' created on ${timestamp}`;
   }
 
   // Generic fallback
-  return `Auto-generated mapping from '${source.resourceName}' to '${target.resourceName}' created on ${timestamp}`;
+  return `Auto-generated ${sourceTypeName} to ${targetTypeName} mapping from '${source.resourceName}' to '${target.resourceName}' created on ${timestamp}`;
+}
+
+/**
+ * Get display name for resource type
+ */
+function getResourceTypeDisplayName(type: ResourceType): string {
+  const names: Record<ResourceType, string> = {
+    database: 'Database',
+    table: 'Table',
+    'tabular-record-set': 'Tabular Record Set',
+    document: 'Document',
+    'keyvalue-item': 'Key-Value Item',
+    'graph-node': 'Graph Node',
+    'graph-relationship': 'Graph Relationship',
+    'search-document': 'Search Document',
+    vector: 'Vector',
+    'timeseries-point': 'Time-Series Point',
+    'blob-object': 'Blob/Object',
+    'mcp-resource': 'MCP Resource',
+    'mcp-tool': 'MCP Tool',
+    webhook: 'Webhook',
+    stream: 'Stream',
+  };
+
+  return names[type] || type;
 }
 
 /**
@@ -146,4 +238,3 @@ export function sanitizeMappingName(name: string): string {
     .replace(/_+/g, '_')
     .replace(/^_|_$/g, '');
 }
-

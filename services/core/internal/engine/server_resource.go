@@ -846,3 +846,113 @@ func (s *Server) SearchResources(ctx context.Context, req *corev1.SearchResource
 		Status:  commonv1.Status_STATUS_PENDING,
 	}, nil
 }
+
+// GetContainerStats returns statistics for resource containers grouped by type
+func (s *Server) GetContainerStats(ctx context.Context, req *corev1.GetContainerStatsRequest) (*corev1.GetContainerStatsResponse, error) {
+	defer s.trackOperation()()
+
+	if req.WorkspaceId == "" {
+		return &corev1.GetContainerStatsResponse{
+			Message: "workspace_id is required",
+			Success: false,
+			Status:  commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	// Get workspace_id from workspace name
+	var workspaceID string
+	err := s.engine.db.Pool().QueryRow(ctx, `
+		SELECT workspace_id FROM workspaces WHERE workspace_name = $1
+	`, req.WorkspaceId).Scan(&workspaceID)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return &corev1.GetContainerStatsResponse{
+				Message: "Workspace not found",
+				Success: false,
+				Status:  commonv1.Status_STATUS_ERROR,
+			}, nil
+		}
+		return &corev1.GetContainerStatsResponse{
+			Message: fmt.Sprintf("Failed to get workspace: %v", err),
+			Success: false,
+			Status:  commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	// Query to get container statistics with database and integration names
+	query := `
+		SELECT 
+			rc.container_id,
+			rc.object_type,
+			rc.object_name,
+			rc.item_count,
+			rc.protocol,
+			rc.database_id,
+			rc.integration_id,
+			COALESCE(d.database_name, i.integration_name, '') as source_name
+		FROM resource_containers rc
+		LEFT JOIN databases d ON rc.database_id = d.database_id
+		LEFT JOIN integrations i ON rc.integration_id = i.integration_id
+		WHERE rc.workspace_id = $1
+		ORDER BY rc.protocol, rc.object_type, rc.object_name
+	`
+
+	rows, err := s.engine.db.Pool().Query(ctx, query, workspaceID)
+	if err != nil {
+		return &corev1.GetContainerStatsResponse{
+			Message: fmt.Sprintf("Failed to query container statistics: %v", err),
+			Success: false,
+			Status:  commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+	defer rows.Close()
+
+	var containers []*corev1.ContainerStatEntry
+	for rows.Next() {
+		var entry corev1.ContainerStatEntry
+		var databaseID, integrationID sql.NullString
+
+		err := rows.Scan(
+			&entry.ContainerId,
+			&entry.ContainerType,
+			&entry.ContainerName,
+			&entry.ItemCount,
+			&entry.Protocol,
+			&databaseID,
+			&integrationID,
+			&entry.SourceName,
+		)
+		if err != nil {
+			if s.engine.logger != nil {
+				s.engine.logger.Warnf("Failed to scan container stat entry: %v", err)
+			}
+			continue
+		}
+
+		// Set source_id based on protocol
+		if databaseID.Valid {
+			entry.SourceId = databaseID.String
+		} else if integrationID.Valid {
+			entry.SourceId = integrationID.String
+		}
+
+		containers = append(containers, &entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return &corev1.GetContainerStatsResponse{
+			Message: fmt.Sprintf("Error iterating container stats: %v", err),
+			Success: false,
+			Status:  commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	return &corev1.GetContainerStatsResponse{
+		Success:    true,
+		Message:    fmt.Sprintf("Retrieved statistics for %d containers", len(containers)),
+		Status:     commonv1.Status_STATUS_SUCCESS,
+		Containers: containers,
+		TotalCount: int32(len(containers)),
+	}, nil
+}

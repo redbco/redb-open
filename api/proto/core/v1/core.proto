@@ -150,6 +150,9 @@ service ResourceService {
   
   // Search operations
   rpc SearchResources(SearchResourcesRequest) returns (SearchResourcesResponse);
+  
+  // Statistics operations
+  rpc GetContainerStats(GetContainerStatsRequest) returns (GetContainerStatsResponse);
 }
 
 // DataProduct service for data product management (data-as-a-product)
@@ -209,7 +212,14 @@ service MappingService {
   rpc AddMapping(AddMappingRequest) returns (AddMappingResponse);
   rpc AddDatabaseMapping(AddDatabaseMappingRequest) returns (AddMappingResponse);
   rpc AddTableMapping(AddTableMappingRequest) returns (AddMappingResponse);
+  rpc AddTableMappingWithDeploy(AddTableMappingWithDeployRequest) returns (AddTableMappingWithDeployResponse);
   rpc AddEmptyMapping(AddEmptyMappingRequest) returns (AddMappingResponse);
+  
+  // Stream mapping services
+  rpc AddStreamToTableMapping(AddStreamToTableMappingRequest) returns (AddMappingResponse);
+  rpc AddTableToStreamMapping(AddTableToStreamMappingRequest) returns (AddMappingResponse);
+  rpc AddStreamToStreamMapping(AddStreamToStreamMappingRequest) returns (AddMappingResponse);
+  
   rpc ModifyMapping(ModifyMappingRequest) returns (ModifyMappingResponse);
   rpc DeleteMapping(DeleteMappingRequest) returns (DeleteMappingResponse);
   rpc AttachMappingRule(AttachMappingRuleRequest) returns (AttachMappingRuleResponse);
@@ -2309,6 +2319,29 @@ message AddTableMappingRequest {
     string owner_id = 10;
 }
 
+// Add table mapping with deploy request
+message AddTableMappingWithDeployRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string owner_id = 3;
+    string mapping_name = 4;
+    string mapping_description = 5;
+    string source_database_name = 6;
+    string source_table_name = 7;
+    string target_database_name = 8;
+    string target_table_name = 9;
+    optional string policy_id = 10;
+}
+
+// Add table mapping with deploy response
+message AddTableMappingWithDeployResponse {
+    string message = 1;
+    bool success = 2;
+    string status = 3;
+    Mapping mapping = 4;
+    repeated string types_deployed = 5;
+}
+
 // Add a empty mapping request
 message AddEmptyMappingRequest {
     string tenant_id = 1;
@@ -2317,6 +2350,59 @@ message AddEmptyMappingRequest {
     string mapping_description = 4;
     optional string policy_id = 5;
     string owner_id = 6;
+}
+
+// Add a stream to table mapping request
+message AddStreamToTableMappingRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    string mapping_description = 4;
+    string source_integration_name = 5; // Integration name (e.g., "kafka-prod")
+    string source_topic_name = 6;        // Topic name (e.g., "orders")
+    string target_database_name = 7;     // Target database name
+    string target_table_name = 8;        // Target table name
+    optional string policy_id = 9;
+    string owner_id = 10;
+    repeated StreamMappingFilter filters = 11; // Stream-specific filters
+}
+
+// Add a table to stream mapping request
+message AddTableToStreamMappingRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    string mapping_description = 4;
+    string source_database_name = 5;     // Source database name
+    string source_table_name = 6;        // Source table name
+    string target_integration_name = 7;  // Integration name (e.g., "kafka-prod")
+    string target_topic_name = 8;        // Topic name (e.g., "orders")
+    optional string policy_id = 9;
+    string owner_id = 10;
+    repeated StreamMappingFilter filters = 11; // Stream-specific filters
+}
+
+// Add a stream to stream mapping request
+message AddStreamToStreamMappingRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string mapping_name = 3;
+    string mapping_description = 4;
+    string source_integration_name = 5;  // Source integration name
+    string source_topic_name = 6;        // Source topic name
+    string target_integration_name = 7;  // Target integration name
+    string target_topic_name = 8;        // Target topic name
+    optional string policy_id = 9;
+    string owner_id = 10;
+    repeated StreamMappingFilter filters = 11; // Stream-specific filters
+}
+
+// Stream mapping filter message
+message StreamMappingFilter {
+    string filter_type = 1;              // Type: time_window, partition, attribute, schema_version
+    google.protobuf.Struct filter_expression = 2; // Filter configuration
+    int32 filter_order = 3;              // Order of filter application
+    string filter_operator = 4;          // Operator: and, or, not
 }
 
 // Add a mapping response
@@ -4795,6 +4881,35 @@ message SearchResourcesResponse {
     string message = 4;
     bool success = 5;
     redbco.redbopen.common.v1.Status status = 6;
+}
+
+// ============================================================================
+// Container Statistics
+// ============================================================================
+
+// GetContainerStats request
+message GetContainerStatsRequest {
+    string workspace_id = 1; // workspace name
+}
+
+// Container statistics entry
+message ContainerStatEntry {
+    string source_name = 1;      // database_name or integration_name (human-readable)
+    string container_name = 2;   // table name, topic name, etc.
+    string container_type = 3;   // object_type: table, collection, topic, etc.
+    int32 item_count = 4;        // number of resource_items in this container
+    string protocol = 5;         // redb, stream, webhook
+    string container_id = 6;     // for reference
+    string source_id = 7;        // database_id or integration_id
+}
+
+// GetContainerStats response
+message GetContainerStatsResponse {
+    bool success = 1;
+    string message = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    repeated ContainerStatEntry containers = 4;
+    int32 total_count = 5;
 }
 
 // ============================================================================

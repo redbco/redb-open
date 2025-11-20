@@ -4,10 +4,11 @@ import { useState, useEffect } from 'react';
 import { useStreams, useReconnectStream, useDisconnectStream } from '@/lib/hooks/useStreams';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useToast } from '@/components/ui/Toast';
-import { Plus, RefreshCw, Activity } from 'lucide-react';
+import { Plus, RefreshCw, Activity, GitBranch } from 'lucide-react';
 import { StreamCard } from '@/components/streams/StreamCard';
 import { ConnectStreamDialog } from '@/components/streams/ConnectStreamDialog';
 import { DisconnectStreamDialog } from '@/components/streams/DisconnectStreamDialog';
+import { CreateStreamMappingDialog } from '@/components/mappings/CreateStreamMappingDialog';
 
 interface StreamsPageProps {
   params: Promise<{
@@ -18,6 +19,7 @@ interface StreamsPageProps {
 export default function StreamsPage({ params }: StreamsPageProps) {
   const [workspaceId, setWorkspaceId] = useState<string>('');
   const [showConnectDialog, setShowConnectDialog] = useState(false);
+  const [showStreamMappingDialog, setShowStreamMappingDialog] = useState(false);
   const [disconnectStreamName, setDisconnectStreamName] = useState<string | null>(null);
   const { showToast } = useToast();
   
@@ -127,6 +129,14 @@ export default function StreamsPage({ params }: StreamsPageProps) {
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
           <button
+            onClick={() => setShowStreamMappingDialog(true)}
+            className="inline-flex items-center px-4 py-2 border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+            disabled={streams.length === 0}
+          >
+            <GitBranch className="h-4 w-4 mr-2" />
+            Create Mapping
+          </button>
+          <button
             onClick={() => setShowConnectDialog(true)}
             className="inline-flex items-center px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
           >
@@ -225,6 +235,21 @@ export default function StreamsPage({ params }: StreamsPageProps) {
           onSuccess={() => {
             setDisconnectStreamName(null);
             handleDisconnectSuccess();
+          }}
+        />
+      )}
+
+      {showStreamMappingDialog && (
+        <CreateStreamMappingDialog
+          workspaceId={workspaceId}
+          onClose={() => setShowStreamMappingDialog(false)}
+          onSuccess={() => {
+            setShowStreamMappingDialog(false);
+            showToast({
+              type: 'success',
+              title: 'Stream Mapping Created',
+              message: 'Your stream mapping has been created successfully',
+            });
           }}
         />
       )}

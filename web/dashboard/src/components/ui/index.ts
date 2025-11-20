@@ -1,6 +1,6 @@
 // Re-export all UI components for easy importing
 export { LoadingSpinner } from './LoadingSpinner';
-export { Toast, useToast } from './Toast';
+export { useToast, ToastProvider } from './Toast';
 export { ConfirmDialog } from './ConfirmDialog';
 export { StatusBadge } from './StatusBadge';
 export { MetricCard } from './MetricCard';

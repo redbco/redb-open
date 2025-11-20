@@ -25,6 +25,8 @@ import type {
   ListMappingsResponse,
   ShowMappingResponse,
   CreateMappingRequest,
+  CreateMappingWithDeployRequest,
+  CreateMappingWithDeployResponse,
   CreateDatabaseMappingRequest,
   CreateMappingResponse,
   ModifyMappingRequest,
@@ -49,20 +51,8 @@ import type {
   AddRepositoryResponse,
   ModifyRepositoryRequest,
   DeleteRepositoryRequest,
-  ListBranchesResponse,
   ShowBranchResponse,
-  CreateBranchRequest,
-  CreateBranchResponse,
-  ModifyBranchRequest,
-  AttachBranchRequest,
-  AttachBranchResponse,
-  DetachBranchResponse,
-  ListCommitsResponse,
   ShowCommitResponse,
-  BranchCommitRequest,
-  BranchCommitResponse,
-  MergeCommitResponse,
-  DeployCommitResponse,
   ListEnvironmentsResponse,
   ShowEnvironmentResponse,
   CreateEnvironmentRequest,
@@ -109,8 +99,11 @@ import type {
   LogoutSessionResponse,
   ListResourceContainersResponse,
   ListResourceItemsResponse,
-  Webhook,
-  Stream,
+  ShowResourceContainerResponse,
+  GetContainerStatsResponse,
+  ResourceContainerFilter,
+  ResourceItemFilter,
+  ResourceItem,
   ListStreamsResponse,
   ShowStreamResponse,
   ConnectStreamRequest,
@@ -122,6 +115,21 @@ import type {
   DisconnectStreamResponse,
   ListTopicsResponse,
   GetTopicSchemaResponse,
+  ListDataProductsResponse,
+  ShowDataProductResponse,
+  CreateDataProductRequest,
+  CreateDataProductResponse,
+  ModifyDataProductRequest,
+  ModifyDataProductResponse,
+  DeleteDataProductResponse,
+  Database,
+  Instance,
+  Mapping,
+  Relationship,
+  Repository,
+  Environment,
+  Region,
+  MappingRule,
 } from './types';
 
 // Authentication Endpoints
@@ -156,7 +164,7 @@ export const databaseEndpoints = {
     apiClient.post<ConnectDatabaseResponse>(`api/v1/workspaces/${workspaceName}/databases/connect-string`, request),
 
   modify: (workspaceName: string, databaseName: string, request: ModifyDatabaseRequest) =>
-    apiClient.put<{ success: boolean; message: string; database: any }>(
+    apiClient.put<{ success: boolean; message: string; database: Database }>(
       `api/v1/workspaces/${workspaceName}/databases/${databaseName}`,
       request
     ),
@@ -220,7 +228,7 @@ export const instanceEndpoints = {
     apiClient.post<ConnectInstanceResponse>(`api/v1/workspaces/${workspaceName}/instances/connect`, request),
 
   modify: (workspaceName: string, instanceName: string, request: ModifyInstanceRequest) =>
-    apiClient.put<{ success: boolean; message: string; instance: any }>(
+    apiClient.put<{ success: boolean; message: string; instance: Instance }>(
       `api/v1/workspaces/${workspaceName}/instances/${instanceName}`,
       request
     ),
@@ -248,11 +256,14 @@ export const mappingEndpoints = {
   create: (workspaceName: string, request: CreateMappingRequest) =>
     apiClient.post<CreateMappingResponse>(`api/v1/workspaces/${workspaceName}/mappings`, request),
 
+  createWithDeploy: (workspaceName: string, request: CreateMappingWithDeployRequest) =>
+    apiClient.post<CreateMappingWithDeployResponse>(`api/v1/workspaces/${workspaceName}/mappings/table-with-deploy`, request),
+
   createDatabaseMapping: (workspaceName: string, request: CreateDatabaseMappingRequest) =>
     apiClient.post<CreateMappingResponse>(`api/v1/workspaces/${workspaceName}/mappings/database`, request),
 
   modify: (workspaceName: string, mappingId: string, request: ModifyMappingRequest) =>
-    apiClient.put<{ success: boolean; message: string; mapping: any }>(
+    apiClient.put<{ success: boolean; message: string; mapping: Mapping }>(
       `api/v1/workspaces/${workspaceName}/mappings/${mappingId}`,
       request
     ),
@@ -281,7 +292,7 @@ export const relationshipEndpoints = {
     apiClient.post<CreateRelationshipResponse>(`api/v1/workspaces/${workspaceName}/relationships`, request),
 
   modify: (workspaceName: string, relationshipId: string, request: ModifyRelationshipRequest) =>
-    apiClient.put<{ success: boolean; message: string; relationship: any }>(
+    apiClient.put<{ success: boolean; message: string; relationship: Relationship }>(
       `api/v1/workspaces/${workspaceName}/relationships/${relationshipId}`,
       request
     ),
@@ -343,7 +354,7 @@ export const repositoryEndpoints = {
     apiClient.post<AddRepositoryResponse>(`api/v1/workspaces/${workspaceName}/repos`, request),
 
   modify: (workspaceName: string, repoName: string, request: ModifyRepositoryRequest) =>
-    apiClient.put<{ success: boolean; message: string; repository: any }>(
+    apiClient.put<{ success: boolean; message: string; repository: Repository }>(
       `api/v1/workspaces/${workspaceName}/repos/${repoName}`,
       request
     ),
@@ -351,7 +362,7 @@ export const repositoryEndpoints = {
   delete: (workspaceName: string, repoName: string, request?: DeleteRepositoryRequest) =>
     apiClient.delete<{ success: boolean; message: string }>(
       `api/v1/workspaces/${workspaceName}/repos/${repoName}`,
-      { body: JSON.stringify(request) } as any
+      request ? { body: JSON.stringify(request) } : undefined
     ),
 };
 
@@ -383,7 +394,7 @@ export const environmentEndpoints = {
     apiClient.post<CreateEnvironmentResponse>(`api/v1/workspaces/${workspaceName}/environments`, request),
 
   modify: (workspaceName: string, environmentName: string, request: ModifyEnvironmentRequest) =>
-    apiClient.put<{ success: boolean; message: string; environment: any }>(
+    apiClient.put<{ success: boolean; message: string; environment: Environment }>(
       `api/v1/workspaces/${workspaceName}/environments/${environmentName}`,
       request
     ),
@@ -421,7 +432,7 @@ export const regionEndpoints = {
     apiClient.post<CreateRegionResponse>('api/v1/regions', request),
 
   modify: (regionName: string, request: ModifyRegionRequest) =>
-    apiClient.put<{ success: boolean; message: string; region: any }>(
+    apiClient.put<{ success: boolean; message: string; region: Region }>(
       `api/v1/regions/${regionName}`,
       request
     ),
@@ -453,7 +464,7 @@ export const mappingRuleEndpoints = {
     ),
 
   modify: (workspaceName: string, mappingName: string, ruleName: string, request: ModifyMappingRuleRequest) =>
-    apiClient.put<{ success: boolean; message: string; rule: any }>(
+    apiClient.put<{ success: boolean; message: string; rule: MappingRule }>(
       `api/v1/workspaces/${workspaceName}/mappings/${mappingName}/rules/${ruleName}`,
       request
     ),
@@ -461,7 +472,7 @@ export const mappingRuleEndpoints = {
   remove: (workspaceName: string, mappingName: string, ruleName: string, request?: RemoveMappingRuleRequest) =>
     apiClient.delete<{ success: boolean; message: string }>(
       `api/v1/workspaces/${workspaceName}/mappings/${mappingName}/rules/${ruleName}`,
-      { body: JSON.stringify(request) } as any
+      request ? { body: JSON.stringify(request) } : undefined
     ),
 };
 
@@ -535,7 +546,7 @@ export const userEndpoints = {
     apiClient.post<AddUserResponse>('api/v1/users', request),
 
   modify: (userId: string, request: ModifyUserRequest) =>
-    apiClient.put<{ success: boolean; message: string; user: any }>(
+    apiClient.put<{ success: boolean; message: string; user: ShowUserResponse }>(
       `api/v1/users/${userId}`,
       request
     ),
@@ -605,6 +616,11 @@ export const resourceEndpoints = {
       `api/v1/workspaces/${workspaceName}/resources/items/${itemId}`,
       data
     ),
+
+  getContainerStats: (workspaceName: string) =>
+    apiClient.get<GetContainerStatsResponse>(
+      `api/v1/workspaces/${workspaceName}/resources/container-stats`
+    ),
 };
 
 // Data Product Endpoints
@@ -632,11 +648,11 @@ export const dataProductEndpoints = {
 
 // Webhook Endpoints (Placeholders)
 export const webhookEndpoints = {
-  list: (workspaceName: string) =>
+  list: () =>
     // Placeholder: Returns empty array until webhooks are implemented
-    Promise.resolve({ webhooks: [] as Webhook[] }),
+    Promise.resolve({ webhooks: [] }),
 
-  show: (workspaceName: string, webhookId: string) =>
+  show: () =>
     // Placeholder: Returns 404 until webhooks are implemented
     Promise.reject(new Error('Webhooks not yet implemented')),
 };

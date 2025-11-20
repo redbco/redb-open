@@ -35,7 +35,7 @@ export function AddMappingRuleDialog({
     e.preventDefault();
     
     if (!formData.rule_name.trim() || !formData.source.trim() || !formData.target.trim()) {
-      showToast('Rule name, source, and target are required', 'error');
+      showToast({ type: 'error', title: 'Validation Error', message: 'Rule name, source, and target are required' });
       return;
     }
 
@@ -49,12 +49,12 @@ export function AddMappingRuleDialog({
         order: formData.order ? parseInt(formData.order) : undefined,
       });
 
-      showToast('Mapping rule added successfully', 'success');
+      showToast({ type: 'success', title: 'Success', message: 'Mapping rule added successfully' });
       onSuccess();
       onClose();
     } catch (error) {
       console.error('Error adding mapping rule:', error);
-      showToast('Failed to add mapping rule', 'error');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to add mapping rule' });
     } finally {
       setIsSubmitting(false);
     }

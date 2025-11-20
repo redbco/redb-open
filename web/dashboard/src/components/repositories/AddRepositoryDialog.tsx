@@ -24,7 +24,7 @@ export function AddRepositoryDialog({ workspaceId, onClose, onSuccess }: AddRepo
     e.preventDefault();
     
     if (!formData.repo_name.trim()) {
-      showToast('Repository name is required', 'error');
+      showToast({ type: 'error', title: 'Validation Error', message: 'Repository name is required' });
       return;
     }
 
@@ -36,12 +36,12 @@ export function AddRepositoryDialog({ workspaceId, onClose, onSuccess }: AddRepo
         repo_type: formData.repo_type,
       });
 
-      showToast('Repository created successfully', 'success');
+      showToast({ type: 'success', title: 'Success', message: 'Repository created successfully' });
       onSuccess();
       onClose();
     } catch (error) {
       console.error('Error creating repository:', error);
-      showToast('Failed to create repository', 'error');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to create repository' });
     } finally {
       setIsSubmitting(false);
     }

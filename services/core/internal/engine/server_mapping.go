@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	anchorv1 "github.com/redbco/redb-open/api/proto/anchor/v1"
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	transformationv1 "github.com/redbco/redb-open/api/proto/transformation/v1"
@@ -557,6 +558,161 @@ func (s *Server) AddTableMapping(ctx context.Context, req *corev1.AddTableMappin
 		Success: true,
 		Mapping: protoMapping,
 		Status:  commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+func (s *Server) AddTableMappingWithDeploy(ctx context.Context, req *corev1.AddTableMappingWithDeployRequest) (*corev1.AddTableMappingWithDeployResponse, error) {
+	defer s.trackOperation()()
+
+	// Get workspace service
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID from workspace name
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "workspace not found: %v", err)
+	}
+
+	// Get database service
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+
+	// Validate source database exists
+	sourceDB, err := databaseService.Get(ctx, req.TenantId, workspaceID, req.SourceDatabaseName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "source database not found: %v", err)
+	}
+
+	// Validate target database exists
+	targetDB, err := databaseService.Get(ctx, req.TenantId, workspaceID, req.TargetDatabaseName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "target database not found: %v", err)
+	}
+
+	// Get source database schema as UnifiedModel
+	if sourceDB.Schema == "" {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.FailedPrecondition, "source database schema not available")
+	}
+
+	var sourceSchema unifiedmodel.UnifiedModel
+	if err := json.Unmarshal([]byte(sourceDB.Schema), &sourceSchema); err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to parse source database schema: %v", err)
+	}
+
+	// Check if source table exists in schema
+	_, exists := sourceSchema.Tables[req.SourceTableName]
+	if !exists {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "source table '%s' not found in database '%s'", req.SourceTableName, req.SourceDatabaseName)
+	}
+
+	// Check if target table already exists via anchor service
+	tableExists, err := s.checkTableExists(ctx, targetDB.ID, req.TargetTableName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to check if target table exists: %v", err)
+	}
+	if tableExists {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.AlreadyExists, "target table '%s' already exists in database '%s'", req.TargetTableName, req.TargetDatabaseName)
+	}
+
+	// Extract table with dependent types
+	filteredSchema, deployedTypes := s.extractTableWithTypes(&sourceSchema, req.SourceTableName)
+
+	// If target database is a different type, convert schema
+	var schemaToDeply *unifiedmodel.UnifiedModel
+	if sourceDB.Type != targetDB.Type {
+		s.engine.logger.Infof("Converting schema from %s to %s", sourceDB.Type, targetDB.Type)
+
+		schemaJSON, err := json.Marshal(filteredSchema)
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.Internal, "failed to serialize filtered schema: %v", err)
+		}
+
+		convertedSchemaStr, _, err := s.convertSchemaViaUnifiedModel(ctx, string(schemaJSON), sourceDB.Type, targetDB.Type)
+		if err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.Internal, "failed to convert schema: %v", err)
+		}
+
+		var convertedSchema unifiedmodel.UnifiedModel
+		if err := json.Unmarshal([]byte(convertedSchemaStr), &convertedSchema); err != nil {
+			s.engine.IncrementErrors()
+			return nil, status.Errorf(codes.Internal, "failed to parse converted schema: %v", err)
+		}
+
+		schemaToDeply = &convertedSchema
+	} else {
+		schemaToDeply = filteredSchema
+	}
+
+	// Rename table if target name is different
+	if req.TargetTableName != req.SourceTableName {
+		if table, exists := schemaToDeply.Tables[req.SourceTableName]; exists {
+			delete(schemaToDeply.Tables, req.SourceTableName)
+			table.Name = req.TargetTableName
+			schemaToDeply.Tables[req.TargetTableName] = table
+		}
+	}
+
+	// Deploy table schema to target database
+	deploySchemaJSON, err := json.Marshal(schemaToDeply)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to serialize deployment schema: %v", err)
+	}
+
+	err = s.deploySchemaToDatabase(ctx, targetDB.ID, string(deploySchemaJSON), nil)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to deploy table schema: %v", err)
+	}
+
+	s.engine.logger.Infof("Successfully deployed table '%s' to database '%s'", req.TargetTableName, req.TargetDatabaseName)
+
+	// Immediately refresh the target database discovery to populate resource_containers and resource_items
+	// This ensures the target table's metadata is available for mapping rule generation
+	err = s.refreshDatabaseDiscovery(ctx, targetDB.ID)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to refresh database discovery after deployment: %v (proceeding with mapping creation)", err)
+		// Don't fail the entire operation - mapping can still be created, just without auto-generated rules
+	} else {
+		s.engine.logger.Infof("Successfully refreshed discovery for database '%s' after table deployment", req.TargetDatabaseName)
+	}
+
+	// Now create the mapping using the existing AddTableMapping logic
+	mappingReq := &corev1.AddTableMappingRequest{
+		TenantId:                  req.TenantId,
+		WorkspaceName:             req.WorkspaceName,
+		OwnerId:                   req.OwnerId,
+		MappingName:               req.MappingName,
+		MappingDescription:        req.MappingDescription,
+		MappingSourceDatabaseName: req.SourceDatabaseName,
+		MappingSourceTableName:    req.SourceTableName,
+		MappingTargetDatabaseName: req.TargetDatabaseName,
+		MappingTargetTableName:    req.TargetTableName,
+		PolicyId:                  req.PolicyId,
+	}
+
+	mappingResp, err := s.AddTableMapping(ctx, mappingReq)
+	if err != nil {
+		s.engine.logger.Errorf("Failed to create mapping after successful deployment: %v", err)
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "table deployed successfully but failed to create mapping: %v (table remains in target database)", err)
+	}
+
+	return &corev1.AddTableMappingWithDeployResponse{
+		Message:       "Table deployed and mapping created successfully",
+		Success:       true,
+		Status:        string(commonv1.Status_STATUS_SUCCESS),
+		Mapping:       mappingResp.Mapping,
+		TypesDeployed: deployedTypes,
 	}, nil
 }
 
@@ -1424,49 +1580,10 @@ func (s *Server) ModifyMappingRule(ctx context.Context, req *corev1.ModifyMappin
 		}
 	}
 
-	// Validate source column if being changed
-	if req.MappingRuleSource != nil && *req.MappingRuleSource != "" {
-		// Parse source to extract database, table, and column
-		sourceParts := strings.Split(*req.MappingRuleSource, ".")
-		if len(sourceParts) == 3 {
-			databaseName := sourceParts[0]
-			tableName := sourceParts[1]
-			columnName := sourceParts[2]
-
-			// Validate column exists
-			validationResult, err := mappingService.ValidateSourceColumn(ctx, databaseName, tableName, columnName, workspaceID)
-			if err != nil {
-				s.engine.IncrementErrors()
-				return nil, status.Errorf(codes.Internal, "failed to validate source column: %v", err)
-			}
-			if !validationResult.Valid {
-				s.engine.IncrementErrors()
-				return nil, status.Errorf(codes.InvalidArgument, "source column validation failed: %s", validationResult.Message)
-			}
-		}
-	}
-
-	// Validate target column if being changed
-	if req.MappingRuleTarget != nil && *req.MappingRuleTarget != "" {
-		// Parse target to extract database, table, and column
-		targetParts := strings.Split(*req.MappingRuleTarget, ".")
-		if len(targetParts) == 3 {
-			databaseName := targetParts[0]
-			tableName := targetParts[1]
-			columnName := targetParts[2]
-
-			// Validate column exists
-			validationResult, err := mappingService.ValidateTargetColumn(ctx, databaseName, tableName, columnName, workspaceID)
-			if err != nil {
-				s.engine.IncrementErrors()
-				return nil, status.Errorf(codes.Internal, "failed to validate target column: %v", err)
-			}
-			if !validationResult.Valid {
-				s.engine.IncrementErrors()
-				return nil, status.Errorf(codes.InvalidArgument, "target column validation failed: %s", validationResult.Message)
-			}
-		}
-	}
+	// Note: Column validation is deferred to actual resource URI resolution
+	// during rule attachment and mapping execution. The resource URI system
+	// handles validation through GetItemByURI calls.
+	// Explicit column validation methods can be added later if needed.
 
 	// Build update map - need to merge changes into metadata for new schema
 	updates := make(map[string]interface{})
@@ -2454,16 +2571,48 @@ func (s *Server) ValidateMapping(ctx context.Context, req *corev1.ValidateMappin
 		return nil, status.Errorf(codes.NotFound, "mapping not found: %v", err)
 	}
 
-	// Perform validation
-	validationResult, err := mappingService.ValidateMappingComplete(ctx, mappingObj.ID, workspaceID, req.TenantId)
+	// Perform basic validation checks
+	var errors []string
+	var warnings []string
+	isValid := true
+
+	// Check if mapping has rules
+	rules, err := mappingService.GetMappingRulesForMapping(ctx, req.TenantId, workspaceID, req.MappingName)
 	if err != nil {
-		s.engine.IncrementErrors()
-		s.engine.logger.Errorf("Failed to validate mapping: %v", err)
-		return nil, status.Errorf(codes.Internal, "failed to validate mapping: %v", err)
+		s.engine.logger.Warnf("Failed to get mapping rules: %v", err)
+		warnings = append(warnings, fmt.Sprintf("Could not verify mapping rules: %v", err))
+	} else if len(rules) == 0 {
+		warnings = append(warnings, "Mapping has no rules defined")
+	}
+
+	// Check if source and target are valid
+	if mappingObj.SourceIdentifier == "" {
+		errors = append(errors, "Mapping has no source identifier")
+		isValid = false
+	}
+	if mappingObj.TargetIdentifier == "" {
+		errors = append(errors, "Mapping has no target identifier")
+		isValid = false
+	}
+
+	// Validate resource URIs by attempting to resolve them
+	if mappingObj.SourceIdentifier != "" {
+		_, err := mappingService.GetContainerByURI(ctx, mappingObj.SourceIdentifier)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Invalid source resource URI: %v", err))
+			isValid = false
+		}
+	}
+	if mappingObj.TargetIdentifier != "" {
+		_, err := mappingService.GetContainerByURI(ctx, mappingObj.TargetIdentifier)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Invalid target resource URI: %v", err))
+			isValid = false
+		}
 	}
 
 	// Update validation status in database
-	err = mappingService.UpdateValidationStatus(ctx, mappingObj.ID, validationResult.IsValid, validationResult.Errors, validationResult.Warnings)
+	err = mappingService.UpdateValidationStatus(ctx, mappingObj.ID, isValid, errors, warnings)
 	if err != nil {
 		s.engine.IncrementErrors()
 		s.engine.logger.Errorf("Failed to update validation status: %v", err)
@@ -2473,12 +2622,533 @@ func (s *Server) ValidateMapping(ctx context.Context, req *corev1.ValidateMappin
 	// Get current timestamp
 	validatedAt := time.Now().Format(time.RFC3339)
 
-	s.engine.logger.Infof("Mapping '%s' validated: valid=%v, errors=%d, warnings=%d", req.MappingName, validationResult.IsValid, len(validationResult.Errors), len(validationResult.Warnings))
+	s.engine.logger.Infof("Mapping '%s' validated: valid=%v, errors=%d, warnings=%d", req.MappingName, isValid, len(errors), len(warnings))
 
 	return &corev1.ValidateMappingResponse{
-		IsValid:     validationResult.IsValid,
-		Errors:      validationResult.Errors,
-		Warnings:    validationResult.Warnings,
+		IsValid:     isValid,
+		Errors:      errors,
+		Warnings:    warnings,
 		ValidatedAt: validatedAt,
 	}, nil
+}
+
+// AddStreamToTableMapping creates a mapping from a stream topic to a database table
+func (s *Server) AddStreamToTableMapping(ctx context.Context, req *corev1.AddStreamToTableMappingRequest) (*corev1.AddMappingResponse, error) {
+	defer s.trackOperation()()
+
+	s.engine.logger.Infof("AddStreamToTableMapping request received for tenant: %s, workspace: %s, mapping: %s", req.TenantId, req.WorkspaceName, req.MappingName)
+
+	// Get workspace service
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID from workspace name
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "workspace not found: %v", err)
+	}
+
+	// Get mapping service
+	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
+
+	// Build stream URI for source
+	sourceURI := mapping.BuildStreamURI(workspaceID, "stream", req.SourceIntegrationName, req.SourceTopicName)
+
+	// Validate stream container exists
+	sourceContainer, err := mappingService.GetStreamContainerByTopic(ctx, workspaceID, req.SourceIntegrationName, req.SourceTopicName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "source stream container not found: %v", err)
+	}
+
+	// Get database service to validate target database
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+
+	// Validate target database exists
+	targetDB, err := databaseService.Get(ctx, req.TenantId, workspaceID, req.TargetDatabaseName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "target database not found: %v", err)
+	}
+
+	// Build target URI
+	targetURI := s.buildResourceURI("table", targetDB.ID, req.TargetTableName, "")
+
+	// Build mapping object
+	mappingObject := map[string]interface{}{
+		"source_integration_name": req.SourceIntegrationName,
+		"source_topic_name":       req.SourceTopicName,
+		"source_integration_id":   *sourceContainer.IntegrationID,
+		"target_database_name":    targetDB.Name,
+		"target_database_id":      targetDB.ID,
+		"target_table_name":       req.TargetTableName,
+	}
+
+	// Create the mapping
+	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, "stream_to_table", req.MappingName, req.MappingDescription, req.OwnerId,
+		"stream", "table", sourceURI, targetURI, mappingObject)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to create mapping: %v", err)
+	}
+
+	// Store filters if provided
+	if len(req.Filters) > 0 {
+		for _, filter := range req.Filters {
+			filterExpr := map[string]interface{}{}
+			if filter.FilterExpression != nil {
+				filterExpr = filter.FilterExpression.AsMap()
+			}
+
+			err := mappingService.CreateMappingFilter(ctx, createdMapping.ID, filter.FilterType, filterExpr, int(filter.FilterOrder), filter.FilterOperator)
+			if err != nil {
+				s.engine.logger.Warnf("Failed to create filter for mapping: %v", err)
+			}
+		}
+	}
+
+	// Get unified model client for automatic rule generation
+	umClient := s.engine.GetUnifiedModelClient()
+	if umClient != nil {
+		// Get stream items (message fields)
+		sourceItems, err := mappingService.GetItemsForContainer(ctx, sourceContainer.ContainerID)
+		if err == nil && len(sourceItems) > 0 {
+			// Get target table items (columns)
+			targetContainer, err := mappingService.GetContainerByURI(ctx, targetURI)
+			if err == nil {
+				targetItems, err := mappingService.GetItemsForContainer(ctx, targetContainer.ContainerID)
+				if err == nil && len(targetItems) > 0 {
+					// Auto-generate mapping rules
+					err = s.autoGenerateStreamMappingRules(ctx, req.TenantId, workspaceID, req.MappingName, req.OwnerId, sourceItems, targetItems)
+					if err != nil {
+						s.engine.logger.Warnf("Failed to auto-generate mapping rules: %v", err)
+					}
+				}
+			}
+		}
+	}
+
+	s.engine.logger.Infof("Successfully created stream-to-table mapping: %s", createdMapping.Name)
+
+	return &corev1.AddMappingResponse{
+		Message: "Stream-to-table mapping created successfully",
+		Success: true,
+		Mapping: &corev1.Mapping{
+			TenantId:           createdMapping.TenantID,
+			WorkspaceId:        createdMapping.WorkspaceID,
+			MappingId:          createdMapping.ID,
+			MappingName:        createdMapping.Name,
+			MappingDescription: createdMapping.Description,
+			MappingType:        createdMapping.MappingType,
+			OwnerId:            createdMapping.OwnerID,
+		},
+		Status: commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+// AddTableToStreamMapping creates a mapping from a database table to a stream topic
+func (s *Server) AddTableToStreamMapping(ctx context.Context, req *corev1.AddTableToStreamMappingRequest) (*corev1.AddMappingResponse, error) {
+	defer s.trackOperation()()
+
+	s.engine.logger.Infof("AddTableToStreamMapping request received for tenant: %s, workspace: %s, mapping: %s", req.TenantId, req.WorkspaceName, req.MappingName)
+
+	// Get workspace service
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID from workspace name
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "workspace not found: %v", err)
+	}
+
+	// Get database service
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+
+	// Validate source database exists
+	sourceDB, err := databaseService.Get(ctx, req.TenantId, workspaceID, req.SourceDatabaseName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "source database not found: %v", err)
+	}
+
+	// Build source URI
+	sourceURI := s.buildResourceURI("table", sourceDB.ID, req.SourceTableName, "")
+
+	// Get mapping service
+	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
+
+	// Build and validate target stream URI
+	targetURI := mapping.BuildStreamURI(workspaceID, "stream", req.TargetIntegrationName, req.TargetTopicName)
+
+	// Validate target stream container exists
+	targetContainer, err := mappingService.GetStreamContainerByTopic(ctx, workspaceID, req.TargetIntegrationName, req.TargetTopicName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "target stream container not found: %v", err)
+	}
+
+	// Build mapping object
+	mappingObject := map[string]interface{}{
+		"source_database_name":    sourceDB.Name,
+		"source_database_id":      sourceDB.ID,
+		"source_table_name":       req.SourceTableName,
+		"target_integration_name": req.TargetIntegrationName,
+		"target_topic_name":       req.TargetTopicName,
+		"target_integration_id":   *targetContainer.IntegrationID,
+	}
+
+	// Create the mapping
+	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, "table_to_stream", req.MappingName, req.MappingDescription, req.OwnerId,
+		"table", "stream", sourceURI, targetURI, mappingObject)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to create mapping: %v", err)
+	}
+
+	// Store filters if provided
+	if len(req.Filters) > 0 {
+		for _, filter := range req.Filters {
+			filterExpr := map[string]interface{}{}
+			if filter.FilterExpression != nil {
+				filterExpr = filter.FilterExpression.AsMap()
+			}
+
+			err := mappingService.CreateMappingFilter(ctx, createdMapping.ID, filter.FilterType, filterExpr, int(filter.FilterOrder), filter.FilterOperator)
+			if err != nil {
+				s.engine.logger.Warnf("Failed to create filter for mapping: %v", err)
+			}
+		}
+	}
+
+	s.engine.logger.Infof("Successfully created table-to-stream mapping: %s", createdMapping.Name)
+
+	return &corev1.AddMappingResponse{
+		Message: "Table-to-stream mapping created successfully",
+		Success: true,
+		Mapping: &corev1.Mapping{
+			TenantId:           createdMapping.TenantID,
+			WorkspaceId:        createdMapping.WorkspaceID,
+			MappingId:          createdMapping.ID,
+			MappingName:        createdMapping.Name,
+			MappingDescription: createdMapping.Description,
+			MappingType:        createdMapping.MappingType,
+			OwnerId:            createdMapping.OwnerID,
+		},
+		Status: commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+// AddStreamToStreamMapping creates a mapping from one stream topic to another
+func (s *Server) AddStreamToStreamMapping(ctx context.Context, req *corev1.AddStreamToStreamMappingRequest) (*corev1.AddMappingResponse, error) {
+	defer s.trackOperation()()
+
+	s.engine.logger.Infof("AddStreamToStreamMapping request received for tenant: %s, workspace: %s, mapping: %s", req.TenantId, req.WorkspaceName, req.MappingName)
+
+	// Get workspace service
+	workspaceService := workspace.NewService(s.engine.db, s.engine.logger)
+
+	// Get workspace ID from workspace name
+	workspaceID, err := workspaceService.GetWorkspaceID(ctx, req.TenantId, req.WorkspaceName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "workspace not found: %v", err)
+	}
+
+	// Get mapping service
+	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
+
+	// Build and validate source stream URI
+	sourceURI := mapping.BuildStreamURI(workspaceID, "stream", req.SourceIntegrationName, req.SourceTopicName)
+	sourceContainer, err := mappingService.GetStreamContainerByTopic(ctx, workspaceID, req.SourceIntegrationName, req.SourceTopicName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "source stream container not found: %v", err)
+	}
+
+	// Build and validate target stream URI
+	targetURI := mapping.BuildStreamURI(workspaceID, "stream", req.TargetIntegrationName, req.TargetTopicName)
+	targetContainer, err := mappingService.GetStreamContainerByTopic(ctx, workspaceID, req.TargetIntegrationName, req.TargetTopicName)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.NotFound, "target stream container not found: %v", err)
+	}
+
+	// Build mapping object
+	mappingObject := map[string]interface{}{
+		"source_integration_name": req.SourceIntegrationName,
+		"source_topic_name":       req.SourceTopicName,
+		"source_integration_id":   *sourceContainer.IntegrationID,
+		"target_integration_name": req.TargetIntegrationName,
+		"target_topic_name":       req.TargetTopicName,
+		"target_integration_id":   *targetContainer.IntegrationID,
+	}
+
+	// Create the mapping
+	createdMapping, err := mappingService.Create(ctx, req.TenantId, workspaceID, "stream_to_stream", req.MappingName, req.MappingDescription, req.OwnerId,
+		"stream", "stream", sourceURI, targetURI, mappingObject)
+	if err != nil {
+		s.engine.IncrementErrors()
+		return nil, status.Errorf(codes.Internal, "failed to create mapping: %v", err)
+	}
+
+	// Store filters if provided
+	if len(req.Filters) > 0 {
+		for _, filter := range req.Filters {
+			filterExpr := map[string]interface{}{}
+			if filter.FilterExpression != nil {
+				filterExpr = filter.FilterExpression.AsMap()
+			}
+
+			err := mappingService.CreateMappingFilter(ctx, createdMapping.ID, filter.FilterType, filterExpr, int(filter.FilterOrder), filter.FilterOperator)
+			if err != nil {
+				s.engine.logger.Warnf("Failed to create filter for mapping: %v", err)
+			}
+		}
+	}
+
+	s.engine.logger.Infof("Successfully created stream-to-stream mapping: %s", createdMapping.Name)
+
+	return &corev1.AddMappingResponse{
+		Message: "Stream-to-stream mapping created successfully",
+		Success: true,
+		Mapping: &corev1.Mapping{
+			TenantId:           createdMapping.TenantID,
+			WorkspaceId:        createdMapping.WorkspaceID,
+			MappingId:          createdMapping.ID,
+			MappingName:        createdMapping.Name,
+			MappingDescription: createdMapping.Description,
+			MappingType:        createdMapping.MappingType,
+			OwnerId:            createdMapping.OwnerID,
+		},
+		Status: commonv1.Status_STATUS_SUCCESS,
+	}, nil
+}
+
+// autoGenerateStreamMappingRules generates mapping rules for stream-to-table mappings
+func (s *Server) autoGenerateStreamMappingRules(ctx context.Context, tenantID, workspaceID, mappingName, ownerID string, sourceItems, targetItems []*mapping.ResourceItem) error {
+	mappingService := mapping.NewService(s.engine.db, s.engine.logger)
+
+	s.engine.logger.Infof("Auto-generating mapping rules for stream mapping %s: %d source fields, %d target columns", mappingName, len(sourceItems), len(targetItems))
+
+	// Create a map of target items by name for quick lookup
+	targetItemMap := make(map[string]*mapping.ResourceItem)
+	for _, item := range targetItems {
+		targetItemMap[strings.ToLower(item.ItemName)] = item
+	}
+
+	rulesCreated := 0
+	ruleOrder := 0
+
+	// For each source item (message field), try to find a matching target item (column)
+	for _, sourceItem := range sourceItems {
+		sourceName := strings.ToLower(sourceItem.ItemName)
+		targetItem, found := targetItemMap[sourceName]
+
+		if !found {
+			// Try without underscores or with common variations
+			sourceName = strings.ReplaceAll(sourceName, "_", "")
+			for targetName, item := range targetItemMap {
+				if strings.ReplaceAll(targetName, "_", "") == sourceName {
+					targetItem = item
+					found = true
+					break
+				}
+			}
+		}
+
+		if !found {
+			s.engine.logger.Debugf("No matching target column for source field: %s", sourceItem.ItemName)
+			continue
+		}
+
+		// Generate rule name
+		ruleName := fmt.Sprintf("%s_to_%s", sourceItem.ItemName, targetItem.ItemName)
+
+		// Build metadata
+		metadata := map[string]interface{}{
+			"source_field":  sourceItem.ItemName,
+			"target_column": targetItem.ItemName,
+			"match_type":    "auto_generated_stream",
+			"generated_at":  time.Now().Format(time.RFC3339),
+		}
+
+		// Create mapping rule
+		_, err := mappingService.CreateMappingRule(ctx, tenantID, workspaceID, ruleName, fmt.Sprintf("Auto-generated rule for %s -> %s", sourceItem.ItemName, targetItem.ItemName), sourceItem.ResourceURI, targetItem.ResourceURI, "direct_mapping", map[string]interface{}{}, metadata, ownerID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to create mapping rule %s: %v", ruleName, err)
+			continue
+		}
+
+		// Attach rule to mapping
+		orderPtr := int64(ruleOrder)
+		err = mappingService.AttachMappingRule(ctx, tenantID, workspaceID, mappingName, ruleName, &orderPtr)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to attach rule %s to mapping: %v", ruleName, err)
+			continue
+		}
+
+		s.engine.logger.Debugf("Created and attached mapping rule %s (order: %d)", ruleName, ruleOrder)
+		ruleOrder++
+		rulesCreated++
+	}
+
+	s.engine.logger.Infof("Auto-generated %d mapping rules for stream mapping %s", rulesCreated, mappingName)
+
+	if rulesCreated == 0 {
+		return fmt.Errorf("failed to create any mapping rules")
+	}
+
+	return nil
+}
+
+// extractTableWithTypes extracts a single table and all its dependent user-defined types from a UnifiedModel
+func (s *Server) extractTableWithTypes(um *unifiedmodel.UnifiedModel, tableName string) (*unifiedmodel.UnifiedModel, []string) {
+	if um == nil {
+		return nil, nil
+	}
+
+	// Get the table
+	table, exists := um.Tables[tableName]
+	if !exists {
+		s.engine.logger.Warnf("Table %s not found in UnifiedModel", tableName)
+		return nil, nil
+	}
+
+	// Create a new UnifiedModel with just this table
+	filtered := &unifiedmodel.UnifiedModel{
+		DatabaseType: um.DatabaseType,
+		Tables:       map[string]unifiedmodel.Table{tableName: table},
+		Types:        make(map[string]unifiedmodel.Type),
+		Schemas:      make(map[string]unifiedmodel.Schema),
+		Functions:    make(map[string]unifiedmodel.Function),
+		Procedures:   make(map[string]unifiedmodel.Procedure),
+		Triggers:     make(map[string]unifiedmodel.Trigger),
+		Sequences:    make(map[string]unifiedmodel.Sequence),
+		Views:        make(map[string]unifiedmodel.View),
+		Extensions:   make(map[string]unifiedmodel.Extension),
+	}
+
+	// Collect all custom types referenced by the table columns
+	typesReferenced := make(map[string]bool)
+	deployedTypeNames := []string{}
+
+	for _, column := range table.Columns {
+		// Check if the data type is a user-defined type
+		if s.isCustomType(column.DataType, um) {
+			typeName := s.extractTypeName(column.DataType)
+			if typeName != "" && !typesReferenced[typeName] {
+				typesReferenced[typeName] = true
+				// Add the type to the filtered model
+				if typeDefinition, exists := um.Types[typeName]; exists {
+					filtered.Types[typeName] = typeDefinition
+					deployedTypeNames = append(deployedTypeNames, typeName)
+					s.engine.logger.Infof("Including custom type '%s' for table '%s'", typeName, tableName)
+				}
+			}
+		}
+	}
+
+	return filtered, deployedTypeNames
+}
+
+// isCustomType checks if a data type is a user-defined type
+func (s *Server) isCustomType(dataType string, um *unifiedmodel.UnifiedModel) bool {
+	// Remove array notation if present
+	baseType := strings.TrimSuffix(dataType, "[]")
+
+	// Check if it exists in the Types map
+	if _, exists := um.Types[baseType]; exists {
+		return true
+	}
+
+	// Check for PostgreSQL user-defined types (sometimes prefixed with schema)
+	if strings.Contains(baseType, ".") {
+		parts := strings.Split(baseType, ".")
+		if len(parts) == 2 {
+			if _, exists := um.Types[parts[1]]; exists {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// extractTypeName extracts the base type name from a data type string
+func (s *Server) extractTypeName(dataType string) string {
+	// Remove array notation
+	baseType := strings.TrimSuffix(dataType, "[]")
+
+	// Handle schema-qualified types (e.g., public.my_enum)
+	if strings.Contains(baseType, ".") {
+		parts := strings.Split(baseType, ".")
+		if len(parts) == 2 {
+			return parts[1]
+		}
+	}
+
+	return baseType
+}
+
+// checkTableExists checks if a table exists in the target database via anchor service
+func (s *Server) checkTableExists(ctx context.Context, databaseID, tableName string) (bool, error) {
+	// Get anchor client
+	anchorClient := s.engine.GetAnchorClient()
+	if anchorClient == nil {
+		return false, fmt.Errorf("anchor service not available")
+	}
+
+	// Get database schema
+	schemaReq := &anchorv1.GetDatabaseSchemaRequest{
+		DatabaseId: databaseID,
+	}
+
+	schemaResp, err := anchorClient.GetDatabaseSchema(ctx, schemaReq)
+	if err != nil {
+		return false, fmt.Errorf("failed to get database schema: %w", err)
+	}
+
+	if !schemaResp.Success {
+		return false, fmt.Errorf("failed to get database schema: %s", schemaResp.Message)
+	}
+
+	// Parse the schema
+	var schema unifiedmodel.UnifiedModel
+	if err := json.Unmarshal(schemaResp.Schema, &schema); err != nil {
+		return false, fmt.Errorf("failed to parse database schema: %w", err)
+	}
+
+	// Check if table exists
+	_, exists := schema.Tables[tableName]
+	return exists, nil
+}
+
+// refreshDatabaseDiscovery triggers an immediate schema discovery for the specified database
+// to populate resource_containers and resource_items tables
+func (s *Server) refreshDatabaseDiscovery(ctx context.Context, databaseID string) error {
+	// Get anchor client
+	anchorClient := s.engine.GetAnchorClient()
+	if anchorClient == nil {
+		return fmt.Errorf("anchor service not available")
+	}
+
+	// Call RefreshDatabaseDiscovery RPC
+	refreshReq := &anchorv1.RefreshDatabaseDiscoveryRequest{
+		DatabaseId: databaseID,
+	}
+
+	refreshResp, err := anchorClient.RefreshDatabaseDiscovery(ctx, refreshReq)
+	if err != nil {
+		return fmt.Errorf("failed to refresh database discovery: %w", err)
+	}
+
+	if !refreshResp.Success {
+		return fmt.Errorf("failed to refresh database discovery: %s", refreshResp.Message)
+	}
+
+	s.engine.logger.Infof("Refreshed discovery for database %s: %d containers, %d items created",
+		databaseID, refreshResp.ContainersCreated, refreshResp.ItemsCreated)
+
+	return nil
 }

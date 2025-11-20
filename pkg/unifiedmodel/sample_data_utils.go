@@ -97,7 +97,7 @@ func (c *SampleDataCollector) ProcessCollectionSample(collectionName string, doc
 }
 
 // ProcessKeyValueSample processes key-value pair data
-func (c *SampleDataCollector) ProcessKeyValueSample(namespaceName string, keyValuePairs []KeyValuePair, totalKeyCount int64) KeyValueSampleData {
+func (c *SampleDataCollector) ProcessKeyValueSample(namespaceName string, keyValuePairs []KeyValueSampleEntry, totalKeyCount int64) KeyValueSampleData {
 	sample := KeyValueSampleData{
 		NamespaceName: namespaceName,
 		KeyCount:      totalKeyCount,

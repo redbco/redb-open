@@ -26,6 +26,7 @@ service AnchorService {
     rpc GetDatabaseMetadata(GetDatabaseMetadataRequest) returns (GetDatabaseMetadataResponse) {}
     rpc GetDatabaseSchema(GetDatabaseSchemaRequest) returns (GetDatabaseSchemaResponse) {}
     rpc DeployDatabaseSchema(DeployDatabaseSchemaRequest) returns (DeployDatabaseSchemaResponse) {}
+    rpc RefreshDatabaseDiscovery(RefreshDatabaseDiscoveryRequest) returns (RefreshDatabaseDiscoveryResponse) {}
 
     // Database data endpoints
     rpc FetchData(FetchDataRequest) returns (FetchDataResponse) {}
@@ -232,6 +233,19 @@ message DeployDatabaseSchemaResponse {
     bool success = 2;
     redbco.redbopen.common.v1.Status status = 3;
     string database_id = 4;
+}
+
+message RefreshDatabaseDiscoveryRequest {
+    string database_id = 1;
+}
+
+message RefreshDatabaseDiscoveryResponse {
+    string message = 1;
+    bool success = 2;
+    redbco.redbopen.common.v1.Status status = 3;
+    string database_id = 4;
+    int32 containers_created = 5;
+    int32 items_created = 6;
 }
 
 // Database data endpoints

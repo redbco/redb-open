@@ -198,7 +198,7 @@ export default function OverviewPage() {
             <Folder className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
             <h3 className="text-xl font-semibold text-foreground mb-2">No Workspaces Found</h3>
             <p className="text-muted-foreground">
-              You don't have access to any workspaces yet. Contact your administrator to get started.
+              You don&apos;t have access to any workspaces yet. Contact your administrator to get started.
             </p>
           </div>
         ) : (

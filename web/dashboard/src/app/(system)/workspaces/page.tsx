@@ -69,7 +69,7 @@ export default function WorkspacesPage() {
           <Folder className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
           <h2 className="text-2xl font-semibold text-foreground mb-2">No Workspaces Found</h2>
           <p className="text-muted-foreground mb-6">
-            You don't have access to any workspaces yet. Contact your administrator to get started.
+            You don&apos;t have access to any workspaces yet. Contact your administrator to get started.
           </p>
         </div>
       ) : (

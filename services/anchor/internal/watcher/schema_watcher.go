@@ -614,34 +614,127 @@ func (w *SchemaWatcher) populateResourceRegistry(ctx context.Context, um *unifie
 
 	w.logInfo("Generated %d containers and %d items for database %s", len(containers), len(items), databaseID)
 
-	// Delete existing containers and items for this database (cascade will delete items)
-	_, err = w.db.Pool().Exec(ctx,
-		"DELETE FROM resource_containers WHERE database_id = $1",
+	// Instead of deleting existing containers (which would cascade delete mappings),
+	// we'll upsert them and delete only containers that no longer exist in the new schema
+
+	// Get existing container IDs for this database
+	existingContainerURIs := make(map[string]string) // URI -> ID
+	existingRows, err := w.db.Pool().Query(ctx,
+		"SELECT container_id, resource_uri FROM resource_containers WHERE database_id = $1",
 		databaseID)
 	if err != nil {
-		return fmt.Errorf("failed to delete existing containers: %w", err)
+		return fmt.Errorf("failed to query existing containers: %w", err)
 	}
-
-	// Create a map to associate container URIs with their IDs after insertion
-	containerURIToID := make(map[string]string)
-
-	// Insert containers
-	for _, container := range containers {
-		err = w.resourceRepo.CreateContainer(ctx, container)
-		if err != nil {
-			w.logError("Failed to create container %s: %v", container.ResourceURI, err)
-			// Continue with other containers even if one fails
+	for existingRows.Next() {
+		var containerID, resourceURI string
+		if err := existingRows.Scan(&containerID, &resourceURI); err != nil {
+			w.logError("Failed to scan existing container: %v", err)
 			continue
 		}
-		// Store the mapping after successful creation (container.ContainerID is now set by the DB)
-		containerURIToID[container.ResourceURI] = container.ContainerID
+		existingContainerURIs[resourceURI] = containerID
+	}
+	existingRows.Close()
+
+	// Track new container URIs from the discovery
+	newContainerURIs := make(map[string]bool)
+	for _, container := range containers {
+		newContainerURIs[container.ResourceURI] = true
 	}
 
-	// Insert items - now with container_id set
+	// Delete containers that no longer exist in the schema
+	for uri, containerID := range existingContainerURIs {
+		if !newContainerURIs[uri] {
+			_, err := w.db.Pool().Exec(ctx,
+				"DELETE FROM resource_containers WHERE container_id = $1",
+				containerID)
+			if err != nil {
+				w.logError("Failed to delete obsolete container %s: %v", uri, err)
+			} else {
+				w.logInfo("Deleted obsolete container: %s", uri)
+			}
+		}
+	}
+
+	// Get existing item IDs for this database
+	// Note: resource_items doesn't have database_id, so we need to join through containers
+	existingItemURIs := make(map[string]string) // URI -> ID
+	existingItemRows, err := w.db.Pool().Query(ctx,
+		`SELECT ri.item_id, ri.resource_uri 
+		 FROM resource_items ri
+		 JOIN resource_containers rc ON ri.container_id = rc.container_id
+		 WHERE rc.database_id = $1`,
+		databaseID)
+	if err != nil {
+		return fmt.Errorf("failed to query existing items: %w", err)
+	}
+	for existingItemRows.Next() {
+		var itemID, resourceURI string
+		if err := existingItemRows.Scan(&itemID, &resourceURI); err != nil {
+			w.logError("Failed to scan existing item: %v", err)
+			continue
+		}
+		existingItemURIs[resourceURI] = itemID
+	}
+	existingItemRows.Close()
+
+	// Track new item URIs from the discovery
+	newItemURIs := make(map[string]bool)
+	for _, item := range items {
+		newItemURIs[item.ResourceURI] = true
+	}
+
+	// Delete items that no longer exist in the schema
+	for uri, itemID := range existingItemURIs {
+		if !newItemURIs[uri] {
+			_, err := w.db.Pool().Exec(ctx,
+				"DELETE FROM resource_items WHERE item_id = $1",
+				itemID)
+			if err != nil {
+				w.logError("Failed to delete obsolete item %s: %v", uri, err)
+			} else {
+				w.logInfo("Deleted obsolete item: %s", uri)
+			}
+		}
+	}
+
+	// Create a map to associate container URIs with their IDs after insertion/update
+	containerURIToID := make(map[string]string)
+
+	// Upsert containers (update existing, insert new)
+	containersCreated := 0
+	for _, container := range containers {
+		if existingID, exists := existingContainerURIs[container.ResourceURI]; exists {
+			// Update existing container
+			updates := map[string]interface{}{
+				"object_type":        container.ObjectType,
+				"object_name":        container.ObjectName,
+				"container_metadata": container.ContainerMetadata,
+				"enriched_metadata":  container.EnrichedMetadata,
+				"item_count":         container.ItemCount,
+				"size_bytes":         container.SizeBytes,
+			}
+			err = w.resourceRepo.UpdateContainer(ctx, existingID, updates)
+			if err != nil {
+				w.logError("Failed to update container %s: %v", container.ResourceURI, err)
+				continue
+			}
+			containerURIToID[container.ResourceURI] = existingID
+		} else {
+			// Create new container
+			err = w.resourceRepo.CreateContainer(ctx, container)
+			if err != nil {
+				w.logError("Failed to create container %s: %v", container.ResourceURI, err)
+				continue
+			}
+			containerURIToID[container.ResourceURI] = container.ContainerID
+			containersCreated++
+		}
+	}
+
+	// Upsert items (update existing, insert new)
+	itemsCreated := 0
 	for _, item := range items {
 		// Extract the container URI from the item URI
-		// Item URI format: redb://data/database/{dbID}/table/{tableName}/column/{columnName}
-		// Container URI format: redb://data/database/{dbID}/table/{tableName}
 		containerURI := extractContainerURIFromItemURI(item.ResourceURI)
 
 		// Set the container_id based on the mapping
@@ -652,16 +745,316 @@ func (w *SchemaWatcher) populateResourceRegistry(ctx context.Context, um *unifie
 			continue
 		}
 
-		err = w.resourceRepo.CreateItem(ctx, item)
-		if err != nil {
-			w.logError("Failed to create item %s: %v", item.ResourceURI, err)
-			// Continue with other items even if one fails
-			continue
+		// Check if item already exists
+		if existingItemID, exists := existingItemURIs[item.ResourceURI]; exists {
+			// Update existing item
+			updates := map[string]interface{}{
+				"item_name":                 item.ItemName,
+				"item_display_name":         item.ItemDisplayName,
+				"data_type":                 item.DataType,
+				"unified_data_type":         item.UnifiedDataType,
+				"is_nullable":               item.IsNullable,
+				"is_primary_key":            item.IsPrimaryKey,
+				"is_unique":                 item.IsUnique,
+				"is_indexed":                item.IsIndexed,
+				"is_required":               item.IsRequired,
+				"is_array":                  item.IsArray,
+				"default_value":             item.DefaultValue,
+				"constraints":               item.Constraints,
+				"is_privileged":             item.IsPrivileged,
+				"privileged_classification": item.PrivilegedClassification,
+				"detection_confidence":      item.DetectionConfidence,
+				"detection_method":          item.DetectionMethod,
+				"ordinal_position":          item.OrdinalPosition,
+				"max_length":                item.MaxLength,
+				"precision":                 item.Precision,
+				"scale":                     item.Scale,
+				"item_comment":              item.ItemComment,
+				"array_dimensions":          item.ArrayDimensions,
+			}
+			err = w.resourceRepo.UpdateItem(ctx, existingItemID, updates)
+			if err != nil {
+				w.logError("Failed to update item %s: %v", item.ResourceURI, err)
+				continue
+			}
+		} else {
+			// Create new item
+			err = w.resourceRepo.CreateItem(ctx, item)
+			if err != nil {
+				w.logError("Failed to create item %s: %v", item.ResourceURI, err)
+				continue
+			}
+			itemsCreated++
 		}
 	}
 
-	w.logInfo("Successfully populated %d containers and %d items for database %s", len(containers), len(items), databaseID)
+	w.logInfo("Successfully populated %d containers and %d items for database %s", containersCreated, itemsCreated, databaseID)
 	return nil
+}
+
+// RefreshResourceRegistry triggers an immediate refresh of the resource registry for a specific database
+// Returns the number of containers and items created
+func (w *SchemaWatcher) RefreshResourceRegistry(ctx context.Context, databaseID string) (int, int, error) {
+	w.logInfo("Manually refreshing resource registry for database: %s", databaseID)
+
+	// Get database structure via adapter
+	registry := w.state.GetConnectionRegistry()
+	client, err := registry.GetDatabaseClient(databaseID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("database not found: %w", err)
+	}
+
+	conn := client.AdapterConnection.(adapter.Connection)
+	um, err := conn.SchemaOperations().DiscoverSchema(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to discover database schema: %w", err)
+	}
+
+	// Marshal the discovered schema to JSON for storage
+	schemaBytes, err := json.Marshal(um)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to marshal schema: %w", err)
+	}
+
+	// Update the database record with the fresh schema
+	_, err = w.db.Pool().Exec(ctx, "UPDATE databases SET database_schema = $1 WHERE database_id = $2", string(schemaBytes), databaseID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to update database schema: %w", err)
+	}
+
+	w.logInfo("Updated database schema for database %s", databaseID)
+
+	// Get database info from the database
+	var tenantID, workspaceID, ownerID, nodeID, databaseName string
+	err = w.db.Pool().QueryRow(ctx,
+		`SELECT tenant_id, workspace_id, owner_id, connected_to_node_id, database_name 
+		 FROM databases WHERE database_id = $1`,
+		databaseID).Scan(&tenantID, &workspaceID, &ownerID, &nodeID, &databaseName)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get database info: %w", err)
+	}
+
+	// Call unified model service for enrichment
+	var enrichResp *pb.AnalyzeSchemaEnrichedResponse
+	if w.umClient != nil {
+		umProto := um.ToProto()
+		enrichReq := &pb.AnalyzeSchemaEnrichedRequest{
+			SchemaType:   string(um.DatabaseType),
+			UnifiedModel: umProto,
+		}
+
+		enrichResp, err = w.umClient.AnalyzeSchemaEnriched(ctx, enrichReq)
+		if err != nil {
+			w.logWarn("Failed to enrich schema for database %s: %v (continuing without enrichment)", databaseID, err)
+			enrichResp = nil
+		} else {
+			// Update the database record with the fresh enrichment data
+			enrichedBytes, err := json.Marshal(enrichResp)
+			if err != nil {
+				w.logError("Failed to marshal enriched analysis: %v", err)
+			} else {
+				_, err = w.db.Pool().Exec(ctx, "UPDATE databases SET database_tables = $1 WHERE database_id = $2", string(enrichedBytes), databaseID)
+				if err != nil {
+					w.logError("Failed to store enriched analysis in database: %v", err)
+				} else {
+					w.logInfo("Updated enriched analysis for database %s", databaseID)
+				}
+			}
+		}
+	}
+
+	// Generate containers and items from the UnifiedModel
+	containers, items, err := unifiedmodel.PopulateResourcesFromUnifiedModel(um, databaseID, nodeID, tenantID, workspaceID, ownerID, databaseName, enrichResp)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to generate resources from UnifiedModel: %w", err)
+	}
+
+	w.logInfo("Generated %d containers and %d items for database %s", len(containers), len(items), databaseID)
+
+	// Instead of deleting existing containers (which would cascade delete mappings),
+	// we'll upsert them and delete only containers that no longer exist in the new schema
+
+	// Get existing container IDs for this database
+	existingContainerURIs := make(map[string]string) // URI -> ID
+	existingRows, err := w.db.Pool().Query(ctx,
+		"SELECT container_id, resource_uri FROM resource_containers WHERE database_id = $1",
+		databaseID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to query existing containers: %w", err)
+	}
+	for existingRows.Next() {
+		var containerID, resourceURI string
+		if err := existingRows.Scan(&containerID, &resourceURI); err != nil {
+			w.logError("Failed to scan existing container: %v", err)
+			continue
+		}
+		existingContainerURIs[resourceURI] = containerID
+	}
+	existingRows.Close()
+
+	// Track new container URIs from the discovery
+	newContainerURIs := make(map[string]bool)
+	for _, container := range containers {
+		newContainerURIs[container.ResourceURI] = true
+	}
+
+	// Delete containers that no longer exist in the schema
+	for uri, containerID := range existingContainerURIs {
+		if !newContainerURIs[uri] {
+			_, err := w.db.Pool().Exec(ctx,
+				"DELETE FROM resource_containers WHERE container_id = $1",
+				containerID)
+			if err != nil {
+				w.logError("Failed to delete obsolete container %s: %v", uri, err)
+			} else {
+				w.logInfo("Deleted obsolete container: %s", uri)
+			}
+		}
+	}
+
+	// Get existing item IDs for this database
+	// Note: resource_items doesn't have database_id, so we need to join through containers
+	existingItemURIs := make(map[string]string) // URI -> ID
+	existingItemRows, err := w.db.Pool().Query(ctx,
+		`SELECT ri.item_id, ri.resource_uri 
+		 FROM resource_items ri
+		 JOIN resource_containers rc ON ri.container_id = rc.container_id
+		 WHERE rc.database_id = $1`,
+		databaseID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to query existing items: %w", err)
+	}
+	for existingItemRows.Next() {
+		var itemID, resourceURI string
+		if err := existingItemRows.Scan(&itemID, &resourceURI); err != nil {
+			w.logError("Failed to scan existing item: %v", err)
+			continue
+		}
+		existingItemURIs[resourceURI] = itemID
+	}
+	existingItemRows.Close()
+
+	// Track new item URIs from the discovery
+	newItemURIs := make(map[string]bool)
+	for _, item := range items {
+		newItemURIs[item.ResourceURI] = true
+	}
+
+	// Delete items that no longer exist in the schema
+	for uri, itemID := range existingItemURIs {
+		if !newItemURIs[uri] {
+			_, err := w.db.Pool().Exec(ctx,
+				"DELETE FROM resource_items WHERE item_id = $1",
+				itemID)
+			if err != nil {
+				w.logError("Failed to delete obsolete item %s: %v", uri, err)
+			}
+		}
+	}
+
+	// Create a map to associate container URIs with their IDs after insertion/update
+	containerURIToID := make(map[string]string)
+
+	// Upsert containers
+	containersCreated := 0
+	for _, container := range containers {
+		// Check if container already exists
+		if existingID, exists := existingContainerURIs[container.ResourceURI]; exists {
+			// Update existing container
+			updates := map[string]interface{}{
+				"object_type":                         container.ObjectType,
+				"object_name":                         container.ObjectName,
+				"container_metadata":                  container.ContainerMetadata,
+				"enriched_metadata":                   container.EnrichedMetadata,
+				"database_type":                       container.DatabaseType,
+				"vendor":                              container.Vendor,
+				"item_count":                          container.ItemCount,
+				"size_bytes":                          container.SizeBytes,
+				"container_classification":            container.ContainerClassification,
+				"container_classification_confidence": container.ContainerClassificationConfidence,
+				"container_classification_source":     container.ContainerClassificationSource,
+				"status":                              container.Status,
+				"status_message":                      container.StatusMessage,
+				"last_seen":                           container.LastSeen,
+				"online":                              container.Online,
+			}
+			err = w.resourceRepo.UpdateContainer(ctx, existingID, updates)
+			if err != nil {
+				w.logError("Failed to update container %s: %v", container.ResourceURI, err)
+				continue
+			}
+			containerURIToID[container.ResourceURI] = existingID
+		} else {
+			// Create new container
+			err = w.resourceRepo.CreateContainer(ctx, container)
+			if err != nil {
+				w.logError("Failed to create container %s: %v", container.ResourceURI, err)
+				continue
+			}
+			containerURIToID[container.ResourceURI] = container.ContainerID
+			containersCreated++
+		}
+	}
+
+	// Insert items - now with container_id set
+	itemsCreated := 0
+	for _, item := range items {
+		// Extract the container URI from the item URI
+		containerURI := extractContainerURIFromItemURI(item.ResourceURI)
+
+		// Set the container_id based on the mapping
+		if containerID, ok := containerURIToID[containerURI]; ok {
+			item.ContainerID = containerID
+		} else {
+			w.logError("Failed to find container ID for item %s (container URI: %s)", item.ResourceURI, containerURI)
+			continue
+		}
+
+		// Check if item already exists
+		if existingItemID, exists := existingItemURIs[item.ResourceURI]; exists {
+			// Update existing item
+			updates := map[string]interface{}{
+				"item_name":                 item.ItemName,
+				"item_display_name":         item.ItemDisplayName,
+				"data_type":                 item.DataType,
+				"unified_data_type":         item.UnifiedDataType,
+				"is_nullable":               item.IsNullable,
+				"is_primary_key":            item.IsPrimaryKey,
+				"is_unique":                 item.IsUnique,
+				"is_indexed":                item.IsIndexed,
+				"is_required":               item.IsRequired,
+				"is_array":                  item.IsArray,
+				"default_value":             item.DefaultValue,
+				"constraints":               item.Constraints,
+				"is_privileged":             item.IsPrivileged,
+				"privileged_classification": item.PrivilegedClassification,
+				"detection_confidence":      item.DetectionConfidence,
+				"detection_method":          item.DetectionMethod,
+				"ordinal_position":          item.OrdinalPosition,
+				"max_length":                item.MaxLength,
+				"precision":                 item.Precision,
+				"scale":                     item.Scale,
+				"item_comment":              item.ItemComment,
+				"container_id":              item.ContainerID,
+			}
+			err = w.resourceRepo.UpdateItem(ctx, existingItemID, updates)
+			if err != nil {
+				w.logError("Failed to update item %s: %v", item.ResourceURI, err)
+				continue
+			}
+		} else {
+			// Create new item
+			err = w.resourceRepo.CreateItem(ctx, item)
+			if err != nil {
+				w.logError("Failed to create item %s: %v", item.ResourceURI, err)
+				continue
+			}
+			itemsCreated++
+		}
+	}
+
+	w.logInfo("Successfully populated %d containers and %d items for database %s", containersCreated, itemsCreated, databaseID)
+	return containersCreated, itemsCreated, nil
 }
 
 // extractContainerURIFromItemURI extracts the container URI from an item URI

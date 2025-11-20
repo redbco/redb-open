@@ -633,6 +633,115 @@ func (mh *MappingHandlers) AddTableMapping(w http.ResponseWriter, r *http.Reques
 	mh.writeJSONResponse(w, http.StatusCreated, response)
 }
 
+// AddTableMappingWithDeploy handles POST /{tenant_url}/api/v1/workspaces/{workspace_name}/mappings/table-with-deploy
+func (mh *MappingHandlers) AddTableMappingWithDeploy(w http.ResponseWriter, r *http.Request) {
+	mh.engine.TrackOperation()
+	defer mh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+
+	if tenantURL == "" || workspaceName == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "tenant_url and workspace_name are required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		mh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Parse request body
+	var req AddTableMappingWithDeployRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if mh.engine.logger != nil {
+			mh.engine.logger.Errorf("Failed to parse add table mapping with deploy request body: %v", err)
+		}
+		mh.writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", "")
+		return
+	}
+
+	// Validate required fields
+	if req.MappingName == "" || req.MappingDescription == "" || req.SourceDatabaseName == "" || req.SourceTableName == "" || req.TargetDatabaseName == "" || req.TargetTableName == "" {
+		mh.writeErrorResponse(w, http.StatusBadRequest, "Required fields missing", "mapping_name, mapping_description, source_database_name, source_table_name, target_database_name, and target_table_name are required")
+		return
+	}
+
+	// Log request
+	if mh.engine.logger != nil {
+		mh.engine.logger.Infof("Add table mapping with deploy request for mapping: %s, source: %s.%s, target: %s.%s, workspace: %s, tenant: %s",
+			req.MappingName, req.SourceDatabaseName, req.SourceTableName, req.TargetDatabaseName, req.TargetTableName, workspaceName, profile.TenantId)
+	}
+
+	// Create context with timeout (longer timeout for deployment operations)
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	defer cancel()
+
+	// Ensure mapping name is unique by checking existing mappings
+	uniqueName, err := mh.ensureUniqueMappingName(ctx, profile.TenantId, workspaceName, req.MappingName)
+	if err != nil {
+		mh.writeErrorResponse(w, http.StatusInternalServerError, "Failed to ensure unique mapping name", err.Error())
+		return
+	}
+
+	// Call core service gRPC
+	grpcReq := &corev1.AddTableMappingWithDeployRequest{
+		TenantId:           profile.TenantId,
+		WorkspaceName:      workspaceName,
+		OwnerId:            profile.UserId,
+		MappingName:        uniqueName,
+		MappingDescription: req.MappingDescription,
+		SourceDatabaseName: req.SourceDatabaseName,
+		SourceTableName:    req.SourceTableName,
+		TargetDatabaseName: req.TargetDatabaseName,
+		TargetTableName:    req.TargetTableName,
+	}
+
+	if req.PolicyID != "" {
+		grpcReq.PolicyId = &req.PolicyID
+	}
+
+	grpcResp, err := mh.engine.mappingClient.AddTableMappingWithDeploy(ctx, grpcReq)
+	if err != nil {
+		mh.handleGRPCError(w, err, "Failed to add table mapping with deploy")
+		return
+	}
+
+	// Convert gRPC response to REST response
+	mapping := Mapping{
+		TenantID:           grpcResp.Mapping.TenantId,
+		WorkspaceID:        grpcResp.Mapping.WorkspaceId,
+		MappingID:          grpcResp.Mapping.MappingId,
+		MappingName:        grpcResp.Mapping.MappingName,
+		MappingDescription: grpcResp.Mapping.MappingDescription,
+		MappingType:        grpcResp.Mapping.MappingType,
+		PolicyID:           grpcResp.Mapping.PolicyId,
+		OwnerID:            grpcResp.Mapping.OwnerId,
+		MappingRuleCount:   grpcResp.Mapping.MappingRuleCount,
+	}
+
+	response := AddTableMappingWithDeployResponse{
+		Message: grpcResp.Message,
+		Success: grpcResp.Success,
+		Status:  Status(grpcResp.Status),
+		Mapping: mapping,
+		DeploymentInfo: DeploymentInfo{
+			TableDeployed: true,
+			TypesDeployed: grpcResp.TypesDeployed,
+		},
+	}
+
+	if mh.engine.logger != nil {
+		mh.engine.logger.Infof("Successfully deployed table and added mapping: %s for workspace: %s", req.MappingName, workspaceName)
+	}
+
+	mh.writeJSONResponse(w, http.StatusCreated, response)
+}
+
 // ModifyMapping handles PUT /{tenant_url}/api/v1/workspaces/{workspace_name}/mappings/{mapping_name}
 func (mh *MappingHandlers) ModifyMapping(w http.ResponseWriter, r *http.Request) {
 	mh.engine.TrackOperation()

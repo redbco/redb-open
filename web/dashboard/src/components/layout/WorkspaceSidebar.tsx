@@ -35,7 +35,7 @@ interface NavItem {
   description: string;
 }
 
-const workspaceNavigationItems: NavItem[] = [
+export const workspaceNavigationItems: NavItem[] = [
   {
     name: 'Dashboard',
     href: '/dashboard',

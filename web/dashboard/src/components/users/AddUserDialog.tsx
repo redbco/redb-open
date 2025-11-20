@@ -28,17 +28,17 @@ export function AddUserDialog({ onClose, onSuccess }: AddUserDialogProps) {
     e.preventDefault();
     
     if (!formData.user_name.trim() || !formData.user_email.trim() || !formData.user_password) {
-      showToast('Username, email, and password are required', 'error');
+      showToast({ type: 'error', title: 'Validation Error', message: 'Username, email, and password are required' });
       return;
     }
 
     if (formData.user_password !== formData.confirm_password) {
-      showToast('Passwords do not match', 'error');
+      showToast({ type: 'error', title: 'Validation Error', message: 'Passwords do not match' });
       return;
     }
 
     if (formData.user_password.length < 8) {
-      showToast('Password must be at least 8 characters', 'error');
+      showToast({ type: 'error', title: 'Validation Error', message: 'Password must be at least 8 characters' });
       return;
     }
 
@@ -54,12 +54,12 @@ export function AddUserDialog({ onClose, onSuccess }: AddUserDialogProps) {
         user_enabled: formData.user_enabled,
       });
 
-      showToast('User created successfully', 'success');
+      showToast({ type: 'success', title: 'Success', message: 'User created successfully' });
       onSuccess();
       onClose();
     } catch (error) {
       console.error('Error creating user:', error);
-      showToast('Failed to create user', 'error');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to create user' });
     } finally {
       setIsSubmitting(false);
     }

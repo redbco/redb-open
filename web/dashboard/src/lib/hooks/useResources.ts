@@ -27,7 +27,7 @@ export function useResourceContainers(workspaceName: string, type?: string) {
     setError(null);
     
     try {
-      const response = await api.resources.listContainers(workspaceName, type);
+      const response = await api.resources.listContainers(workspaceName, type ? { object_type: type } : undefined);
       setContainers(response.containers || []);
     } catch (err) {
       setError(err instanceof Error ? err : new Error('Failed to fetch resource containers'));
@@ -38,6 +38,7 @@ export function useResourceContainers(workspaceName: string, type?: string) {
 
   useEffect(() => {
     fetchContainers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceName, type]);
 
   return {
@@ -63,7 +64,7 @@ export function useResourceItems(workspaceName: string, containerId: string) {
     setError(null);
     
     try {
-      const response = await api.resources.listItems(workspaceName, containerId);
+      const response = await api.resources.listItems(workspaceName, containerId ? { container_id: containerId } : undefined);
       setItems(response.items || []);
     } catch (err) {
       setError(err instanceof Error ? err : new Error('Failed to fetch resource items'));
@@ -74,6 +75,7 @@ export function useResourceItems(workspaceName: string, containerId: string) {
 
   useEffect(() => {
     fetchItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceName, containerId]);
 
   return {
@@ -110,6 +112,7 @@ export function useDatabases(workspaceName: string) {
 
   useEffect(() => {
     fetchDatabases();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceName]);
 
   return {
@@ -146,6 +149,7 @@ export function useMCPResources(workspaceName: string) {
 
   useEffect(() => {
     fetchMCPResources();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceName]);
 
   return {
@@ -182,6 +186,7 @@ export function useMCPTools(workspaceName: string) {
 
   useEffect(() => {
     fetchMCPTools();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceName]);
 
   return {
@@ -207,9 +212,10 @@ export function useWebhooks(workspaceName: string) {
     setError(null);
     
     try {
-      const response = await api.webhooks.list(workspaceName);
+      const response = await api.webhooks.list();
       setWebhooks(response.webhooks || []);
     } catch (err) {
+      console.error(err);
       // Expected for placeholder
       setWebhooks([]);
     } finally {
@@ -219,6 +225,7 @@ export function useWebhooks(workspaceName: string) {
 
   useEffect(() => {
     fetchWebhooks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceName]);
 
   return {
@@ -247,6 +254,7 @@ export function useStreams(workspaceName: string) {
       const response = await api.streams.list(workspaceName);
       setStreams(response.streams || []);
     } catch (err) {
+      console.error(err);
       // Expected for placeholder
       setStreams([]);
     } finally {
@@ -256,6 +264,7 @@ export function useStreams(workspaceName: string) {
 
   useEffect(() => {
     fetchStreams();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceName]);
 
   return {

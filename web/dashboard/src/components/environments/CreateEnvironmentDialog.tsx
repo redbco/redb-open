@@ -26,7 +26,7 @@ export function CreateEnvironmentDialog({ workspaceId, onClose, onSuccess }: Cre
     e.preventDefault();
     
     if (!formData.environment_name.trim()) {
-      showToast('Environment name is required', 'error');
+      showToast({ type: 'error', title: 'Validation Error', message: 'Environment name is required' });
       return;
     }
 
@@ -40,12 +40,12 @@ export function CreateEnvironmentDialog({ workspaceId, onClose, onSuccess }: Cre
         environment_priority: formData.environment_priority,
       });
 
-      showToast('Environment created successfully', 'success');
+      showToast({ type: 'success', title: 'Success', message: 'Environment created successfully' });
       onSuccess();
       onClose();
     } catch (error) {
       console.error('Error creating environment:', error);
-      showToast('Failed to create environment', 'error');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to create environment' });
     } finally {
       setIsSubmitting(false);
     }

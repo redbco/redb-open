@@ -1,6 +1,17 @@
 // Package unifiedmodel provides a unified schema representation for all supported database technologies.
 // This package models 165+ database object types across all major paradigms:
 // Relational, Document, Graph, Vector, Key-Value, Columnar, Wide-Column, Search Index, Time-Series, Object Storage
+//
+// Primary Data Containers:
+// - Tables: Tabular Record Sets (Relational, Wide-Column databases)
+// - Collections: Documents (Document Databases like MongoDB)
+// - Nodes: Graph Nodes (Graph Databases like Neo4j)
+// - Relationships: Graph Relationships (Graph Databases)
+// - Embeddings: Vector Embeddings (Vector Databases like Pinecone)
+// - KeyValuePairs: Key-Value Items (Key-Value Stores like Redis)
+// - SearchDocuments: Search Documents (Search Engines like Elasticsearch)
+// - TimeSeriesPoints: Time-Series Data Points (Time-Series Databases like InfluxDB)
+// - Blobs: Binary Large Objects (Object Storage like S3)
 
 package unifiedmodel
 
@@ -35,8 +46,23 @@ const (
 	ObjectTypeEmbedding   ObjectType = "embedding"
 
 	// Search types
-	ObjectTypeSearchIndex ObjectType = "search_index"
-	ObjectTypeDocument    ObjectType = "document"
+	ObjectTypeSearchIndex    ObjectType = "search_index"
+	ObjectTypeDocument       ObjectType = "document"
+	ObjectTypeSearchDocument ObjectType = "search_document"
+
+	// Key-Value types
+	ObjectTypeKeyValue ObjectType = "key_value"
+	ObjectTypeKey      ObjectType = "key"
+
+	// Time-Series types
+	ObjectTypeTimeSeriesPoint ObjectType = "time_series_point"
+	ObjectTypeMetric          ObjectType = "metric"
+	ObjectTypeMeasurement     ObjectType = "measurement"
+
+	// Object Storage types
+	ObjectTypeBlob   ObjectType = "blob"
+	ObjectTypeObject ObjectType = "object"
+	ObjectTypeBucket ObjectType = "bucket"
 
 	// Structural definition objects
 	ObjectTypeColumn   ObjectType = "column"
@@ -138,6 +164,20 @@ const (
 
 // UnifiedModel is a unified model for all database types
 type UnifiedModel struct {
+	// Primary Data Containers
+	Tables           map[string]Table           `json:"tables"`             // Tabular Record Sets (Relational, Wide-Column)
+	Collections      map[string]Collection      `json:"collections"`        // Documents (Document Databases)
+	Nodes            map[string]Node            `json:"nodes"`              // Graph Nodes (Graph Databases)
+	Relationships    map[string]Relationship    `json:"relationships"`      // Graph Relationships (Graph Databases)
+	Embeddings       map[string]Embedding       `json:"embeddings"`         // Vector Embeddings (Vector Databases)
+	KeyValuePairs    map[string]KeyValuePair    `json:"key_value_pairs"`    // Key-Value Items (Key-Value Stores)
+	SearchDocuments  map[string]SearchDocument  `json:"search_documents"`   // Search Documents (Search Engines)
+	TimeSeriesPoints map[string]TimeSeriesPoint `json:"time_series_points"` // Time-Series Data Points (Time-Series Databases)
+	Blobs            map[string]Blob            `json:"blobs"`              // Binary Large Objects (Object Storage)
+
+	// Secondary Data Containers
+	MemoryTables map[string]MemoryTable `json:"memory_tables"`
+
 	// Database Structure Type
 	DatabaseType dbcapabilities.DatabaseType `json:"database_type"`
 
@@ -145,12 +185,6 @@ type UnifiedModel struct {
 	Catalogs  map[string]Catalog  `json:"catalogs"`
 	Databases map[string]Database `json:"databases"`
 	Schemas   map[string]Schema   `json:"schemas"`
-
-	// Primary Data Containers
-	Tables       map[string]Table       `json:"tables"`
-	Collections  map[string]Collection  `json:"collections"`
-	Nodes        map[string]Node        `json:"nodes"`
-	MemoryTables map[string]MemoryTable `json:"memory_tables"`
 
 	// Temporary Data Containers
 	TemporaryTables map[string]TemporaryTable `json:"temporary_tables"`
@@ -173,10 +207,8 @@ type UnifiedModel struct {
 
 	// Specialized Data Containers
 	Vectors           map[string]Vector           `json:"vectors"`
-	Embeddings        map[string]Embedding        `json:"embeddings"`
 	Documents         map[string]Document         `json:"documents"`
 	EmbeddedDocuments map[string]EmbeddedDocument `json:"embedded_documents"`
-	Relationships     map[string]Relationship     `json:"relationships"`
 	Paths             map[string]Path             `json:"paths"`
 
 	// Data Organization Containers
@@ -500,6 +532,58 @@ type Document struct {
 type EmbeddedDocument struct {
 	Name   string         `json:"name"`
 	Fields map[string]any `json:"fields"`
+}
+
+// Primary data container types for different database paradigms
+
+type KeyValuePair struct {
+	Name     string            `json:"name"`               // Key identifier or namespace
+	Key      string            `json:"key"`                // The actual key
+	DataType string            `json:"data_type"`          // string, list, set, sorted_set, hash, stream, etc.
+	TTL      *int64            `json:"ttl,omitempty"`      // Time-to-live in seconds
+	Encoding string            `json:"encoding,omitempty"` // Data encoding (e.g., raw, int, ziplist, hashtable)
+	Labels   map[string]string `json:"labels,omitempty"`
+	Options  map[string]any    `json:"options,omitempty"`
+	Metadata map[string]any    `json:"metadata,omitempty"`
+}
+
+type SearchDocument struct {
+	Name       string            `json:"name"`               // Document identifier or index name
+	DocumentID string            `json:"document_id"`        // Unique document ID
+	Index      string            `json:"index"`              // Index name
+	Type       string            `json:"type,omitempty"`     // Document type (deprecated in newer Elasticsearch)
+	Fields     map[string]Field  `json:"fields"`             // Schema fields
+	Mappings   map[string]any    `json:"mappings,omitempty"` // Field mappings
+	Analyzer   string            `json:"analyzer,omitempty"` // Default analyzer
+	Score      *float64          `json:"score,omitempty"`    // Relevance score (for search results)
+	Labels     map[string]string `json:"labels,omitempty"`
+	Options    map[string]any    `json:"options,omitempty"`
+}
+
+type TimeSeriesPoint struct {
+	Name        string            `json:"name"`                  // Measurement or metric name
+	Timestamp   string            `json:"timestamp"`             // Time point (RFC3339 or epoch)
+	Tags        map[string]string `json:"tags,omitempty"`        // Indexed metadata (dimensions)
+	Fields      map[string]Field  `json:"fields"`                // Actual measurements (values)
+	Aggregation string            `json:"aggregation,omitempty"` // Aggregation function (sum, avg, min, max, count)
+	Retention   string            `json:"retention,omitempty"`   // Retention policy
+	Precision   string            `json:"precision,omitempty"`   // Time precision (ns, us, ms, s, m, h)
+	Labels      map[string]string `json:"labels,omitempty"`
+	Options     map[string]any    `json:"options,omitempty"`
+}
+
+type Blob struct {
+	Name         string            `json:"name"`                    // Object key or blob identifier
+	Bucket       string            `json:"bucket"`                  // Bucket/container name
+	Path         string            `json:"path"`                    // Full path or key
+	Size         int64             `json:"size_bytes,omitempty"`    // Size in bytes
+	ContentType  string            `json:"content_type,omitempty"`  // MIME type
+	ETag         string            `json:"etag,omitempty"`          // Entity tag (hash/version)
+	Metadata     map[string]string `json:"metadata,omitempty"`      // Custom metadata
+	StorageClass string            `json:"storage_class,omitempty"` // Storage tier (e.g., STANDARD, GLACIER)
+	Encryption   string            `json:"encryption,omitempty"`    // Encryption status
+	Labels       map[string]string `json:"labels,omitempty"`
+	Options      map[string]any    `json:"options,omitempty"`
 }
 
 type Relationship struct {
@@ -1270,6 +1354,12 @@ func NewUnifiedModel(dbType dbcapabilities.DatabaseType) *UnifiedModel {
 		Tables:               make(map[string]Table),
 		Collections:          make(map[string]Collection),
 		Nodes:                make(map[string]Node),
+		Relationships:        make(map[string]Relationship),
+		Embeddings:           make(map[string]Embedding),
+		KeyValuePairs:        make(map[string]KeyValuePair),
+		SearchDocuments:      make(map[string]SearchDocument),
+		TimeSeriesPoints:     make(map[string]TimeSeriesPoint),
+		Blobs:                make(map[string]Blob),
 		MemoryTables:         make(map[string]MemoryTable),
 		TemporaryTables:      make(map[string]TemporaryTable),
 		TransientTables:      make(map[string]TransientTable),
@@ -1284,10 +1374,8 @@ func NewUnifiedModel(dbType dbcapabilities.DatabaseType) *UnifiedModel {
 		VectorIndexes:        make(map[string]VectorIndex),
 		SearchIndexes:        make(map[string]SearchIndex),
 		Vectors:              make(map[string]Vector),
-		Embeddings:           make(map[string]Embedding),
 		Documents:            make(map[string]Document),
 		EmbeddedDocuments:    make(map[string]EmbeddedDocument),
-		Relationships:        make(map[string]Relationship),
 		Paths:                make(map[string]Path),
 		Partitions:           make(map[string]Partition),
 		SubPartitions:        make(map[string]SubPartition),

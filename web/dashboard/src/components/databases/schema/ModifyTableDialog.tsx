@@ -110,7 +110,7 @@ export function ModifyTableDialog({ tableName, onClose, onModify }: ModifyTableD
                 {tableComment && (
                   <>
                     {newTableName !== tableName && '\n'}
-                    COMMENT ON TABLE {newTableName !== tableName ? newTableName : tableName} IS '{tableComment}';
+                    COMMENT ON TABLE {newTableName !== tableName ? newTableName : tableName} IS &apos;{tableComment}&apos;;
                   </>
                 )}
               </pre>

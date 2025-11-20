@@ -195,7 +195,7 @@ Examples:
   
   # Remove mapping but keep all rules
   redb mappings remove user-mapping --keep-rules`,
-	Args:  cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		keepRules, _ := cmd.Flags().GetBool("keep-rules")
 		return mappings.RemoveMapping(args[0], keepRules)
@@ -236,6 +236,129 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return mappings.ValidateMapping(args[0])
+	},
+}
+
+// addStreamToTableCmd represents the add-stream-to-table command
+var addStreamToTableCmd = &cobra.Command{
+	Use:   "add-stream-to-table",
+	Short: "Map a stream topic to a database table",
+	Long: `Create a mapping from a stream topic to a database table for real-time ingestion.
+
+Examples:
+  # Map Kafka topic to database table
+  redb mappings add-stream-to-table \
+    --source kafka-prod:orders \
+    --target warehouse.orders_table \
+    --name orders-ingestion \
+    --description "Real-time order ingestion from Kafka"
+  
+  # Auto-generate name and description
+  redb mappings add-stream-to-table \
+    --source kafka-prod:user_events \
+    --target analytics.user_events`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		source, _ := cmd.Flags().GetString("source")
+		target, _ := cmd.Flags().GetString("target")
+		name, _ := cmd.Flags().GetString("name")
+		description, _ := cmd.Flags().GetString("description")
+		policyID, _ := cmd.Flags().GetString("policy-id")
+
+		// Parse source (integration:topic)
+		sourceIntegration, sourceTopic, err := mappings.ParseStreamSource(source)
+		if err != nil {
+			return err
+		}
+
+		// Parse target (database.table)
+		targetDatabase, targetTable, err := mappings.ParseSourceTarget(target)
+		if err != nil {
+			return err
+		}
+
+		return mappings.AddStreamToTableMapping(sourceIntegration, sourceTopic, targetDatabase, targetTable, name, description, policyID)
+	},
+}
+
+// addTableToStreamCmd represents the add-table-to-stream command
+var addTableToStreamCmd = &cobra.Command{
+	Use:   "add-table-to-stream",
+	Short: "Map a database table to a stream topic",
+	Long: `Create a mapping from a database table to a stream topic for CDC publishing.
+
+Examples:
+  # Publish table changes to Kafka
+  redb mappings add-table-to-stream \
+    --source mydb.orders \
+    --target kafka-prod:orders_cdc \
+    --name orders-cdc-stream \
+    --description "Publish order changes to Kafka"
+  
+  # Auto-generate name and description
+  redb mappings add-table-to-stream \
+    --source mydb.users \
+    --target kafka-prod:users_cdc`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		source, _ := cmd.Flags().GetString("source")
+		target, _ := cmd.Flags().GetString("target")
+		name, _ := cmd.Flags().GetString("name")
+		description, _ := cmd.Flags().GetString("description")
+		policyID, _ := cmd.Flags().GetString("policy-id")
+
+		// Parse source (database.table)
+		sourceDatabase, sourceTable, err := mappings.ParseSourceTarget(source)
+		if err != nil {
+			return err
+		}
+
+		// Parse target (integration:topic)
+		targetIntegration, targetTopic, err := mappings.ParseStreamSource(target)
+		if err != nil {
+			return err
+		}
+
+		return mappings.AddTableToStreamMapping(sourceDatabase, sourceTable, targetIntegration, targetTopic, name, description, policyID)
+	},
+}
+
+// addStreamToStreamCmd represents the add-stream-to-stream command
+var addStreamToStreamCmd = &cobra.Command{
+	Use:   "add-stream-to-stream",
+	Short: "Map one stream topic to another",
+	Long: `Create a mapping between two stream topics for transformation/routing.
+
+Examples:
+  # Route messages from one Kafka topic to another
+  redb mappings add-stream-to-stream \
+    --source kafka-prod:raw_events \
+    --target kafka-prod:processed_events \
+    --name event-processing \
+    --description "Process and route events"
+  
+  # Bridge between different platforms
+  redb mappings add-stream-to-stream \
+    --source kafka-prod:orders \
+    --target pubsub-prod:orders`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		source, _ := cmd.Flags().GetString("source")
+		target, _ := cmd.Flags().GetString("target")
+		name, _ := cmd.Flags().GetString("name")
+		description, _ := cmd.Flags().GetString("description")
+		policyID, _ := cmd.Flags().GetString("policy-id")
+
+		// Parse source (integration:topic)
+		sourceIntegration, sourceTopic, err := mappings.ParseStreamSource(source)
+		if err != nil {
+			return err
+		}
+
+		// Parse target (integration:topic)
+		targetIntegration, targetTopic, err := mappings.ParseStreamSource(target)
+		if err != nil {
+			return err
+		}
+
+		return mappings.AddStreamToStreamMapping(sourceIntegration, sourceTopic, targetIntegration, targetTopic, name, description, policyID)
 	},
 }
 
@@ -296,10 +419,38 @@ func init() {
 	listRulesCmd.Flags().String("mapping", "", "Mapping name (required)")
 	listRulesCmd.MarkFlagRequired("mapping")
 
+	// Add stream mapping command flags
+	addStreamToTableCmd.Flags().String("source", "", "Source stream in format 'integration:topic' (required)")
+	addStreamToTableCmd.Flags().String("target", "", "Target table in format 'database.table' (required)")
+	addStreamToTableCmd.Flags().String("name", "", "Mapping name (optional, auto-generated if not provided)")
+	addStreamToTableCmd.Flags().String("description", "", "Mapping description (optional, auto-generated if not provided)")
+	addStreamToTableCmd.Flags().String("policy-id", "", "Policy ID (optional)")
+	addStreamToTableCmd.MarkFlagRequired("source")
+	addStreamToTableCmd.MarkFlagRequired("target")
+
+	addTableToStreamCmd.Flags().String("source", "", "Source table in format 'database.table' (required)")
+	addTableToStreamCmd.Flags().String("target", "", "Target stream in format 'integration:topic' (required)")
+	addTableToStreamCmd.Flags().String("name", "", "Mapping name (optional, auto-generated if not provided)")
+	addTableToStreamCmd.Flags().String("description", "", "Mapping description (optional, auto-generated if not provided)")
+	addTableToStreamCmd.Flags().String("policy-id", "", "Policy ID (optional)")
+	addTableToStreamCmd.MarkFlagRequired("source")
+	addTableToStreamCmd.MarkFlagRequired("target")
+
+	addStreamToStreamCmd.Flags().String("source", "", "Source stream in format 'integration:topic' (required)")
+	addStreamToStreamCmd.Flags().String("target", "", "Target stream in format 'integration:topic' (required)")
+	addStreamToStreamCmd.Flags().String("name", "", "Mapping name (optional, auto-generated if not provided)")
+	addStreamToStreamCmd.Flags().String("description", "", "Mapping description (optional, auto-generated if not provided)")
+	addStreamToStreamCmd.Flags().String("policy-id", "", "Policy ID (optional)")
+	addStreamToStreamCmd.MarkFlagRequired("source")
+	addStreamToStreamCmd.MarkFlagRequired("target")
+
 	// Add subcommands to mappings command
 	mappingsCmd.AddCommand(listMappingsCmd)
 	mappingsCmd.AddCommand(showMappingCmd)
 	mappingsCmd.AddCommand(addMappingCmd)
+	mappingsCmd.AddCommand(addStreamToTableCmd)
+	mappingsCmd.AddCommand(addTableToStreamCmd)
+	mappingsCmd.AddCommand(addStreamToStreamCmd)
 	mappingsCmd.AddCommand(copyDataCmd)
 	mappingsCmd.AddCommand(validateMappingCmd)
 	mappingsCmd.AddCommand(modifyRuleCmd)

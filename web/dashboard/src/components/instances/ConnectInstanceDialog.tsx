@@ -27,7 +27,7 @@ export function ConnectInstanceDialog({ workspaceId, onClose, onSuccess }: Conne
     port: 5432,
     username: '',
     password: '',
-    node_id: null,
+    node_id: undefined,
     enabled: true,
     ssl: false,
     ssl_mode: 'disable',

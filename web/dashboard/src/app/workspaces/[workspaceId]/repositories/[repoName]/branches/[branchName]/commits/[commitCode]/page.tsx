@@ -54,7 +54,7 @@ export default function CommitSchemaPage({ params }: CommitSchemaPageProps) {
 
   const handleDeploySchema = () => {
     // TODO: Implement deploy schema functionality
-    showToast('Deploy schema functionality coming soon', 'info');
+    showToast({ type: 'info', title: 'Coming Soon', message: 'Deploy schema functionality coming soon' });
   };
 
   // Parse schema structure from commit
@@ -297,7 +297,7 @@ export default function CommitSchemaPage({ params }: CommitSchemaPageProps) {
               Schema Editing Coming Soon
             </p>
             <p className="text-sm text-blue-800 dark:text-blue-200 mt-1">
-              In a future release, you'll be able to modify this schema directly. 
+              In a future release, you&apos;ll be able to modify this schema directly. 
               Any changes will automatically create a new commit, preserving the version history.
             </p>
           </div>

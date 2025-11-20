@@ -330,6 +330,10 @@ func (s *Server) setupRoutes() {
 	mappings.HandleFunc("", s.mappingHandler.AddMapping).Methods(http.MethodPost)
 	mappings.HandleFunc("/database", s.mappingHandler.AddDatabaseMapping).Methods(http.MethodPost)
 	mappings.HandleFunc("/table", s.mappingHandler.AddTableMapping).Methods(http.MethodPost)
+	mappings.HandleFunc("/table-with-deploy", s.mappingHandler.AddTableMappingWithDeploy).Methods(http.MethodPost)
+	mappings.HandleFunc("/stream-to-table", s.mappingHandler.AddStreamToTableMapping).Methods(http.MethodPost)
+	mappings.HandleFunc("/table-to-stream", s.mappingHandler.AddTableToStreamMapping).Methods(http.MethodPost)
+	mappings.HandleFunc("/stream-to-stream", s.mappingHandler.AddStreamToStreamMapping).Methods(http.MethodPost)
 	mappings.HandleFunc("/{mapping_name}", s.mappingHandler.ShowMapping).Methods(http.MethodGet)
 	mappings.HandleFunc("/{mapping_name}", s.mappingHandler.ModifyMapping).Methods(http.MethodPut)
 	mappings.HandleFunc("/{mapping_name}", s.mappingHandler.DeleteMapping).Methods(http.MethodDelete)
@@ -398,6 +402,7 @@ func (s *Server) setupRoutes() {
 	resources.HandleFunc("/containers", s.resourceHandler.ListResourceContainers).Methods(http.MethodGet)
 	resources.HandleFunc("/containers/{container_id}", s.resourceHandler.ShowResourceContainer).Methods(http.MethodGet)
 	resources.HandleFunc("/containers/{container_id}/items", s.resourceHandler.ListResourceItemsForContainer).Methods(http.MethodGet)
+	resources.HandleFunc("/container-stats", s.resourceHandler.GetContainerStats).Methods(http.MethodGet)
 	resources.HandleFunc("/items", s.resourceHandler.ListResourceItems).Methods(http.MethodGet)
 	resources.HandleFunc("/items/{item_id}", s.resourceHandler.ModifyResourceItem).Methods(http.MethodPatch)
 

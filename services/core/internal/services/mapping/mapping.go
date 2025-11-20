@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -1668,9 +1669,114 @@ type MappingFilter struct {
 	Updated          time.Time
 }
 
+// IsStreamURI checks if a URI represents a stream resource
+func IsStreamURI(uri string) bool {
+	return strings.HasPrefix(uri, "stream://")
+}
+
+// ParseStreamURI parses a stream URI into its components
+// Format: stream://{workspace_id}/{platform}/{integration_name}/{topic_name}
+func ParseStreamURI(uri string) (workspaceID, platform, integrationName, topicName string, err error) {
+	if !IsStreamURI(uri) {
+		return "", "", "", "", fmt.Errorf("not a stream URI: %s", uri)
+	}
+
+	// Remove stream:// prefix
+	parts := strings.TrimPrefix(uri, "stream://")
+	components := strings.Split(parts, "/")
+
+	if len(components) < 4 {
+		return "", "", "", "", fmt.Errorf("invalid stream URI format, expected stream://{workspace}/{platform}/{integration}/{topic}, got: %s", uri)
+	}
+
+	return components[0], components[1], components[2], components[3], nil
+}
+
+// BuildStreamURI constructs a stream URI from its components
+func BuildStreamURI(workspaceID, platform, integrationName, topicName string) string {
+	return fmt.Sprintf("stream://%s/%s/%s/%s", workspaceID, platform, integrationName, topicName)
+}
+
+// GetStreamContainerByTopic retrieves a stream container by topic name and integration
+func (s *Service) GetStreamContainerByTopic(ctx context.Context, workspaceID, integrationName, topicName string) (*ResourceContainer, error) {
+	s.logger.Infof("Resolving stream container for workspace: %s, integration: %s, topic: %s", workspaceID, integrationName, topicName)
+
+	query := `
+		SELECT rc.container_id, rc.tenant_id, rc.workspace_id, rc.resource_uri, rc.protocol, rc.scope, 
+		       rc.object_type, rc.object_name, rc.database_id, rc.instance_id, rc.integration_id, 
+		       rc.mcpserver_id, rc.connected_to_node_id, rc.owner_id,
+		       rc.status, rc.status_message, rc.last_seen, rc.online, 
+		       rc.container_metadata, rc.enriched_metadata, rc.created, rc.updated
+		FROM resource_containers rc
+		INNER JOIN integrations i ON rc.integration_id = i.integration_id
+		WHERE rc.workspace_id = $1 
+		  AND i.integration_name = $2
+		  AND rc.object_name = $3
+		  AND rc.protocol = 'stream'
+		  AND rc.object_type = 'topic'
+	`
+
+	var container ResourceContainer
+	var containerMetadataBytes, enrichedMetadataBytes []byte
+	err := s.db.Pool().QueryRow(ctx, query, workspaceID, integrationName, topicName).Scan(
+		&container.ContainerID,
+		&container.TenantID,
+		&container.WorkspaceID,
+		&container.ResourceURI,
+		&container.Protocol,
+		&container.Scope,
+		&container.ObjectType,
+		&container.ObjectName,
+		&container.DatabaseID,
+		&container.InstanceID,
+		&container.IntegrationID,
+		&container.MCPServerID,
+		&container.ConnectedToNodeID,
+		&container.OwnerID,
+		&container.Status,
+		&container.StatusMessage,
+		&container.LastSeen,
+		&container.Online,
+		&containerMetadataBytes,
+		&enrichedMetadataBytes,
+		&container.Created,
+		&container.Updated,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("stream container not found for integration '%s' and topic '%s'", integrationName, topicName)
+		}
+		return nil, fmt.Errorf("failed to query stream container: %w", err)
+	}
+
+	// Unmarshal metadata
+	if len(containerMetadataBytes) > 0 {
+		if err := json.Unmarshal(containerMetadataBytes, &container.ContainerMetadata); err != nil {
+			s.logger.Warnf("Failed to unmarshal container metadata: %v", err)
+		}
+	}
+
+	if len(enrichedMetadataBytes) > 0 {
+		if err := json.Unmarshal(enrichedMetadataBytes, &container.EnrichedMetadata); err != nil {
+			s.logger.Warnf("Failed to unmarshal enriched metadata: %v", err)
+		}
+	}
+
+	return &container, nil
+}
+
 // GetContainerByURI resolves a container ID from a URI
 func (s *Service) GetContainerByURI(ctx context.Context, uri string) (*ResourceContainer, error) {
 	s.logger.Infof("Resolving container by URI: %s", uri)
+
+	// Handle stream URIs specially
+	if IsStreamURI(uri) {
+		workspaceID, _, integrationName, topicName, err := ParseStreamURI(uri)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse stream URI: %w", err)
+		}
+		return s.GetStreamContainerByTopic(ctx, workspaceID, integrationName, topicName)
+	}
 
 	query := `
 		SELECT container_id, tenant_id, workspace_id, resource_uri, protocol, scope, object_type, object_name,
@@ -2369,4 +2475,105 @@ func (s *Service) ReorderFilters(ctx context.Context, mappingID string, filterOr
 	}
 
 	return nil
+}
+
+// CreateMappingFilter creates a new mapping filter
+func (s *Service) CreateMappingFilter(ctx context.Context, mappingID, filterType string, filterExpression map[string]interface{}, filterOrder int, filterOperator string) error {
+	s.logger.Infof("Creating mapping filter for mapping %s: type=%s, order=%d", mappingID, filterType, filterOrder)
+
+	// Marshal filter expression
+	filterExprBytes, err := json.Marshal(filterExpression)
+	if err != nil {
+		return fmt.Errorf("failed to marshal filter expression: %w", err)
+	}
+
+	query := `
+		INSERT INTO mapping_filters (mapping_id, filter_type, filter_expression, filter_order, filter_operator)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING filter_id
+	`
+
+	var filterID string
+	err = s.db.Pool().QueryRow(ctx, query, mappingID, filterType, filterExprBytes, filterOrder, filterOperator).Scan(&filterID)
+	if err != nil {
+		return fmt.Errorf("failed to create mapping filter: %w", err)
+	}
+
+	s.logger.Infof("Successfully created mapping filter: %s", filterID)
+	return nil
+}
+
+// GetItemsForContainer retrieves all resource items for a given container
+func (s *Service) GetItemsForContainer(ctx context.Context, containerID string) ([]*ResourceItem, error) {
+	s.logger.Infof("Retrieving items for container: %s", containerID)
+
+	query := `
+		SELECT item_id, container_id, tenant_id, workspace_id, resource_uri, protocol, scope,
+		       item_type, item_name, item_display_name, item_path, data_type, unified_data_type,
+		       is_nullable, is_primary_key, is_unique, is_indexed, is_required, is_array,
+		       array_dimensions, default_value, max_length, precision, scale,
+		       is_privileged, privileged_classification, detection_confidence, detection_method,
+		       created, updated
+		FROM resource_items
+		WHERE container_id = $1
+		ORDER BY ordinal_position, item_name
+	`
+
+	rows, err := s.db.Pool().Query(ctx, query, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query resource items: %w", err)
+	}
+	defer rows.Close()
+
+	items := []*ResourceItem{}
+	for rows.Next() {
+		var item ResourceItem
+		var itemPath []string
+
+		err := rows.Scan(
+			&item.ItemID,
+			&item.ContainerID,
+			&item.TenantID,
+			&item.WorkspaceID,
+			&item.ResourceURI,
+			&item.Protocol,
+			&item.Scope,
+			&item.ItemType,
+			&item.ItemName,
+			&item.ItemDisplayName,
+			&itemPath,
+			&item.DataType,
+			&item.UnifiedDataType,
+			&item.IsNullable,
+			&item.IsPrimaryKey,
+			&item.IsUnique,
+			&item.IsIndexed,
+			&item.IsRequired,
+			&item.IsArray,
+			&item.ArrayDimensions,
+			&item.DefaultValue,
+			&item.MaxLength,
+			&item.Precision,
+			&item.Scale,
+			&item.IsPrivileged,
+			&item.PrivilegedClassification,
+			&item.DetectionConfidence,
+			&item.DetectionMethod,
+			&item.Created,
+			&item.Updated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan resource item: %w", err)
+		}
+
+		item.ItemPath = itemPath
+		items = append(items, &item)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating resource items: %w", err)
+	}
+
+	s.logger.Infof("Retrieved %d items for container %s", len(items), containerID)
+	return items, nil
 }

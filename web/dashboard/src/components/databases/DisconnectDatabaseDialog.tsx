@@ -117,7 +117,7 @@ export function DisconnectDatabaseDialog({
               Disconnect Database
             </h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Disconnect "{database.database_name}" from the system
+              Disconnect &quot;{database.database_name}&quot; from the system
             </p>
           </div>
           <button
@@ -242,7 +242,7 @@ export function DisconnectDatabaseDialog({
                       />
                       <div className="flex-1">
                         <div className="font-medium text-foreground">
-                          Delete branch "{metadata.attached_branch_name}"
+                          Delete branch &quot;{metadata.attached_branch_name}&quot;
                           {!canDeleteBranch && (
                             <span className="ml-2 text-xs text-muted-foreground">(Not available)</span>
                           )}
@@ -268,7 +268,7 @@ export function DisconnectDatabaseDialog({
                       />
                       <div className="flex-1">
                         <div className="font-medium text-foreground">
-                          Delete repository "{metadata.attached_repo_name}"
+                          Delete repository &quot;{metadata.attached_repo_name}&quot;
                           {!canDeleteRepo && (
                             <span className="ml-2 text-xs text-muted-foreground">(Not available)</span>
                           )}

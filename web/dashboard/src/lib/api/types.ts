@@ -15,8 +15,31 @@ export interface ApiResponse<T> {
   success?: boolean;
 }
 
-// Resource Types
-export type ResourceType = 'database' | 'table' | 'mcp-resource' | 'mcp-tool' | 'webhook' | 'stream';
+// Container Types - specific data storage paradigms
+export type ContainerType = 
+  | 'tabular-record-set'    // Relational database tables
+  | 'document'              // Document stores (MongoDB, etc.)
+  | 'keyvalue-item'         // Key-value stores (Redis, DynamoDB)
+  | 'graph-node'            // Graph database nodes
+  | 'graph-relationship'    // Graph database relationships
+  | 'search-document'       // Search indices (Elasticsearch, etc.)
+  | 'vector'                // Vector embeddings (Milvus, Pinecone, etc.)
+  | 'timeseries-point'      // Time-series data points
+  | 'blob-object';          // Object/blob storage
+
+// Endpoint Types - external endpoints that can be sources or targets
+export type EndpointType =
+  | 'stream'                // Data streams (Kafka, etc.)
+  | 'webhook'               // Webhook endpoints
+  | 'mcp-resource'          // MCP resource (target only)
+  | 'mcp-tool';             // MCP tool (target only)
+
+// Resource Types - all possible resource types including legacy
+export type ResourceType = ContainerType | EndpointType | 'database' | 'table';
+
+// Legacy type for backward compatibility - maps to tabular-record-set
+export const LEGACY_TABLE_TYPE = 'table';
+export const DEFAULT_CONTAINER_TYPE = 'tabular-record-set';
 
 export interface ResourceContainer {
   container_id: string;
@@ -117,8 +140,16 @@ export interface ResourceSelection {
   resourceName: string;
   databaseId?: string;
   databaseName?: string;
+  databaseType?: string;      // Database paradigm (postgres, mongodb, etc.)
+  databaseParadigm?: string;  // Data paradigm (relational, document, etc.)
   tableName?: string;
+  containerName?: string;     // Generic container name (table, collection, etc.)
+  integrationName?: string;   // For stream resources
+  topicName?: string;         // For stream resources
   uri: string;
+  // Additional metadata for container types
+  containerType?: ContainerType;
+  isTargetOnly?: boolean;     // For MCP resources/tools that can only be targets
 }
 
 // DataProduct Types
@@ -202,6 +233,23 @@ export interface DeleteDataProductResponse {
 
 export interface ShowResourceContainerResponse {
   container: ResourceContainer;
+}
+
+export interface ContainerStatEntry {
+  source_name: string;
+  container_name: string;
+  container_type: string;
+  item_count: number;
+  protocol: string;
+  container_id: string;
+  source_id: string;
+}
+
+export interface GetContainerStatsResponse {
+  success: boolean;
+  message: string;
+  containers: ContainerStatEntry[];
+  total_count: number;
 }
 
 // Auth Types
@@ -378,6 +426,11 @@ export interface Stream {
   status: string;
   created?: string;
   updated?: string;
+  
+  // Aliases for backward compatibility and mapping support
+  // These allow the same code to work with both API formats
+  integration_name?: string; // Alias for stream_platform
+  topic_name?: string;        // Alias for stream_name
 }
 
 export interface TopicInfo {
@@ -435,7 +488,8 @@ export interface DisconnectStreamRequest {
 }
 
 export interface DisconnectStreamResponse {
-  // 204 No Content - empty response
+  success?: boolean;
+  message?: string;
 }
 
 export interface ListTopicsResponse {
@@ -788,12 +842,32 @@ export interface ShowMappingResponse {
 export interface CreateMappingRequest {
   mapping_name: string;
   mapping_description: string;
-  mapping_source_type: string;
-  mapping_target_type: string;
-  mapping_source: string;
-  mapping_target: string;
+  scope: string;
+  source: string;
+  target: string;
   policy_id?: string;
   map_object?: any;
+}
+
+export interface CreateMappingWithDeployRequest {
+  mapping_name: string;
+  mapping_description: string;
+  source_database_name: string;
+  source_table_name: string;
+  target_database_name: string;
+  target_table_name: string;
+  policy_id?: string;
+}
+
+export interface CreateMappingWithDeployResponse {
+  message: string;
+  success: boolean;
+  status: string;
+  mapping: Mapping;
+  deployment_info: {
+    table_deployed: boolean;
+    types_deployed: string[];
+  };
 }
 
 export interface CreateDatabaseMappingRequest {

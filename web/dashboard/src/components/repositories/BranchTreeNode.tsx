@@ -36,9 +36,9 @@ export function BranchTreeNode({
     return dateB - dateA;
   });
 
-  // HEAD commit is the one with is_head flag or the first in sorted list
-  const headCommit = sortedCommits.find((c) => c.is_head) || sortedCommits[0];
-  const previousCommits = sortedCommits.filter((c) => c.commit_id !== headCommit?.commit_id);
+  // HEAD commit is the first in sorted list
+  const headCommit = sortedCommits[0];
+  const previousCommits = sortedCommits.slice(1);
 
   // Determine if HEAD commit is deployed (assume HEAD of attached branch is deployed)
   const isHeadDeployed = !!branch.attached_database_id;

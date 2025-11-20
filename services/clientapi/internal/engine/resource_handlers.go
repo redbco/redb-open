@@ -73,6 +73,25 @@ type ListResourceItemsResponse struct {
 	TotalCount int32          `json:"total_count,omitempty"`
 }
 
+// ContainerStatEntry represents a container statistics entry
+type ContainerStatEntry struct {
+	SourceName    string `json:"source_name"`
+	ContainerName string `json:"container_name"`
+	ContainerType string `json:"container_type"`
+	ItemCount     int32  `json:"item_count"`
+	Protocol      string `json:"protocol"`
+	ContainerID   string `json:"container_id"`
+	SourceID      string `json:"source_id"`
+}
+
+// GetContainerStatsResponse represents the response for container statistics
+type GetContainerStatsResponse struct {
+	Success    bool                 `json:"success"`
+	Message    string               `json:"message"`
+	Containers []ContainerStatEntry `json:"containers"`
+	TotalCount int32                `json:"total_count"`
+}
+
 // ListResourceContainers handles GET /{tenant_url}/api/v1/workspaces/{workspace_name}/resources/containers
 func (rh *ResourceHandlers) ListResourceContainers(w http.ResponseWriter, r *http.Request) {
 	rh.engine.TrackOperation()
@@ -633,4 +652,79 @@ func (rh *ResourceHandlers) handleGRPCError(w http.ResponseWriter, err error, me
 	default:
 		rh.writeErrorResponse(w, http.StatusInternalServerError, message, st.Message())
 	}
+}
+
+// GetContainerStats handles GET /{tenant_url}/api/v1/workspaces/{workspace_name}/resources/container-stats
+func (rh *ResourceHandlers) GetContainerStats(w http.ResponseWriter, r *http.Request) {
+	rh.engine.TrackOperation()
+	defer rh.engine.UntrackOperation()
+
+	// Extract path parameters
+	vars := mux.Vars(r)
+	tenantURL := vars["tenant_url"]
+	workspaceName := vars["workspace_name"]
+
+	if tenantURL == "" {
+		rh.writeErrorResponse(w, http.StatusBadRequest, "tenant_url is required", "")
+		return
+	}
+
+	if workspaceName == "" {
+		rh.writeErrorResponse(w, http.StatusBadRequest, "workspace_name is required", "")
+		return
+	}
+
+	// Get tenant_id from authenticated profile
+	profile, ok := r.Context().Value(profileContextKey).(*securityv1.Profile)
+	if !ok || profile == nil {
+		rh.writeErrorResponse(w, http.StatusInternalServerError, "Profile not found in context", "")
+		return
+	}
+
+	// Log request
+	if rh.engine.logger != nil {
+		rh.engine.logger.Infof("Get container stats request for workspace: %s, tenant: %s, user: %s", workspaceName, profile.TenantId, profile.UserId)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Call core service gRPC
+	grpcReq := &corev1.GetContainerStatsRequest{
+		WorkspaceId: workspaceName,
+	}
+
+	grpcResp, err := rh.engine.resourceClient.GetContainerStats(ctx, grpcReq)
+	if err != nil {
+		rh.handleGRPCError(w, err, "Failed to get container statistics")
+		return
+	}
+
+	// Convert gRPC response to REST response
+	containers := make([]ContainerStatEntry, len(grpcResp.Containers))
+	for i, container := range grpcResp.Containers {
+		containers[i] = ContainerStatEntry{
+			SourceName:    container.SourceName,
+			ContainerName: container.ContainerName,
+			ContainerType: container.ContainerType,
+			ItemCount:     container.ItemCount,
+			Protocol:      container.Protocol,
+			ContainerID:   container.ContainerId,
+			SourceID:      container.SourceId,
+		}
+	}
+
+	response := GetContainerStatsResponse{
+		Success:    grpcResp.Success,
+		Message:    grpcResp.Message,
+		Containers: containers,
+		TotalCount: grpcResp.TotalCount,
+	}
+
+	if rh.engine.logger != nil {
+		rh.engine.logger.Infof("Successfully retrieved statistics for %d containers for workspace: %s", len(containers), workspaceName)
+	}
+
+	rh.writeJSONResponse(w, http.StatusOK, response)
 }

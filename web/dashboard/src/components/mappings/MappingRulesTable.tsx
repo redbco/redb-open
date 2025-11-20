@@ -30,7 +30,7 @@ export function MappingRulesTable({ rules, isLoading, onDelete }: MappingRulesTa
         <Activity className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
         <h3 className="text-xl font-semibold text-foreground mb-2">No Mapping Rules</h3>
         <p className="text-muted-foreground">
-          This mapping doesn't have any rules yet. Add rules to define column mappings.
+          This mapping doesn&apos;t have any rules yet. Add rules to define column mappings.
         </p>
       </div>
     );

@@ -63,7 +63,7 @@ func AddMapping(scope, source, target, name, description, policyID string, clean
 	var err error
 
 	// Parse source
-	sourceDB, sourceTable, err := parseSourceTarget(source)
+	sourceDB, sourceTable, err := ParseSourceTarget(source)
 	if err != nil {
 		return fmt.Errorf("invalid source format: %v", err)
 	}
@@ -77,7 +77,7 @@ func AddMapping(scope, source, target, name, description, policyID string, clean
 		targetTable = "" // MCP targets don't have table names
 	} else {
 		// Parse database target
-		targetDB, targetTable, err = parseSourceTarget(target)
+		targetDB, targetTable, err = ParseSourceTarget(target)
 		if err != nil {
 			return fmt.Errorf("invalid target format: %v", err)
 		}
@@ -155,8 +155,8 @@ func AddMapping(scope, source, target, name, description, policyID string, clean
 	return nil
 }
 
-// parseSourceTarget parses database[.table] format
-func parseSourceTarget(input string) (database, table string, err error) {
+// ParseSourceTarget parses database[.table] format (exported for use in cmd package)
+func ParseSourceTarget(input string) (database, table string, err error) {
 	if input == "" {
 		return "", "", fmt.Errorf("source/target cannot be empty")
 	}

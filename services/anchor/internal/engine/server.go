@@ -442,6 +442,35 @@ func (s *Server) GetDatabaseSchema(ctx context.Context, req *pb.GetDatabaseSchem
 	}, nil
 }
 
+func (s *Server) RefreshDatabaseDiscovery(ctx context.Context, req *pb.RefreshDatabaseDiscoveryRequest) (*pb.RefreshDatabaseDiscoveryResponse, error) {
+	defer s.trackOperation()()
+
+	s.engine.logger.Infof("Refreshing database discovery for database: %s", req.DatabaseId)
+
+	// Delegate to the schema watcher to perform the discovery refresh
+	containersCreated, itemsCreated, err := s.engine.schemaWatcher.RefreshResourceRegistry(ctx, req.DatabaseId)
+	if err != nil {
+		return &pb.RefreshDatabaseDiscoveryResponse{
+			Success:    false,
+			Message:    fmt.Sprintf("Failed to refresh discovery: %v", err),
+			DatabaseId: req.DatabaseId,
+			Status:     commonv1.Status_STATUS_ERROR,
+		}, nil
+	}
+
+	s.engine.logger.Infof("Successfully refreshed discovery for database %s: %d containers, %d items created",
+		req.DatabaseId, containersCreated, itemsCreated)
+
+	return &pb.RefreshDatabaseDiscoveryResponse{
+		Success:           true,
+		Message:           fmt.Sprintf("Successfully refreshed discovery for database %s", req.DatabaseId),
+		DatabaseId:        req.DatabaseId,
+		Status:            commonv1.Status_STATUS_SUCCESS,
+		ContainersCreated: int32(containersCreated),
+		ItemsCreated:      int32(itemsCreated),
+	}, nil
+}
+
 func (s *Server) DeployDatabaseSchema(ctx context.Context, req *pb.DeployDatabaseSchemaRequest) (*pb.DeployDatabaseSchemaResponse, error) {
 	defer s.trackOperation()()
 
@@ -1860,3 +1889,22 @@ func (s *Server) StreamCDCEvents(req *pb.StreamCDCEventsRequest, stream pb.Ancho
 	defer s.trackOperation()()
 	return s.engine.StreamCDCEvents(req, stream)
 }
+
+// extractContainerURIFromItemURI extracts the container URI from an item URI
+func extractContainerURIFromItemURI(itemURI string) string {
+	parts := strings.Split(itemURI, "/")
+
+	for i := 0; i < len(parts)-2; i++ {
+		segment := parts[i]
+		if segment == "table" || segment == "collection" || segment == "view" ||
+			segment == "materialized_view" || segment == "graph_node" ||
+			segment == "graph_edge" || segment == "topic" || segment == "stream" {
+			if i+1 < len(parts) {
+				return strings.Join(parts[:i+2], "/")
+			}
+		}
+	}
+
+	return itemURI
+}
+

@@ -1,11 +1,13 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ChevronRight } from 'lucide-react';
 import { ResourceType, ResourceSelection } from '@/lib/api/types';
 import { ResourceTypeSelector } from './ResourceTypeSelector';
 import { useDatabases, useMCPResources, useMCPTools, useWebhooks, useStreams } from '@/lib/hooks/useResources';
 import { useDatabaseSchemaInfo } from '@/lib/hooks/useDatabaseSchemaInfo';
+import { useDatabaseCapabilities } from '@/lib/hooks/useDatabaseCapabilities';
+import { detectContainerType } from '@/lib/utils/container-type-detector';
 import { buildDatabaseURI, buildTableURI, buildMCPResourceURI, buildMCPToolURI, buildWebhookURI, buildStreamURI } from '@/lib/utils/uri-builder';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
@@ -17,6 +19,8 @@ interface ResourcePickerProps {
   placeholder?: string;
   allowedTypes?: ResourceType[];
   disabled?: boolean;
+  isTargetSelector?: boolean; // Indicates this is selecting a target (allows MCP resources/tools)
+  enableStatsFiltering?: boolean; // Show stats and disable types with no containers
 }
 
 export function ResourcePicker({
@@ -27,10 +31,15 @@ export function ResourcePicker({
   placeholder = 'Select a resource',
   allowedTypes,
   disabled = false,
+  isTargetSelector = false,
+  enableStatsFiltering = false,
 }: ResourcePickerProps) {
   const [selectedType, setSelectedType] = useState<ResourceType | null>(value?.type || null);
   const [selectedDatabase, setSelectedDatabase] = useState<string | null>(null);
+  const [selectedDatabaseType, setSelectedDatabaseType] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
+  const [selectedIntegration, setSelectedIntegration] = useState<string | null>(null);
+  const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
 
   // Fetch resources based on type
   const { databases, isLoading: loadingDatabases } = useDatabases(workspaceId);
@@ -45,13 +54,22 @@ export function ResourcePicker({
     selectedDatabase || ''
   );
 
+  // Fetch database capabilities for paradigm detection
+  const { capabilities } = useDatabaseCapabilities(selectedDatabaseType || undefined);
+
   // Update selectedDatabase when value changes externally
   useEffect(() => {
-    if (value?.type === 'database' || value?.type === 'table') {
+    if (value?.type === 'database' || value?.type === 'table' || value?.containerType) {
       setSelectedDatabase(value.databaseName || null);
-      if (value.type === 'table') {
-        setSelectedTable(value.tableName || null);
+      setSelectedDatabaseType(value.databaseType || null);
+      if (value.type === 'table' || value.containerType) {
+        setSelectedTable(value.tableName || value.containerName || null);
       }
+    } else if (value?.type === 'stream') {
+      // Extract integration and topic from stream resource
+      const streamData = value as any;
+      setSelectedIntegration(streamData.integrationName || null);
+      setSelectedTopic(streamData.topicName || null);
     }
   }, [value]);
 
@@ -59,11 +77,14 @@ export function ResourcePicker({
     setSelectedType(type);
     setSelectedDatabase(null);
     setSelectedTable(null);
+    setSelectedIntegration(null);
+    setSelectedTopic(null);
     onChange(null);
   };
 
-  const handleDatabaseSelect = (databaseId: string, databaseName: string) => {
+  const handleDatabaseSelect = (databaseId: string, databaseName: string, dbType?: string) => {
     setSelectedDatabase(databaseName);
+    setSelectedDatabaseType(dbType || null);
     setSelectedTable(null);
 
     if (selectedType === 'database') {
@@ -73,6 +94,7 @@ export function ResourcePicker({
         resourceName: databaseName,
         databaseId,
         databaseName,
+        databaseType: dbType,
         uri: buildDatabaseURI(databaseId),
       });
     }
@@ -84,13 +106,23 @@ export function ResourcePicker({
     const database = databases.find((db) => db.database_name === selectedDatabase);
     if (!database) return;
 
+    // Detect container type based on database paradigm
+    const dbType = database.database_type || selectedDatabaseType;
+    const paradigm = capabilities?.paradigms?.[0];
+    const containerType = detectContainerType(dbType || undefined, paradigm);
+
+    // For backward compatibility, still set type to 'table', but also include containerType
     onChange({
-      type: 'table',
+      type: containerType as ResourceType, // Use the detected container type
       resourceId: `${database.database_id}/${tableName}`,
       resourceName: tableName,
       databaseId: database.database_id,
       databaseName: database.database_name,
+      databaseType: dbType || undefined,
+      databaseParadigm: paradigm,
       tableName,
+      containerName: tableName,
+      containerType,
       uri: buildTableURI(database.database_id, tableName),
     });
   };
@@ -101,6 +133,7 @@ export function ResourcePicker({
       resourceId,
       resourceName,
       uri: buildMCPResourceURI(resourceId),
+      isTargetOnly: true, // MCP resources can only be targets
     });
   };
 
@@ -110,6 +143,7 @@ export function ResourcePicker({
       resourceId: toolId,
       resourceName: toolName,
       uri: buildMCPToolURI(toolId),
+      isTargetOnly: true, // MCP tools can only be targets
     });
   };
 
@@ -122,13 +156,30 @@ export function ResourcePicker({
     });
   };
 
-  const handleStreamSelect = (streamId: string, streamName: string) => {
+  const handleStreamSelect = (integrationName: string, topicName: string) => {
+    setSelectedIntegration(integrationName);
+    setSelectedTopic(topicName);
+    
+    // Find the stream object - the API returns stream_platform instead of integration_name
+    const stream = streams.find(
+      (s) => (s.stream_platform || s.integration_name) === integrationName && 
+             (s.stream_name || s.topic_name) === topicName
+    );
+    
+    if (!stream) return;
+
+    // Use stream_id if available, otherwise construct from platform/name
+    const streamId = stream.stream_id || `${integrationName}/${topicName}`;
+
     onChange({
       type: 'stream',
       resourceId: streamId,
-      resourceName: streamName,
+      resourceName: `${integrationName}/${topicName}`,
       uri: buildStreamURI(streamId),
-    });
+      // Include additional stream-specific fields
+      integrationName,
+      topicName,
+    } as any);
   };
 
   const renderResourceList = () => {
@@ -156,7 +207,7 @@ export function ResourcePicker({
             value={selectedDatabase || ''}
             onChange={(e) => {
               const db = databases.find((d) => d.database_name === e.target.value);
-              if (db) handleDatabaseSelect(db.database_id, db.database_name);
+              if (db) handleDatabaseSelect(db.database_id, db.database_name, db.database_type);
             }}
             disabled={disabled}
           >
@@ -187,7 +238,7 @@ export function ResourcePicker({
                 value={selectedDatabase || ''}
                 onChange={(e) => {
                   const db = databases.find((d) => d.database_name === e.target.value);
-                  if (db) handleDatabaseSelect(db.database_id, db.database_name);
+                  if (db) handleDatabaseSelect(db.database_id, db.database_name, db.database_type);
                 }}
                 disabled={disabled}
               >
@@ -330,9 +381,80 @@ export function ResourcePicker({
         return <LoadingSpinner size="sm" />;
       }
 
+      if (streams.length === 0) {
+        return (
+          <div className="text-sm text-muted-foreground p-4 text-center border border-border rounded-md">
+            No streams available
+          </div>
+        );
+      }
+
+      // Group streams by integration/platform
+      // The API returns stream_platform and stream_name, not integration_name and topic_name
+      const streamsByIntegration: Record<string, any[]> = {};
+      streams.forEach((stream) => {
+        const integration = stream.stream_platform || stream.integration_name;
+        if (integration) {
+          if (!streamsByIntegration[integration]) {
+            streamsByIntegration[integration] = [];
+          }
+          streamsByIntegration[integration].push(stream);
+        }
+      });
+
       return (
-        <div className="text-sm text-muted-foreground p-4 text-center border border-border rounded-md">
-          Streams are not yet implemented
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-foreground mb-1.5">
+              1. Select Integration
+            </label>
+            <select
+              className="w-full px-3 py-1.5 text-sm bg-background border border-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              value={selectedIntegration || ''}
+              onChange={(e) => {
+                setSelectedIntegration(e.target.value);
+                setSelectedTopic(null);
+              }}
+              disabled={disabled}
+            >
+              <option value="">Select an integration...</option>
+              {Object.keys(streamsByIntegration).map((integration) => (
+                <option key={integration} value={integration}>
+                  {integration}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {selectedIntegration && (
+            <div>
+              <label className="block text-xs font-medium text-foreground mb-1.5">
+                2. Select Topic
+              </label>
+              {streamsByIntegration[selectedIntegration]?.length > 0 ? (
+                <select
+                  className="w-full px-3 py-1.5 text-sm bg-background border border-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  value={selectedTopic || ''}
+                  onChange={(e) => handleStreamSelect(selectedIntegration, e.target.value)}
+                  disabled={disabled}
+                >
+                  <option value="">Select a topic...</option>
+                  {streamsByIntegration[selectedIntegration].map((stream) => {
+                    const topicName = stream.stream_name || stream.topic_name;
+                    return (
+                      <option key={topicName} value={topicName}>
+                        {topicName}
+                      </option>
+                    );
+                  })}
+                </select>
+              ) : (
+                <div className="text-xs text-muted-foreground p-3 text-center border border-border rounded-md">
+                  No topics available for this integration
+                </div>
+              )}
+            </div>
+          )}
         </div>
       );
     }
@@ -352,6 +474,8 @@ export function ResourcePicker({
             selected={selectedType}
             disabled={disabled}
             allowedTypes={allowedTypes}
+            isTargetSelector={isTargetSelector}
+            enableStatsFiltering={enableStatsFiltering}
           />
         </div>
 
@@ -370,6 +494,12 @@ export function ResourcePicker({
             <span className="text-muted-foreground">
               {' '}
               ({value.databaseName}.{value.tableName})
+            </span>
+          )}
+          {value.type === 'stream' && (value as any).integrationName && (value as any).topicName && (
+            <span className="text-muted-foreground">
+              {' '}
+              ({(value as any).integrationName}/{(value as any).topicName})
             </span>
           )}
         </div>

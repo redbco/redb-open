@@ -203,7 +203,7 @@ export default function RelationshipDetailPage({ params }: RelationshipDetailPag
         <div className="bg-card border border-border rounded-lg p-12 text-center">
           <h3 className="text-xl font-semibold text-foreground mb-2">Relationship Not Found</h3>
           <p className="text-muted-foreground mb-4">
-            The relationship "{relationshipName}" could not be found in workspace "{workspaceId}".
+            The relationship &quot;{relationshipName}&quot; could not be found in workspace &quot;{workspaceId}&quot;.
           </p>
           <Link
             href={`/workspaces/${workspaceId}/relationships`}

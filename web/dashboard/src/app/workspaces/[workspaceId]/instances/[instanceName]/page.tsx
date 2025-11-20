@@ -120,7 +120,8 @@ export default function InstanceDetailPage({ params }: InstanceDetailPageProps) 
     }
   };
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string | undefined) => {
+    if (!dateString) return 'N/A';
     try {
       return new Date(dateString).toLocaleString('en-US', {
         month: 'short',

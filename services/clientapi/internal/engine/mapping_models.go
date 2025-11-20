@@ -2,37 +2,37 @@ package engine
 
 // ResourceItem represents a resource item with all its details
 type ResourceItem struct {
-	ItemID                   string      `json:"item_id"`
-	ContainerID              string      `json:"container_id"`
-	TenantID                 string      `json:"tenant_id,omitempty"`
-	WorkspaceID              string      `json:"workspace_id,omitempty"`
-	ResourceURI              string      `json:"resource_uri"`
-	Protocol                 string      `json:"protocol,omitempty"`
-	Scope                    string      `json:"scope,omitempty"`
-	ItemType                 string      `json:"item_type"`
-	ItemName                 string      `json:"item_name"`
-	ItemDisplayName          string      `json:"item_display_name,omitempty"`
-	ItemPath                 []string    `json:"item_path,omitempty"`
-	DataType                 string      `json:"data_type"`
-	UnifiedDataType          *string     `json:"unified_data_type,omitempty"`
-	IsNullable               bool        `json:"is_nullable"`
-	IsPrimaryKey             bool        `json:"is_primary_key"`
-	IsUnique                 bool        `json:"is_unique"`
-	IsIndexed                bool        `json:"is_indexed"`
-	IsRequired               bool        `json:"is_required"`
-	IsArray                  bool        `json:"is_array"`
-	ArrayDimensions          int         `json:"array_dimensions,omitempty"`
-	DefaultValue             *string     `json:"default_value,omitempty"`
-	MaxLength                *int        `json:"max_length,omitempty"`
-	Precision                *int        `json:"precision,omitempty"`
-	Scale                    *int        `json:"scale,omitempty"`
-	Description              *string     `json:"description,omitempty"`
-	IsPrivileged             bool        `json:"is_privileged"`
-	PrivilegedClassification *string     `json:"privileged_classification,omitempty"`
-	DetectionConfidence      *float64    `json:"detection_confidence,omitempty"`
-	DetectionMethod          *string     `json:"detection_method,omitempty"`
-	Created                  string      `json:"created,omitempty"`
-	Updated                  string      `json:"updated,omitempty"`
+	ItemID                   string   `json:"item_id"`
+	ContainerID              string   `json:"container_id"`
+	TenantID                 string   `json:"tenant_id,omitempty"`
+	WorkspaceID              string   `json:"workspace_id,omitempty"`
+	ResourceURI              string   `json:"resource_uri"`
+	Protocol                 string   `json:"protocol,omitempty"`
+	Scope                    string   `json:"scope,omitempty"`
+	ItemType                 string   `json:"item_type"`
+	ItemName                 string   `json:"item_name"`
+	ItemDisplayName          string   `json:"item_display_name,omitempty"`
+	ItemPath                 []string `json:"item_path,omitempty"`
+	DataType                 string   `json:"data_type"`
+	UnifiedDataType          *string  `json:"unified_data_type,omitempty"`
+	IsNullable               bool     `json:"is_nullable"`
+	IsPrimaryKey             bool     `json:"is_primary_key"`
+	IsUnique                 bool     `json:"is_unique"`
+	IsIndexed                bool     `json:"is_indexed"`
+	IsRequired               bool     `json:"is_required"`
+	IsArray                  bool     `json:"is_array"`
+	ArrayDimensions          int      `json:"array_dimensions,omitempty"`
+	DefaultValue             *string  `json:"default_value,omitempty"`
+	MaxLength                *int     `json:"max_length,omitempty"`
+	Precision                *int     `json:"precision,omitempty"`
+	Scale                    *int     `json:"scale,omitempty"`
+	Description              *string  `json:"description,omitempty"`
+	IsPrivileged             bool     `json:"is_privileged"`
+	PrivilegedClassification *string  `json:"privileged_classification,omitempty"`
+	DetectionConfidence      *float64 `json:"detection_confidence,omitempty"`
+	DetectionMethod          *string  `json:"detection_method,omitempty"`
+	Created                  string   `json:"created,omitempty"`
+	Updated                  string   `json:"updated,omitempty"`
 }
 
 // RelationshipInfo represents relationship name and status
@@ -43,33 +43,33 @@ type RelationshipInfo struct {
 
 // Mapping represents a mapping
 type Mapping struct {
-	TenantID             string             `json:"tenant_id"`
-	WorkspaceID          string             `json:"workspace_id"`
-	MappingID            string             `json:"mapping_id"`
-	MappingName          string             `json:"mapping_name"`
-	MappingDescription   string             `json:"mapping_description,omitempty"`
-	MappingType          string             `json:"mapping_type,omitempty"`
-	PolicyID             string             `json:"policy_id,omitempty"`
-	OwnerID              string             `json:"owner_id"`
-	MappingRuleCount     int32              `json:"mapping_rule_count"`
-	Validated            bool               `json:"validated"`
-	ValidatedAt          string             `json:"validated_at,omitempty"`
-	ValidationErrors     []string           `json:"validation_errors,omitempty"`
-	ValidationWarnings   []string           `json:"validation_warnings,omitempty"`
-	MappingSourceType    string             `json:"mapping_source_type,omitempty"`
-	MappingTargetType    string             `json:"mapping_target_type,omitempty"`
-	MappingSource        string             `json:"mapping_source,omitempty"`
-	MappingTarget        string             `json:"mapping_target,omitempty"`
-	SourceDatabaseID     string             `json:"source_database_id,omitempty"`
-	SourceDatabaseName   string             `json:"source_database_name,omitempty"`
-	SourceTableName      string             `json:"source_table_name,omitempty"`
-	TargetDatabaseID     string             `json:"target_database_id,omitempty"`
-	TargetDatabaseName   string             `json:"target_database_name,omitempty"`
-	TargetTableName      string             `json:"target_table_name,omitempty"`
-	RelationshipNames    []string           `json:"relationship_names,omitempty"`
-	RelationshipInfos    []RelationshipInfo `json:"relationship_infos,omitempty"`
-	MCPResourceNames     []string           `json:"mcp_resource_names,omitempty"`
-	MCPToolNames         []string           `json:"mcp_tool_names,omitempty"`
+	TenantID           string             `json:"tenant_id"`
+	WorkspaceID        string             `json:"workspace_id"`
+	MappingID          string             `json:"mapping_id"`
+	MappingName        string             `json:"mapping_name"`
+	MappingDescription string             `json:"mapping_description,omitempty"`
+	MappingType        string             `json:"mapping_type,omitempty"`
+	PolicyID           string             `json:"policy_id,omitempty"`
+	OwnerID            string             `json:"owner_id"`
+	MappingRuleCount   int32              `json:"mapping_rule_count"`
+	Validated          bool               `json:"validated"`
+	ValidatedAt        string             `json:"validated_at,omitempty"`
+	ValidationErrors   []string           `json:"validation_errors,omitempty"`
+	ValidationWarnings []string           `json:"validation_warnings,omitempty"`
+	MappingSourceType  string             `json:"mapping_source_type,omitempty"`
+	MappingTargetType  string             `json:"mapping_target_type,omitempty"`
+	MappingSource      string             `json:"mapping_source,omitempty"`
+	MappingTarget      string             `json:"mapping_target,omitempty"`
+	SourceDatabaseID   string             `json:"source_database_id,omitempty"`
+	SourceDatabaseName string             `json:"source_database_name,omitempty"`
+	SourceTableName    string             `json:"source_table_name,omitempty"`
+	TargetDatabaseID   string             `json:"target_database_id,omitempty"`
+	TargetDatabaseName string             `json:"target_database_name,omitempty"`
+	TargetTableName    string             `json:"target_table_name,omitempty"`
+	RelationshipNames  []string           `json:"relationship_names,omitempty"`
+	RelationshipInfos  []RelationshipInfo `json:"relationship_infos,omitempty"`
+	MCPResourceNames   []string           `json:"mcp_resource_names,omitempty"`
+	MCPToolNames       []string           `json:"mcp_tool_names,omitempty"`
 }
 
 type MappingWithRules struct {
@@ -152,6 +152,29 @@ type AddTableMappingRequest struct {
 	MappingTargetDatabaseName string `json:"mapping_target_database_name" validate:"required"`
 	MappingTargetTableName    string `json:"mapping_target_table_name" validate:"required"`
 	PolicyID                  string `json:"policy_id,omitempty"`
+}
+
+type AddTableMappingWithDeployRequest struct {
+	MappingName        string `json:"mapping_name"`
+	MappingDescription string `json:"mapping_description"`
+	SourceDatabaseName string `json:"source_database_name"`
+	SourceTableName    string `json:"source_table_name"`
+	TargetDatabaseName string `json:"target_database_name"`
+	TargetTableName    string `json:"target_table_name"`
+	PolicyID           string `json:"policy_id,omitempty"`
+}
+
+type DeploymentInfo struct {
+	TableDeployed bool     `json:"table_deployed"`
+	TypesDeployed []string `json:"types_deployed"`
+}
+
+type AddTableMappingWithDeployResponse struct {
+	Message        string         `json:"message"`
+	Success        bool           `json:"success"`
+	Status         Status         `json:"status"`
+	Mapping        Mapping        `json:"mapping"`
+	DeploymentInfo DeploymentInfo `json:"deployment_info"`
 }
 
 type AddTableMappingResponse struct {

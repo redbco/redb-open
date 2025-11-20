@@ -66,7 +66,7 @@ export function DeploySchemaDialog({ databaseName, onClose, onDeploy }: DeploySc
                 </p>
                 <p className="text-sm text-blue-800 dark:text-blue-200 mt-1">
                   This will create a snapshot of the current database schema and save it to the specified repository branch.
-                  If the repository doesn't exist, it will be created automatically.
+                  If the repository doesn&apos;t exist, it will be created automatically.
                 </p>
               </div>
             </div>

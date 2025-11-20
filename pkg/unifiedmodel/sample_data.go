@@ -83,7 +83,7 @@ type KeyValueSampleData struct {
 	NamespaceName string                     `json:"namespace_name"` // Redis DB, DynamoDB table
 	KeyCount      int64                      `json:"key_count"`
 	SampleCount   int                        `json:"sample_count"`
-	KeySamples    []KeyValuePair             `json:"key_samples"`
+	KeySamples    []KeyValueSampleEntry      `json:"key_samples"`
 	ValueTypes    map[string]int             `json:"value_types"`   // Type distribution
 	KeyPatterns   map[string]KeyPatternInfo  `json:"key_patterns"`  // Detected key patterns
 	ValueSamples  map[string]ValueSampleInfo `json:"value_samples"` // Sample values by type
@@ -203,8 +203,8 @@ type FieldSampleValues struct {
 	ArraySamples []interface{}                `json:"array_samples,omitempty"` // For array fields
 }
 
-// KeyValuePair represents a single key-value sample
-type KeyValuePair struct {
+// KeyValueSampleEntry represents a single key-value sample
+type KeyValueSampleEntry struct {
 	Key          string      `json:"key"`
 	Value        interface{} `json:"value"`
 	ValueType    string      `json:"value_type"`
