@@ -238,6 +238,9 @@ service MappingService {
 
   // Mapping validation services
   rpc ValidateMapping(ValidateMappingRequest) returns (ValidateMappingResponse);
+  
+  // Virtual resource template resolution
+  rpc ResolveTemplateURIsInWorkspace(ResolveTemplateURIsRequest) returns (ResolveTemplateURIsResponse);
 }
 
 // Relationship service for relationship management
@@ -1383,6 +1386,47 @@ message DisconnectInstanceResponse {
 
 // Database messages
 
+// Database resource item (simplified for schema response)
+message DatabaseResourceItem {
+    string item_name = 1;
+    string item_display_name = 2;
+    string data_type = 3;
+    optional string unified_data_type = 4;
+    bool is_nullable = 5;
+    bool is_primary_key = 6;
+    bool is_unique = 7;
+    bool is_indexed = 8;
+    bool is_required = 9;
+    bool is_array = 10;
+    optional string default_value = 11;
+    string constraints_json = 12; // JSON string of constraints array
+    bool is_privileged = 13;
+    optional string privileged_classification = 14;
+    optional double detection_confidence = 15;
+    optional string detection_method = 16;
+    int32 ordinal_position = 17;
+    optional int32 max_length = 18;
+    optional int32 precision = 19;
+    optional int32 scale = 20;
+    optional string item_comment = 21;
+}
+
+// Database resource container (simplified for schema response)
+message DatabaseResourceContainer {
+    string object_type = 1;
+    string object_name = 2;
+    optional string container_classification = 3;
+    optional double container_classification_confidence = 4;
+    string container_classification_source = 5;
+    string container_metadata_json = 6; // JSON string of metadata
+    string enriched_metadata_json = 7; // JSON string of enriched metadata
+    optional string database_type = 8;
+    optional string vendor = 9;
+    int32 item_count = 10;
+    string status = 11;
+    repeated DatabaseResourceItem items = 12;
+}
+
 // The database object
 message Database {
     string tenant_id = 1;
@@ -1422,6 +1466,9 @@ message Database {
     bool instance_ssl = 31;
     string instance_status_message = 32;
     string instance_status = 33;
+    
+    // Resource registry data (structured)
+    repeated DatabaseResourceContainer resource_containers = 34;
 }
 
 // Show all databases request
@@ -1666,6 +1713,8 @@ message TableColumnSchema {
     int32 precision = 21;
     int32 scale = 22;
     string item_comment = 23;
+    string resource_uri = 24;  // URI for this specific column/field
+    string container_uri = 25;  // URI for the parent table/collection
 }
 
 message FetchTableDataResponse {
@@ -2637,10 +2686,23 @@ message ValidateMappingRequest {
 
 // Validate mapping response
 message ValidateMappingResponse {
-    bool is_valid = 1;
-    repeated string errors = 2;
-    repeated string warnings = 3;
-    string validated_at = 4;
+  bool is_valid = 1;
+  repeated string validation_errors = 2;
+  repeated string validation_warnings = 3;
+  redbco.redbopen.common.v1.Status status = 4;
+}
+
+// Request to resolve template URIs in a workspace
+message ResolveTemplateURIsRequest {
+  string workspace_id = 1;
+}
+
+// Response from resolving template URIs
+message ResolveTemplateURIsResponse {
+  int32 mappings_resolved = 1;
+  int32 rules_resolved = 2;
+  repeated string errors = 3;
+  redbco.redbopen.common.v1.Status status = 4;
 }
 
 // Relationship messages

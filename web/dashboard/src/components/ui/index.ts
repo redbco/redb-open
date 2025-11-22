@@ -10,4 +10,5 @@ export { Badge } from './Badge';
 export { Button } from './Button';
 export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './Select';
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './Tooltip';
+export { CellValue } from './CellValue';
 

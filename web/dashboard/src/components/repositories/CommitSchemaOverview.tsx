@@ -32,31 +32,43 @@ export function CommitSchemaOverview({
   const [isMessageExpanded, setIsMessageExpanded] = useState(false);
 
   // Calculate statistics
-  // Ensure tables is an array
-  const tables = Array.isArray(schema.tables) ? schema.tables : [];
-  const tableCount = tables.length;
-  const columnCount = tables.reduce((acc, table) => {
-    const columns = Array.isArray(table.columns) ? table.columns : [];
-    return acc + columns.length;
+  // Support both new containers format and legacy tables format
+  const containers = schema.containers && schema.containers.length > 0
+    ? schema.containers.map(container => ({
+        name: container.object_name,
+        columns: container.items || [],
+        itemCount: container.item_count,
+        object_type: container.object_type,
+      }))
+    : (Array.isArray(schema.tables) ? schema.tables : []).map(table => ({
+        name: table.name,
+        columns: Array.isArray(table.columns) ? table.columns : [],
+        itemCount: Array.isArray(table.columns) ? table.columns.length : 0,
+        object_type: 'table',
+      }));
+
+  const tableCount = containers.length;
+  const columnCount = containers.reduce((acc, container) => {
+    return acc + (container.itemCount || container.columns?.length || 0);
   }, 0);
   
   // Count privileged columns (high confidence > 0.7)
-  const privilegedColumnCount = tables.reduce((acc, table) => {
-    const columns = Array.isArray(table.columns) ? table.columns : [];
+  const privilegedColumnCount = containers.reduce((acc, container) => {
+    const columns = container.columns || [];
     return acc + columns.filter(
-      (col) =>
-        (col.isPrivilegedData || col.is_privileged_data) &&
-        (col.privilegedConfidence || col.privileged_confidence || 0) > 0.7
+      (col: any) =>
+        (col.is_privileged || col.isPrivilegedData || col.is_privileged_data) &&
+        (col.detection_confidence || col.privilegedConfidence || col.privileged_confidence || 0) > 0.7
     ).length;
   }, 0);
 
   // Count tables with privileged data
-  const privilegedTableCount = tables.filter((table) => {
-    const columns = Array.isArray(table.columns) ? table.columns : [];
+  const privilegedTableCount = containers.filter((container) => {
+    const columns = container.columns || [];
     return columns.some(
-      (col) =>
-        (col.isPrivilegedData || col.is_privileged_data) &&
-        (col.privilegedConfidence || col.privileged_confidence || 0) > 0.7
+      (col: any) =>
+        (col.is_privileged || col.isPrivilegedData || col.is_privileged_data) &&
+        (col.detection_confidence || col.privilegedConfidence || col.privileged_confidence || 0) > 0.7
     );
   }).length;
 

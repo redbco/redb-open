@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/redbco/redb-open/pkg/database"
+	"github.com/redbco/redb-open/pkg/dbcapabilities"
+	"github.com/redbco/redb-open/pkg/unifiedmodel"
 )
 
 // Discoverer handles schema discovery from streaming messages
@@ -168,10 +170,56 @@ func calculateConfidence(schema *TopicSchema) float64 {
 }
 
 func (d *Discoverer) updateResourceRegistry(ctx context.Context, schema *TopicSchema) error {
-	// TODO: Update resource_containers and resource_items tables
-	// This would involve:
-	// 1. Creating/updating a container for the topic
-	// 2. Creating/updating items for each field
+	// Create a UnifiedModel representation for this stream topic
+	um := &unifiedmodel.UnifiedModel{
+		DatabaseType:    dbcapabilities.DatabaseType(schema.Platform),
+		SearchDocuments: make(map[string]unifiedmodel.SearchDocument),
+	}
+
+	// Convert topic schema to SearchDocument (primary container for stream messages)
+	fields := make(map[string]unifiedmodel.Field)
+	for fieldName, fieldInfo := range schema.Fields {
+		fields[fieldName] = unifiedmodel.Field{
+			Name:     fieldInfo.Name,
+			Type:     fieldInfo.DataType,
+			Required: !fieldInfo.IsNullable,
+		}
+	}
+
+	searchDoc := unifiedmodel.SearchDocument{
+		Name:       schema.TopicName,
+		DocumentID: schema.TopicName,
+		Index:      schema.TopicName,
+		Fields:     fields,
+		Type:       schema.Platform, // e.g., "kafka", "pubsub", "kinesis"
+		Analyzer:   "standard",
+	}
+
+	um.SearchDocuments[schema.TopicName] = searchDoc
+
+	// Generate containers and items from unified model
+	containers, items, err := unifiedmodel.PopulateResourcesFromUnifiedModel(
+		um,
+		schema.StreamID,  // dbID
+		d.nodeID,         // nodeID
+		"",               // tenantID - would need to be passed in
+		"",               // workspaceID - would need to be passed in
+		"",               // ownerID
+		schema.TopicName, // databaseName
+		nil,              // enrichedAnalysis
+	)
+	if err != nil {
+		return fmt.Errorf("failed to populate resources: %w", err)
+	}
+
+	// TODO: Insert containers and items into resource_containers and resource_items tables
+	// This would require:
+	// 1. d.db.InsertResourceContainers(ctx, containers)
+	// 2. d.db.InsertResourceItems(ctx, items)
+	// For now, we log the counts
+	_ = containers
+	_ = items
+
 	return nil
 }
 

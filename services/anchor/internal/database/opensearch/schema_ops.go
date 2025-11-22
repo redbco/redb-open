@@ -22,7 +22,9 @@ func (s *SchemaOps) DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedMo
 	}
 
 	model := &unifiedmodel.UnifiedModel{
-		Tables: make(map[string]unifiedmodel.Table),
+		Tables:          make(map[string]unifiedmodel.Table),
+		SearchIndexes:   make(map[string]unifiedmodel.SearchIndex),
+		SearchDocuments: make(map[string]unifiedmodel.SearchDocument),
 	}
 
 	// Get mapping for the index
@@ -91,6 +93,32 @@ func (s *SchemaOps) DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedMo
 	}
 
 	model.Tables[s.conn.indexName] = table
+
+	// Also create SearchIndex and SearchDocument (primary containers for search engines)
+	searchIndex := unifiedmodel.SearchIndex{
+		Name:   s.conn.indexName,
+		Fields: []string{},
+	}
+
+	searchDoc := unifiedmodel.SearchDocument{
+		Name:       s.conn.indexName,
+		DocumentID: s.conn.indexName,
+		Index:      s.conn.indexName,
+		Fields:     make(map[string]unifiedmodel.Field),
+		Type:       "opensearch",
+	}
+
+	for fieldName, column := range columnsMap {
+		searchIndex.Fields = append(searchIndex.Fields, fieldName)
+		searchDoc.Fields[fieldName] = unifiedmodel.Field{
+			Name:     fieldName,
+			Type:     column.DataType,
+			Required: !column.Nullable,
+		}
+	}
+
+	model.SearchIndexes[s.conn.indexName] = searchIndex
+	model.SearchDocuments[s.conn.indexName] = searchDoc
 
 	return model, nil
 }

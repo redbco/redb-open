@@ -45,6 +45,8 @@ func (s *SchemaOps) DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedMo
 	}
 
 	// Create a table for each metric
+	timeSeriesMap := make(map[string]unifiedmodel.TimeSeriesPoint)
+
 	for _, metric := range metrics {
 		table := unifiedmodel.Table{
 			Name:    metric,
@@ -55,11 +57,42 @@ func (s *SchemaOps) DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedMo
 		}
 
 		tablesMap[metric] = table
+
+		// Also create TimeSeriesPoint representation (primary container for time-series databases)
+		fields := make(map[string]unifiedmodel.Field)
+		fields["value"] = unifiedmodel.Field{
+			Name:     "value",
+			Type:     "float",
+			Required: true,
+		}
+
+		// Add label fields
+		for _, label := range labels {
+			fields[label] = unifiedmodel.Field{
+				Name:     label,
+				Type:     "string",
+				Required: false,
+			}
+		}
+
+		tsPoint := unifiedmodel.TimeSeriesPoint{
+			Name:        metric,
+			Fields:      fields,
+			Aggregation: "raw",
+			Retention:   "",   // Prometheus retention is configured globally
+			Precision:   "ms", // Prometheus uses millisecond precision
+			Options: map[string]any{
+				"metric_type": "time_series",
+				"measurement": metric,
+			},
+		}
+		timeSeriesMap[metric] = tsPoint
 	}
 
 	model := &unifiedmodel.UnifiedModel{
-		DatabaseType: s.conn.Type(),
-		Tables:       tablesMap,
+		DatabaseType:     s.conn.Type(),
+		Tables:           tablesMap,
+		TimeSeriesPoints: timeSeriesMap,
 	}
 
 	return model, nil

@@ -58,9 +58,66 @@ func (s *SchemaOps) DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedMo
 	model := &unifiedmodel.UnifiedModel{
 		DatabaseType: s.conn.Type(),
 		Tables:       tablesMap,
+		Blobs:        make(map[string]unifiedmodel.Blob),
+	}
+
+	// Also list objects and create Blobs (primary container for object storage)
+	if err := s.discoverBlobs(ctx, bucket, model); err != nil {
+		return nil, err
 	}
 
 	return model, nil
+}
+
+// discoverBlobs lists objects in the bucket and adds them as Blob entries (sample only).
+func (s *SchemaOps) discoverBlobs(ctx context.Context, bucket string, model *unifiedmodel.UnifiedModel) error {
+	// List a sample of objects (limit to prevent large listings)
+	const maxObjects = 100
+
+	query := &storage.Query{}
+
+	it := s.conn.client.Client().Bucket(bucket).Objects(ctx, query)
+
+	count := 0
+	for count < maxObjects {
+		attrs, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to list objects: %w", err)
+		}
+
+		// Skip directories (prefixes)
+		if attrs.Prefix != "" {
+			continue
+		}
+
+		blob := unifiedmodel.Blob{
+			Name:         attrs.Name,
+			Bucket:       bucket,
+			Path:         attrs.Name,
+			Size:         attrs.Size,
+			ContentType:  attrs.ContentType,
+			StorageClass: string(attrs.StorageClass),
+			Encryption:   "",
+			ETag:         fmt.Sprintf("%x", attrs.MD5),
+			Options: map[string]any{
+				"generation":     attrs.Generation,
+				"metageneration": attrs.Metageneration,
+				"crc32c":         attrs.CRC32C,
+			},
+		}
+
+		if !attrs.Updated.IsZero() {
+			blob.Options["updated"] = attrs.Updated.String()
+		}
+
+		model.Blobs[attrs.Name] = blob
+		count++
+	}
+
+	return nil
 }
 
 // listPrefixes lists common prefixes (simulating "folders") in the bucket.

@@ -57,9 +57,91 @@ func (s *SchemaOps) DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedMo
 	model := &unifiedmodel.UnifiedModel{
 		DatabaseType: s.conn.Type(),
 		Tables:       tablesMap,
+		Blobs:        make(map[string]unifiedmodel.Blob),
+	}
+
+	// Also list blobs and create Blob entries (sample only)
+	if err := s.discoverBlobs(ctx, container, model); err != nil {
+		return nil, err
 	}
 
 	return model, nil
+}
+
+// discoverBlobs lists blobs in the container and adds them as Blob entries (sample only).
+func (s *SchemaOps) discoverBlobs(ctx context.Context, container string, model *unifiedmodel.UnifiedModel) error {
+	containerClient := s.conn.client.Client().ServiceClient().NewContainerClient(container)
+
+	// List a sample of blobs (limit to prevent large listings)
+	const maxBlobs = 100
+	pager := containerClient.NewListBlobsFlatPager(&azcontainer.ListBlobsFlatOptions{
+		MaxResults: int32Ptr(int32(maxBlobs)),
+	})
+
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to list blobs: %w", err)
+		}
+
+		for _, blobItem := range page.Segment.BlobItems {
+			if blobItem.Name == nil {
+				continue
+			}
+
+			name := *blobItem.Name
+			var contentType, etag, tier, encryption string
+			var size int64
+
+			if blobItem.Properties != nil {
+				if blobItem.Properties.ContentLength != nil {
+					size = *blobItem.Properties.ContentLength
+				}
+				if blobItem.Properties.ContentType != nil {
+					contentType = *blobItem.Properties.ContentType
+				}
+				if blobItem.Properties.ETag != nil {
+					etag = string(*blobItem.Properties.ETag)
+				}
+				if blobItem.Properties.AccessTier != nil {
+					tier = string(*blobItem.Properties.AccessTier)
+				}
+				if blobItem.Properties.ServerEncrypted != nil && *blobItem.Properties.ServerEncrypted {
+					encryption = "server-side"
+				}
+			}
+
+			blob := unifiedmodel.Blob{
+				Name:         name,
+				Bucket:       container,
+				Path:         name,
+				Size:         size,
+				ContentType:  contentType,
+				StorageClass: tier,
+				Encryption:   encryption,
+				ETag:         etag,
+				Options: map[string]any{
+					"container": container,
+				},
+			}
+
+			if blobItem.Properties != nil && blobItem.Properties.LastModified != nil {
+				blob.Options["last_modified"] = blobItem.Properties.LastModified.String()
+			}
+
+			model.Blobs[name] = blob
+		}
+
+		// Only process first page (sample)
+		break
+	}
+
+	return nil
+}
+
+// int32Ptr is a helper function to get a pointer to an int32.
+func int32Ptr(v int32) *int32 {
+	return &v
 }
 
 // listPrefixes lists common prefixes (simulating "folders") in the container.

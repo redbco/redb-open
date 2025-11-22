@@ -2508,15 +2508,14 @@ func (mh *MappingHandlers) ValidateMapping(w http.ResponseWriter, r *http.Reques
 
 	// Prepare response
 	response := map[string]interface{}{
-		"is_valid":     grpcResp.IsValid,
-		"errors":       grpcResp.Errors,
-		"warnings":     grpcResp.Warnings,
-		"validated_at": grpcResp.ValidatedAt,
+		"is_valid": grpcResp.IsValid,
+		"errors":   grpcResp.ValidationErrors,
+		"warnings": grpcResp.ValidationWarnings,
 	}
 
 	// Log response
 	if mh.engine.logger != nil {
-		mh.engine.logger.Infof("Mapping validation completed: valid=%v, errors=%d, warnings=%d", grpcResp.IsValid, len(grpcResp.Errors), len(grpcResp.Warnings))
+		mh.engine.logger.Infof("Mapping validation completed: valid=%v, errors=%d, warnings=%d", grpcResp.IsValid, len(grpcResp.ValidationErrors), len(grpcResp.ValidationWarnings))
 	}
 
 	mh.writeJSONResponse(w, http.StatusOK, map[string]interface{}{

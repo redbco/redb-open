@@ -34,7 +34,18 @@ func DiscoverSchema(client *ChromaClient) (*unifiedmodel.UnifiedModel, error) {
 			continue // Skip collections we can't describe
 		}
 
-		// Convert to vector index
+		// Convert to Embedding (primary container for vector databases)
+		embedding := unifiedmodel.Embedding{
+			Name:  details.Name,
+			Model: "chroma", // Default model name
+			Options: map[string]any{
+				"id":       details.ID,
+				"metadata": details.Metadata,
+			},
+		}
+		um.Embeddings[details.Name] = embedding
+
+		// Keep VectorIndex for compatibility
 		vectorIndex := ConvertChromaCollection(*details)
 		um.VectorIndexes[details.Name] = vectorIndex
 

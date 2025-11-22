@@ -1127,7 +1127,19 @@ CREATE TABLE resource_containers (
     instance_id ulid REFERENCES instances(instance_id) ON DELETE SET NULL,
     integration_id ulid REFERENCES integrations(integration_id) ON DELETE CASCADE,
     mcpserver_id ulid REFERENCES mcpservers(mcpserver_id) ON DELETE CASCADE,
-    connected_to_node_id BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    connected_to_node_id BIGINT REFERENCES nodes(node_id) ON DELETE CASCADE,
+    
+    -- Virtual resource tracking
+    is_virtual BOOLEAN DEFAULT FALSE,
+    virtual_source VARCHAR(50) DEFAULT 'user',
+    virtual_namespace VARCHAR(255) DEFAULT 'default',
+    binding_mode VARCHAR(20) DEFAULT 'unbound',
+    bound_database_id ulid REFERENCES databases(database_id) ON DELETE SET NULL,
+    reconciliation_status VARCHAR(50) DEFAULT 'pending',
+    reconciled_container_id ulid REFERENCES resource_containers(container_id) ON DELETE SET NULL,
+    reconciliation_details JSONB DEFAULT '{}',
+    reconciled_at TIMESTAMP,
+    
     owner_id ulid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     status status_enum DEFAULT 'STATUS_CREATED',
     status_message VARCHAR(255) DEFAULT '',
@@ -1145,9 +1157,12 @@ CREATE TABLE resource_containers (
 	created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	UNIQUE(workspace_id, object_type, object_name, database_id),
-	CHECK (protocol IN ('redb', 'stream', 'webhook', 'mcp')),
+	CHECK (protocol IN ('redb', 'stream', 'webhook', 'mcp', 'template')),
 	CHECK (scope IN ('data', 'metadata', 'schema')),
-	CHECK (container_classification_confidence IS NULL OR (container_classification_confidence >= 0.00 AND container_classification_confidence <= 1.00))
+	CHECK (container_classification_confidence IS NULL OR (container_classification_confidence >= 0.00 AND container_classification_confidence <= 1.00)),
+	CHECK (binding_mode IN ('template', 'unbound', 'bound', 'auto_bind')),
+	CHECK (reconciliation_status IN ('pending', 'matched', 'conflict', 'orphaned', 'resolved')),
+	CHECK (virtual_source IN ('user', 'inferred', 'template', 'mcp'))
 );
 
 -- Resource items for low-level addressable resources
@@ -1192,7 +1207,17 @@ CREATE TABLE resource_items (
     max_length INTEGER,
     precision INTEGER,
     scale INTEGER,
-    connected_to_node_id BIGINT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+    connected_to_node_id BIGINT REFERENCES nodes(node_id) ON DELETE CASCADE,
+    
+    -- Virtual resource tracking
+    is_virtual BOOLEAN DEFAULT FALSE,
+    virtual_source VARCHAR(50) DEFAULT 'user',
+    binding_mode VARCHAR(20),
+    reconciliation_status VARCHAR(50) DEFAULT 'pending',
+    reconciled_item_id ulid REFERENCES resource_items(item_id) ON DELETE SET NULL,
+    reconciliation_details JSONB DEFAULT '{}',
+    reconciled_at TIMESTAMP,
+    
     status status_enum DEFAULT 'STATUS_CREATED',
     online BOOLEAN DEFAULT true,
     item_metadata JSONB DEFAULT '{}',
@@ -1206,13 +1231,16 @@ CREATE TABLE resource_items (
     created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(container_id, item_name, item_path),
-    CHECK (protocol IN ('redb', 'stream', 'webhook', 'mcp')),
+    CHECK (protocol IN ('redb', 'stream', 'webhook', 'mcp', 'template')),
     CHECK (scope IN ('data', 'metadata', 'schema')),
     CHECK (detection_confidence IS NULL OR (detection_confidence >= 0.00 AND detection_confidence <= 1.00)),
     CHECK (schema_format IN ('json_schema', 'avro', 'protobuf', 'xml_schema', 'cbor_schema', 'thrift', NULL)),
     CHECK (array_dimensions > 0),
     CHECK (schema_validation_mode IN ('strict', 'permissive', 'evolving', 'disabled')),
-    CHECK (schema_mismatch_action IN ('reject', 'accept', 'accept_and_log', 'coerce', 'evolve_schema'))
+    CHECK (schema_mismatch_action IN ('reject', 'accept', 'accept_and_log', 'coerce', 'evolve_schema')),
+    CHECK (binding_mode IN ('template', 'unbound', 'bound', 'auto_bind', NULL)),
+    CHECK (reconciliation_status IN ('pending', 'matched', 'conflict', 'orphaned', 'resolved')),
+    CHECK (virtual_source IN ('user', 'inferred', 'from_mapping', 'mcp'))
 );
 
 -- Add the foreign key constraint to the the mappings table

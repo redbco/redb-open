@@ -21,26 +21,28 @@ import (
 )
 
 type SchemaWatcher struct {
-	state        *state.GlobalState
-	db           *database.PostgreSQL
-	umClient     pb.UnifiedModelServiceClient
-	repoClient   corev1.RepoServiceClient
-	branchClient corev1.BranchServiceClient
-	commitClient corev1.CommitServiceClient
-	resourceRepo *resources.Repository
-	logger       *logger.Logger
+	state         *state.GlobalState
+	db            *database.PostgreSQL
+	umClient      pb.UnifiedModelServiceClient
+	repoClient    corev1.RepoServiceClient
+	branchClient  corev1.BranchServiceClient
+	commitClient  corev1.CommitServiceClient
+	mappingClient corev1.MappingServiceClient
+	resourceRepo  *resources.Repository
+	logger        *logger.Logger
 }
 
 func NewSchemaWatcher(db *database.PostgreSQL, umConn *grpc.ClientConn, coreConn *grpc.ClientConn, supervisorAddr string, logger *logger.Logger) *SchemaWatcher {
 	return &SchemaWatcher{
-		state:        state.GetInstance(),
-		db:           db,
-		umClient:     pb.NewUnifiedModelServiceClient(umConn),
-		repoClient:   corev1.NewRepoServiceClient(coreConn),
-		branchClient: corev1.NewBranchServiceClient(coreConn),
-		commitClient: corev1.NewCommitServiceClient(coreConn),
-		resourceRepo: resources.NewRepository(db.Pool()),
-		logger:       logger,
+		state:         state.GetInstance(),
+		db:            db,
+		umClient:      pb.NewUnifiedModelServiceClient(umConn),
+		repoClient:    corev1.NewRepoServiceClient(coreConn),
+		branchClient:  corev1.NewBranchServiceClient(coreConn),
+		commitClient:  corev1.NewCommitServiceClient(coreConn),
+		mappingClient: corev1.NewMappingServiceClient(coreConn),
+		resourceRepo:  resources.NewRepository(db.Pool()),
+		logger:        logger,
 	}
 }
 
@@ -402,11 +404,39 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 			continue
 		}
 
+		// Log schema discovery summary
+		collectionCount := len(currentUM.Collections)
+		tableCount := len(currentUM.Tables)
+		w.logInfo("Discovered schema for database %s: %d collections, %d tables", clientID, collectionCount, tableCount)
+
 		// Marshal the current schema to JSON for storage (still needed for database storage)
 		currentBytes, err := json.Marshal(currentUM)
 		if err != nil {
 			w.logError("Failed to marshal current schema: %v", err)
 			continue
+		}
+
+		// Validate the marshaled JSON is not empty or just empty object
+		schemaSize := len(currentBytes)
+		w.logInfo("Marshaled schema for database %s: %d bytes", clientID, schemaSize)
+
+		if schemaSize < 10 || string(currentBytes) == "{}" {
+			w.logError("WARNING: Marshaled schema for database %s is empty or nearly empty (%d bytes): %s",
+				clientID, schemaSize, string(currentBytes))
+			w.logError("Schema had %d collections and %d tables before marshaling", collectionCount, tableCount)
+		}
+
+		// Verify schema integrity by unmarshaling and checking
+		var verifyUM unifiedmodel.UnifiedModel
+		if err := json.Unmarshal(currentBytes, &verifyUM); err == nil {
+			verifyCollectionCount := len(verifyUM.Collections)
+			verifyTableCount := len(verifyUM.Tables)
+			if verifyCollectionCount != collectionCount || verifyTableCount != tableCount {
+				w.logWarn("Schema count mismatch after JSON round-trip for database %s: collections %d->%d, tables %d->%d",
+					clientID, collectionCount, verifyCollectionCount, tableCount, verifyTableCount)
+			} else {
+				w.logDebug("Schema integrity verified for database %s after JSON round-trip", clientID)
+			}
 		}
 
 		// If we have a previous schema to compare against
@@ -416,6 +446,18 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 			if !ok {
 				w.logError("Previous schema is not a UnifiedModel for database %s", clientID)
 				continue
+			}
+
+			// Check if the stored database schema is empty or invalid (force re-storage if needed)
+			var storedSchema string
+			err := w.db.Pool().QueryRow(ctx, "SELECT database_schema FROM databases WHERE database_id = $1", client.Config.DatabaseID).Scan(&storedSchema)
+			forceStore := false
+			if err != nil {
+				w.logWarn("Failed to check stored schema for database %s: %v (will force storage)", clientID, err)
+				forceStore = true
+			} else if storedSchema == "" || storedSchema == "{}" || len(storedSchema) < 10 {
+				w.logInfo("Stored schema for database %s is empty or invalid (%d bytes), forcing re-storage", clientID, len(storedSchema))
+				forceStore = true
 			}
 
 			// Call UnifiedModel service to compare schemas using UnifiedModel objects
@@ -429,12 +471,21 @@ func (w *SchemaWatcher) checkSchemaChanges(ctx context.Context) error {
 				continue
 			}
 
-			if compareResp.HasChanges {
-				w.logInfo("Schema changes detected for database %s", clientID)
+			if compareResp.HasChanges || forceStore {
+				if compareResp.HasChanges {
+					w.logInfo("Schema changes detected for database %s", clientID)
+				} else {
+					w.logInfo("Forcing schema storage for database %s (stored schema was empty/invalid)", clientID)
+				}
+
 				var commitMessage string
-				for _, change := range compareResp.Changes {
-					w.logInfo("Schema change: %s", change)
-					commitMessage += change + "\n"
+				if compareResp.HasChanges {
+					for _, change := range compareResp.Changes {
+						w.logInfo("Schema change: %s", change)
+						commitMessage += change + "\n"
+					}
+				} else {
+					commitMessage = "Re-storing valid schema (previous storage was empty/invalid)"
 				}
 
 				// Store the schema changes in the internal database
@@ -1053,7 +1104,16 @@ func (w *SchemaWatcher) RefreshResourceRegistry(ctx context.Context, databaseID 
 		}
 	}
 
-	w.logInfo("Successfully populated %d containers and %d items for database %s", containersCreated, itemsCreated, databaseID)
+	w.logInfo("Successfully populated resource registry for database %s: %d containers + %d items",
+		databaseID, len(containers), len(items))
+
+	// Reconcile virtual resources with newly discovered schema
+	err = w.reconcileVirtualResources(ctx, databaseID, containers, items)
+	if err != nil {
+		// Log but don't fail - reconciliation is best-effort
+		w.logWarn("Failed to reconcile virtual resources for database %s: %v", databaseID, err)
+	}
+
 	return containersCreated, itemsCreated, nil
 }
 

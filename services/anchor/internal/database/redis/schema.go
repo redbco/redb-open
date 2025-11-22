@@ -18,12 +18,19 @@ func DiscoverSchema(client *redis.Client) (*unifiedmodel.UnifiedModel, error) {
 
 	// Create the unified model
 	um := &unifiedmodel.UnifiedModel{
-		DatabaseType: dbcapabilities.Redis,
-		Modules:      make(map[string]unifiedmodel.Module),
-		Functions:    make(map[string]unifiedmodel.Function),
-		Streams:      make(map[string]unifiedmodel.Stream),
-		Namespaces:   make(map[string]unifiedmodel.Namespace),
-		Extensions:   make(map[string]unifiedmodel.Extension),
+		DatabaseType:  dbcapabilities.Redis,
+		KeyValuePairs: make(map[string]unifiedmodel.KeyValuePair),
+		Modules:       make(map[string]unifiedmodel.Module),
+		Functions:     make(map[string]unifiedmodel.Function),
+		Streams:       make(map[string]unifiedmodel.Stream),
+		Namespaces:    make(map[string]unifiedmodel.Namespace),
+		Extensions:    make(map[string]unifiedmodel.Extension),
+	}
+
+	// Discover key-value pairs (sample keys from the database)
+	if err := discoverKeyValuePairsUnified(ctx, client, um); err != nil {
+		// Non-fatal error, just log and continue
+		fmt.Printf("Warning: Could not discover key-value pairs: %v\n", err)
 	}
 
 	// Get loaded modules
@@ -208,6 +215,75 @@ func discoverKeySpacesUnified(ctx context.Context, client *redis.Client, um *uni
 				um.Namespaces[namespace.Name] = namespace
 			}
 		}
+	}
+
+	return nil
+}
+
+// discoverKeyValuePairsUnified discovers key-value pairs (samples keys) directly into UnifiedModel
+func discoverKeyValuePairsUnified(ctx context.Context, client *redis.Client, um *unifiedmodel.UnifiedModel) error {
+	// Use SCAN to sample keys from the database (limit to prevent overwhelming large databases)
+	const maxKeys = 100
+	var cursor uint64
+	var keys []string
+
+	for len(keys) < maxKeys {
+		var scanKeys []string
+		var err error
+		scanKeys, cursor, err = client.Scan(ctx, cursor, "*", 10).Result()
+		if err != nil {
+			return fmt.Errorf("error scanning keys: %v", err)
+		}
+
+		keys = append(keys, scanKeys...)
+
+		if cursor == 0 {
+			break
+		}
+	}
+
+	// Limit to maxKeys
+	if len(keys) > maxKeys {
+		keys = keys[:maxKeys]
+	}
+
+	// Get details for each key
+	for _, key := range keys {
+		// Get key type
+		keyType, err := client.Type(ctx, key).Result()
+		if err != nil {
+			continue // Skip this key if we can't get its type
+		}
+
+		// Get TTL
+		ttl, err := client.TTL(ctx, key).Result()
+		var ttlSeconds *int64
+		if err == nil && ttl > 0 {
+			seconds := int64(ttl.Seconds())
+			ttlSeconds = &seconds
+		}
+
+		// Get encoding (memory optimization)
+		encoding := ""
+		if encodingResult, err := client.Do(ctx, "OBJECT", "ENCODING", key).Result(); err == nil {
+			if enc, ok := encodingResult.(string); ok {
+				encoding = enc
+			}
+		}
+
+		// Create KeyValuePair entry
+		kvPair := unifiedmodel.KeyValuePair{
+			Name:     key,
+			Key:      key,
+			DataType: keyType,
+			TTL:      ttlSeconds,
+			Encoding: encoding,
+			Options: map[string]any{
+				"database": client.Options().DB,
+			},
+		}
+
+		um.KeyValuePairs[key] = kvPair
 	}
 
 	return nil

@@ -17,8 +17,9 @@ func DiscoverSchema(esClient *ElasticsearchClient) (*unifiedmodel.UnifiedModel, 
 
 	// Create the unified model
 	um := &unifiedmodel.UnifiedModel{
-		DatabaseType:  dbcapabilities.Elasticsearch,
-		SearchIndexes: make(map[string]unifiedmodel.SearchIndex),
+		DatabaseType:    dbcapabilities.Elasticsearch,
+		SearchIndexes:   make(map[string]unifiedmodel.SearchIndex),
+		SearchDocuments: make(map[string]unifiedmodel.SearchDocument),
 	}
 
 	// Discover indices directly into unified model
@@ -152,6 +153,53 @@ func discoverIndicesUnified(client *elasticsearch.Client, um *unifiedmodel.Unifi
 		}
 
 		um.SearchIndexes[indexName] = searchIndex
+
+		// Also create a SearchDocument representation (primary container for search engines)
+		searchDoc := unifiedmodel.SearchDocument{
+			Name:       indexName,
+			DocumentID: indexName, // Use index name as document ID for the schema representation
+			Index:      indexName,
+			Fields:     make(map[string]unifiedmodel.Field),
+			Analyzer:   searchIndex.Analyzer,
+		}
+
+		// Convert fields from SearchIndex to Field map for SearchDocument
+		if len(searchIndex.Fields) > 0 {
+			// Get full mappings to determine field types
+			mappingRes2, err := client.Indices.GetMapping(
+				client.Indices.GetMapping.WithIndex(indexName),
+				client.Indices.GetMapping.WithContext(context.Background()),
+			)
+			if err == nil {
+				defer mappingRes2.Body.Close()
+				if !mappingRes2.IsError() {
+					var mappingResponse map[string]interface{}
+					if err := json.NewDecoder(mappingRes2.Body).Decode(&mappingResponse); err == nil {
+						if indexMapping, ok := mappingResponse[indexName].(map[string]interface{}); ok {
+							if mappings, ok := indexMapping["mappings"].(map[string]interface{}); ok {
+								if properties, ok := mappings["properties"].(map[string]interface{}); ok {
+									for fieldName, fieldData := range properties {
+										fieldMap, _ := fieldData.(map[string]interface{})
+										fieldType, _ := fieldMap["type"].(string)
+										if fieldType == "" {
+											fieldType = "text" // Default
+										}
+
+										searchDoc.Fields[fieldName] = unifiedmodel.Field{
+											Name:     fieldName,
+											Type:     fieldType,
+											Required: false, // Elasticsearch fields are optional by default
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		um.SearchDocuments[indexName] = searchDoc
 	}
 
 	return nil

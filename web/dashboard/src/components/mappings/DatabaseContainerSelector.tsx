@@ -35,12 +35,12 @@ export function DatabaseContainerSelector({
   const containers = schema?.containers 
     ? schema.containers.map(c => ({
         name: c.object_name,
-        columnCount: c.items?.length || 0
+        itemCount: c.item_count // Use item_count from resource_containers
       }))
     : schema?.tables 
       ? schema.tables.map(t => ({
           name: t.name,
-          columnCount: t.columns?.length || 0
+          itemCount: t.columns?.length || 0 // Fallback to columns count for legacy tables
         }))
       : [];
 
@@ -103,7 +103,7 @@ export function DatabaseContainerSelector({
       {allowContainerSelection && selectedDatabase && (
         <div>
           <label className="block text-xs text-muted-foreground mb-1.5">
-            2. Select Container (Table)
+            2. Select Container
           </label>
           <div className="relative">
             <select
@@ -117,7 +117,7 @@ export function DatabaseContainerSelector({
               </option>
               {containers.map((container) => (
                 <option key={container.name} value={container.name}>
-                  {container.name} ({container.columnCount} column{container.columnCount !== 1 ? 's' : ''})
+                  {container.name} ({container.itemCount} item{container.itemCount !== 1 ? 's' : ''})
                 </option>
               ))}
             </select>

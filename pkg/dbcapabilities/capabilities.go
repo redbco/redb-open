@@ -85,6 +85,22 @@ const (
 	ParadigmObjectStore DataParadigm = "objectstorage" // Object/blob storage
 )
 
+// PrimaryContainer represents the primary data storage container type that holds actual data.
+// These map to the 9 primary data containers in the UnifiedModel.
+type PrimaryContainer string
+
+const (
+	ContainerTable           PrimaryContainer = "table"             // Tabular Record Sets (Relational, Wide-Column)
+	ContainerCollection      PrimaryContainer = "collection"        // Documents (Document Databases)
+	ContainerNode            PrimaryContainer = "node"              // Graph Nodes (Graph Databases)
+	ContainerRelationship    PrimaryContainer = "relationship"      // Graph Relationships (Graph Databases)
+	ContainerEmbedding       PrimaryContainer = "embedding"         // Vector Embeddings (Vector Databases)
+	ContainerKeyValuePair    PrimaryContainer = "key_value_pair"    // Key-Value Items (Key-Value Stores)
+	ContainerSearchDocument  PrimaryContainer = "search_document"   // Search Documents (Search Engines)
+	ContainerTimeSeriesPoint PrimaryContainer = "time_series_point" // Time-Series Data Points (Time-Series Databases)
+	ContainerBlob            PrimaryContainer = "blob"              // Binary Large Objects (Object Storage)
+)
+
 // Capability describes what a database supports in a way that microservices can consume uniformly.
 type Capability struct {
 	// Human-friendly vendor or product name, e.g., "PostgreSQL".
@@ -121,6 +137,10 @@ type Capability struct {
 	// Primary data storage paradigms supported.
 	Paradigms []DataParadigm `json:"paradigms"`
 
+	// Primary data containers supported by this database.
+	// These represent the actual container types where data is stored (tables, collections, nodes, etc.)
+	PrimaryContainers []PrimaryContainer `json:"primaryContainers"`
+
 	// Common aliases (directory names, drivers, env labels) that map to this database.
 	Aliases []string `json:"aliases,omitempty"`
 }
@@ -141,6 +161,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           5432,
 		ConnectionStringTemplate: "postgresql://{username}:{password}@{host}:{port}/{database}?sslmode={sslmode}",
 		Paradigms:                []DataParadigm{ParadigmRelational},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"postgresql", "pgsql"},
 	},
 	MySQL: {
@@ -157,6 +178,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           3306,
 		ConnectionStringTemplate: "mysql://{username}:{password}@{host}:{port}/{database}?tls={tls}",
 		Paradigms:                []DataParadigm{ParadigmRelational},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"aurora-mysql"},
 	},
 	MariaDB: {
@@ -173,6 +195,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           3306,
 		ConnectionStringTemplate: "mysql://{username}:{password}@{host}:{port}/{database}?tls={tls}",
 		Paradigms:                []DataParadigm{ParadigmRelational},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 	},
 	SQLServer: {
 		Name:                     "Microsoft SQL Server",
@@ -189,6 +212,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           1433,
 		ConnectionStringTemplate: "sqlserver://{username}:{password}@{host}:{port}/{database}?encrypt={encrypt}&trustservercertificate={trustservercertificate}",
 		Paradigms:                []DataParadigm{ParadigmRelational},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"sqlserver", "mssql", "azure-sql"},
 	},
 	Oracle: {
@@ -206,6 +230,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           1521,
 		ConnectionStringTemplate: "oracle://{username}:{password}@{host}:{port}/{database}?server={server}&ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmRelational},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 	},
 	TiDB: {
 		Name:                     "TiDB",
@@ -222,6 +247,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           4000,
 		ConnectionStringTemplate: "tidb://{username}:{password}@{host}:{port}/{database}?sslmode={sslmode}&tidb_cluster_id={tidb_cluster_id}",
 		Paradigms:                []DataParadigm{ParadigmRelational},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"tidb", "pingcap-tidb"},
 	},
 	ClickHouse: {
@@ -238,6 +264,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           9000,
 		ConnectionStringTemplate: "clickhouse://{username}:{password}@{host}:{port}/{database}?secure={secure}&compress={compress}",
 		Paradigms:                []DataParadigm{ParadigmColumnar},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 	},
 	DB2: {
 		Name:                     "IBM Db2",
@@ -254,6 +281,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           50000,
 		ConnectionStringTemplate: "db2://{username}:{password}@{host}:{port}/{database}?security={security}",
 		Paradigms:                []DataParadigm{ParadigmRelational},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"ibm-db2"},
 	},
 	CockroachDB: {
@@ -271,6 +299,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           26257,
 		ConnectionStringTemplate: "postgresql://{username}:{password}@{host}:{port}/{database}?sslmode={sslmode}&options={options}",
 		Paradigms:                []DataParadigm{ParadigmRelational},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"cockroachdb"},
 	},
 	Cassandra: {
@@ -288,6 +317,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           9042,
 		ConnectionStringTemplate: "cassandra://{username}:{password}@{host}:{port}/{database}?consistency={consistency}&ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmWideColumn, ParadigmTimeSeries},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 	},
 	DynamoDB: {
 		Name:                     "Amazon DynamoDB",
@@ -302,6 +332,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           443,
 		ConnectionStringTemplate: "dynamodb://{username}:{password}@{host}?endpoint={endpoint}&table={table}",
 		Paradigms:                []DataParadigm{ParadigmKeyValue, ParadigmWideColumn},
+		PrimaryContainers:        []PrimaryContainer{ContainerKeyValuePair},
 	},
 	MongoDB: {
 		Name:                     "MongoDB",
@@ -318,6 +349,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           27017,
 		ConnectionStringTemplate: "mongodb://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmDocument},
+		PrimaryContainers:        []PrimaryContainer{ContainerCollection},
 	},
 	Redis: {
 		Name:                     "Redis",
@@ -332,6 +364,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           6379,
 		ConnectionStringTemplate: "redis://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmKeyValue, ParadigmTimeSeries},
+		PrimaryContainers:        []PrimaryContainer{ContainerKeyValuePair},
 	},
 	Neo4j: {
 		Name:                     "Neo4j",
@@ -347,6 +380,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           7473,
 		ConnectionStringTemplate: "neo4j://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmGraph},
+		PrimaryContainers:        []PrimaryContainer{ContainerNode, ContainerRelationship},
 	},
 	Elasticsearch: {
 		Name:                     "Elasticsearch",
@@ -361,6 +395,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           9200,
 		ConnectionStringTemplate: "elasticsearch://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmSearchIndex},
+		PrimaryContainers:        []PrimaryContainer{ContainerSearchDocument},
 	},
 	OpenSearch: {
 		Name:                     "OpenSearch",
@@ -375,6 +410,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           9200,
 		ConnectionStringTemplate: "opensearch://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmSearchIndex},
+		PrimaryContainers:        []PrimaryContainer{ContainerSearchDocument},
 		Aliases:                  []string{"opensearch", "aws-opensearch"},
 	},
 	Solr: {
@@ -390,6 +426,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8983,
 		ConnectionStringTemplate: "http://{host}:{port}/solr/{collection}",
 		Paradigms:                []DataParadigm{ParadigmSearchIndex},
+		PrimaryContainers:        []PrimaryContainer{ContainerSearchDocument},
 		Aliases:                  []string{"solr", "apache-solr"},
 	},
 	CosmosDB: {
@@ -405,6 +442,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           443,
 		ConnectionStringTemplate: "cosmosdb://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmDocument, ParadigmKeyValue, ParadigmGraph},
+		PrimaryContainers:        []PrimaryContainer{ContainerCollection, ContainerNode, ContainerRelationship},
 	},
 	Snowflake: {
 		Name:                     "Snowflake",
@@ -420,6 +458,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           443,
 		ConnectionStringTemplate: "snowflake://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmColumnar},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 	},
 	Iceberg: {
 		Name:                     "Apache Iceberg",
@@ -434,6 +473,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8443,
 		ConnectionStringTemplate: "iceberg://{username}:{password}@{host}:{port}/{database}?catalog={catalog}&warehouse={warehouse}",
 		Paradigms:                []DataParadigm{ParadigmColumnar, ParadigmObjectStore},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"apache-iceberg"},
 	},
 	Milvus: {
@@ -449,6 +489,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           19530,
 		ConnectionStringTemplate: "milvus://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmVector},
+		PrimaryContainers:        []PrimaryContainer{ContainerEmbedding},
 	},
 	Weaviate: {
 		Name:                     "Weaviate",
@@ -463,6 +504,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8080,
 		ConnectionStringTemplate: "weaviate://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmVector},
+		PrimaryContainers:        []PrimaryContainer{ContainerEmbedding},
 	},
 	Pinecone: {
 		Name:                     "Pinecone",
@@ -476,6 +518,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8080,
 		ConnectionStringTemplate: "pinecone://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmVector},
+		PrimaryContainers:        []PrimaryContainer{ContainerEmbedding},
 	},
 	Chroma: {
 		Name:                     "Chroma",
@@ -489,6 +532,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8000,
 		ConnectionStringTemplate: "chroma://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmVector},
+		PrimaryContainers:        []PrimaryContainer{ContainerEmbedding},
 	},
 	LanceDB: {
 		Name:                     "LanceDB",
@@ -502,6 +546,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           6666,
 		ConnectionStringTemplate: "lancedb://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmVector},
+		PrimaryContainers:        []PrimaryContainer{ContainerEmbedding},
 	},
 	DuckDB: {
 		Name:                     "DuckDB",
@@ -515,6 +560,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8080,
 		ConnectionStringTemplate: "duckdb://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmRelational},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 	},
 	HANA: {
 		Name:                     "SAP HANA",
@@ -531,6 +577,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           30015,
 		ConnectionStringTemplate: "hdb://{username}:{password}@{host}:{port}?database={database}",
 		Paradigms:                []DataParadigm{ParadigmRelational, ParadigmColumnar},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"sap-hana", "hdb", "saphana"},
 	},
 	EdgeDB: {
@@ -546,6 +593,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           5656,
 		ConnectionStringTemplate: "edgedb://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmRelational, ParadigmGraph},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable, ContainerNode, ContainerRelationship},
 		Aliases:                  []string{"gel", "geldata"},
 	},
 	S3: {
@@ -560,6 +608,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           443,
 		ConnectionStringTemplate: "s3://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmObjectStore},
+		PrimaryContainers:        []PrimaryContainer{ContainerBlob},
 		Aliases:                  []string{"aws-s3"},
 	},
 	GCS: {
@@ -574,6 +623,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           443,
 		ConnectionStringTemplate: "gs://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmObjectStore},
+		PrimaryContainers:        []PrimaryContainer{ContainerBlob},
 		Aliases:                  []string{"google-cloud-storage"},
 	},
 	AzureBlob: {
@@ -588,6 +638,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           443,
 		ConnectionStringTemplate: "az://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmObjectStore},
+		PrimaryContainers:        []PrimaryContainer{ContainerBlob},
 		Aliases:                  []string{"azure-blob", "azureblob"},
 	},
 	MinIO: {
@@ -603,6 +654,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           9000,
 		ConnectionStringTemplate: "minio://{username}:{password}@{host}:{port}/{database}?ssl={ssl}",
 		Paradigms:                []DataParadigm{ParadigmObjectStore},
+		PrimaryContainers:        []PrimaryContainer{ContainerBlob},
 	},
 	InfluxDB: {
 		Name:                     "InfluxDB",
@@ -619,6 +671,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8086,
 		ConnectionStringTemplate: "http://{host}:{port}?org={org}&bucket={bucket}&token={token}",
 		Paradigms:                []DataParadigm{ParadigmTimeSeries},
+		PrimaryContainers:        []PrimaryContainer{ContainerTimeSeriesPoint},
 		Aliases:                  []string{"influx"},
 	},
 	TimescaleDB: {
@@ -636,6 +689,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           5432,
 		ConnectionStringTemplate: "postgresql://{username}:{password}@{host}:{port}/{database}?sslmode={sslmode}",
 		Paradigms:                []DataParadigm{ParadigmTimeSeries, ParadigmRelational},
+		PrimaryContainers:        []PrimaryContainer{ContainerTimeSeriesPoint, ContainerTable},
 		Aliases:                  []string{"timescale"},
 	},
 	Prometheus: {
@@ -652,6 +706,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           9090,
 		ConnectionStringTemplate: "http://{host}:{port}",
 		Paradigms:                []DataParadigm{ParadigmTimeSeries},
+		PrimaryContainers:        []PrimaryContainer{ContainerTimeSeriesPoint},
 		Aliases:                  []string{"prom"},
 	},
 	QuestDB: {
@@ -667,6 +722,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8812,
 		ConnectionStringTemplate: "postgresql://{username}:{password}@{host}:{port}/{database}?sslmode={sslmode}",
 		Paradigms:                []DataParadigm{ParadigmTimeSeries, ParadigmRelational},
+		PrimaryContainers:        []PrimaryContainer{ContainerTimeSeriesPoint, ContainerTable},
 		Aliases:                  []string{"quest"},
 	},
 	VictoriaMetrics: {
@@ -683,6 +739,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8428,
 		ConnectionStringTemplate: "http://{host}:{port}",
 		Paradigms:                []DataParadigm{ParadigmTimeSeries},
+		PrimaryContainers:        []PrimaryContainer{ContainerTimeSeriesPoint},
 		Aliases:                  []string{"vm", "victoria"},
 	},
 	BigQuery: {
@@ -699,6 +756,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           443,
 		ConnectionStringTemplate: "bigquery://{project_id}/{dataset}?location={location}",
 		Paradigms:                []DataParadigm{ParadigmColumnar},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"bq"},
 	},
 	Redshift: {
@@ -716,6 +774,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           5439,
 		ConnectionStringTemplate: "postgresql://{username}:{password}@{host}:{port}/{database}?sslmode={sslmode}",
 		Paradigms:                []DataParadigm{ParadigmColumnar},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"aws-redshift"},
 	},
 	Synapse: {
@@ -733,6 +792,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           1433,
 		ConnectionStringTemplate: "sqlserver://{username}:{password}@{host}:{port}/{database}?encrypt={encrypt}",
 		Paradigms:                []DataParadigm{ParadigmColumnar},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"azure-synapse"},
 	},
 	Databricks: {
@@ -750,6 +810,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           443,
 		ConnectionStringTemplate: "databricks://{host}:{port}?token={token}&http_path={http_path}",
 		Paradigms:                []DataParadigm{ParadigmColumnar, ParadigmObjectStore},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"databricks-sql"},
 	},
 	Druid: {
@@ -767,6 +828,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8888,
 		ConnectionStringTemplate: "http://{host}:{port}/druid/v2/sql",
 		Paradigms:                []DataParadigm{ParadigmColumnar, ParadigmTimeSeries},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable, ContainerTimeSeriesPoint},
 		Aliases:                  []string{"druid"},
 	},
 	ApachePinot: {
@@ -783,6 +845,7 @@ var All = map[DatabaseType]Capability{
 		DefaultSSLPort:           8099,
 		ConnectionStringTemplate: "http://{host}:{port}",
 		Paradigms:                []DataParadigm{ParadigmColumnar},
+		PrimaryContainers:        []PrimaryContainer{ContainerTable},
 		Aliases:                  []string{"pinot"},
 	},
 }
@@ -926,4 +989,35 @@ func MustGetByConnectionType(connectionType string) Capability {
 func IsValidConnectionType(connectionType string) bool {
 	_, ok := ParseID(connectionType)
 	return ok
+}
+
+// SupportsPrimaryContainer checks if a database supports a specific primary container type.
+func SupportsPrimaryContainer(id DatabaseType, container PrimaryContainer) bool {
+	c, ok := Get(id)
+	if !ok {
+		return false
+	}
+	for _, pc := range c.PrimaryContainers {
+		if pc == container {
+			return true
+		}
+	}
+	return false
+}
+
+// GetPrimaryContainers returns all primary containers supported by a database.
+func GetPrimaryContainers(id DatabaseType) []PrimaryContainer {
+	c, ok := Get(id)
+	if !ok {
+		return nil
+	}
+	return c.PrimaryContainers
+}
+
+// SupportsPrimaryContainerString checks if a database (by name/alias) supports a specific primary container type.
+func SupportsPrimaryContainerString(name string, container PrimaryContainer) bool {
+	if id, ok := ParseID(name); ok {
+		return SupportsPrimaryContainer(id, container)
+	}
+	return false
 }

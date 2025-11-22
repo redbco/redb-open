@@ -22,9 +22,10 @@ func DiscoverSchema(db interface{}) (*unifiedmodel.UnifiedModel, error) {
 
 	// Create the unified model
 	um := &unifiedmodel.UnifiedModel{
-		DatabaseType: dbcapabilities.DynamoDB,
-		Tables:       make(map[string]unifiedmodel.Table),
-		Indexes:      make(map[string]unifiedmodel.Index),
+		DatabaseType:  dbcapabilities.DynamoDB,
+		Tables:        make(map[string]unifiedmodel.Table),
+		KeyValuePairs: make(map[string]unifiedmodel.KeyValuePair),
+		Indexes:       make(map[string]unifiedmodel.Index),
 	}
 
 	// List all tables
@@ -142,6 +143,38 @@ func describeTableUnified(client *dynamodb.Client, tableName string, um *unified
 
 	// Add table to unified model
 	um.Tables[*table.TableName] = unifiedTable
+
+	// Also represent the table as a KeyValuePair structure (DynamoDB is fundamentally key-value)
+	var keySchema string
+	var partitionKey, sortKey string
+	for _, keyElement := range table.KeySchema {
+		if keyElement.KeyType == types.KeyTypeHash {
+			partitionKey = *keyElement.AttributeName
+		} else if keyElement.KeyType == types.KeyTypeRange {
+			sortKey = *keyElement.AttributeName
+		}
+	}
+
+	if partitionKey != "" {
+		keySchema = partitionKey
+		if sortKey != "" {
+			keySchema = fmt.Sprintf("%s:%s", partitionKey, sortKey)
+		}
+	}
+
+	kvPair := unifiedmodel.KeyValuePair{
+		Name:     *table.TableName,
+		Key:      keySchema,
+		DataType: "table", // DynamoDB table acts as a key-value namespace
+		Encoding: "dynamodb_table",
+		Options: map[string]any{
+			"partition_key": partitionKey,
+			"sort_key":      sortKey,
+			"billing_mode":  table.BillingModeSummary,
+			"table_status":  table.TableStatus,
+		},
+	}
+	um.KeyValuePairs[*table.TableName] = kvPair
 
 	return nil
 }

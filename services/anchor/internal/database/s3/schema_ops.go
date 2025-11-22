@@ -58,12 +58,77 @@ func (s *SchemaOps) DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedMo
 		tablesMap[t.Name] = *t
 	}
 
+	// Also list objects and create Blobs (primary container for object storage)
+	blobs, err := s.discoverBlobs(ctx, bucket)
+	if err != nil {
+		return nil, err
+	}
+
 	model := &unifiedmodel.UnifiedModel{
 		DatabaseType: s.conn.Type(),
 		Tables:       tablesMap,
+		Blobs:        blobs,
 	}
 
 	return model, nil
+}
+
+// discoverBlobs lists objects in the bucket and converts them to Blob entries (sample only).
+func (s *SchemaOps) discoverBlobs(ctx context.Context, bucket string) (map[string]unifiedmodel.Blob, error) {
+	// List a sample of objects (limit to prevent large listings)
+	const maxObjects = 100
+	input := &s3.ListObjectsV2Input{
+		Bucket:  aws.String(bucket),
+		MaxKeys: aws.Int32(int32(maxObjects)),
+	}
+
+	result, err := s.conn.client.Client().ListObjectsV2(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list objects: %w", err)
+	}
+
+	blobs := make(map[string]unifiedmodel.Blob)
+	for _, obj := range result.Contents {
+		if obj.Key == nil {
+			continue
+		}
+
+		key := *obj.Key
+		var storageClass, encryption, etag string
+		var size int64
+
+		if obj.StorageClass != "" {
+			storageClass = string(obj.StorageClass)
+		}
+		if obj.ETag != nil {
+			etag = *obj.ETag
+		}
+		if obj.Size != nil {
+			size = *obj.Size
+		}
+
+		blob := unifiedmodel.Blob{
+			Name:         key,
+			Bucket:       bucket,
+			Path:         key,
+			Size:         size,
+			ContentType:  "", // Would need HeadObject call to get content type
+			StorageClass: storageClass,
+			Encryption:   encryption,
+			ETag:         etag,
+			Options: map[string]any{
+				"bucket": bucket,
+			},
+		}
+
+		if obj.LastModified != nil {
+			blob.Options["last_modified"] = obj.LastModified.String()
+		}
+
+		blobs[key] = blob
+	}
+
+	return blobs, nil
 }
 
 // listPrefixes lists common prefixes (simulating "folders") in the bucket.

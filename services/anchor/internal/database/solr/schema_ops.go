@@ -20,7 +20,9 @@ func (s *SchemaOps) DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedMo
 	}
 
 	model := &unifiedmodel.UnifiedModel{
-		Tables: make(map[string]unifiedmodel.Table),
+		Tables:          make(map[string]unifiedmodel.Table),
+		SearchIndexes:   make(map[string]unifiedmodel.SearchIndex),
+		SearchDocuments: make(map[string]unifiedmodel.SearchDocument),
 	}
 
 	// Simplified implementation - just return empty model
@@ -32,6 +34,23 @@ func (s *SchemaOps) DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedMo
 	}
 
 	model.Tables[s.conn.collection] = table
+
+	// Also create SearchIndex and SearchDocument (primary containers for search engines)
+	searchIndex := unifiedmodel.SearchIndex{
+		Name:   s.conn.collection,
+		Fields: []string{}, // TODO: Fetch fields from Solr schema API
+	}
+
+	searchDoc := unifiedmodel.SearchDocument{
+		Name:       s.conn.collection,
+		DocumentID: s.conn.collection,
+		Index:      s.conn.collection,
+		Fields:     make(map[string]unifiedmodel.Field),
+		Type:       "solr",
+	}
+
+	model.SearchIndexes[s.conn.collection] = searchIndex
+	model.SearchDocuments[s.conn.collection] = searchDoc
 
 	return model, nil
 }

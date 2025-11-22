@@ -24,6 +24,7 @@ export function SchemaOverview({
       return schema.containers.map(container => ({
         name: container.object_name,
         columns: container.items || [],
+        itemCount: container.item_count, // Use item_count directly from resource_containers
         object_type: container.object_type,
       }));
     }
@@ -31,6 +32,7 @@ export function SchemaOverview({
     return (schema.tables || []).map(table => ({
       name: table.name,
       columns: table.columns || [],
+      itemCount: table.columns?.length || 0, // Calculate from columns for legacy
       object_type: 'table',
     }));
   };
@@ -40,12 +42,8 @@ export function SchemaOverview({
   // Calculate statistics
   const tableCount = containers.length;
   const columnCount = containers.reduce((acc, container) => {
-    if (schema.containers && schema.containers.length > 0) {
-      // New format: items
-      return acc + (container.columns?.length || 0);
-    }
-    // Legacy format: columns
-    return acc + (container.columns?.length || 0);
+    // Use item_count when available (new format), otherwise count columns (legacy)
+    return acc + (container.itemCount || container.columns?.length || 0);
   }, 0);
   
   // Count privileged columns by confidence level (using enriched schema endpoint data)

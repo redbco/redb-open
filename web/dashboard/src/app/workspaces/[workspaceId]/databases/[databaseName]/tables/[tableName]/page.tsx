@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api/endpoints';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { CellValue } from '@/components/ui/CellValue';
 import { Table, ArrowLeft, Lock, Unlock, Key, Shield, ChevronDown, ChevronUp, Database } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import {
@@ -433,14 +434,10 @@ export default function TableDataPage({ params }: TableDataPageProps) {
                       const isHighConfidence = isHighConfidencePrivileged(colName);
                       const confidenceLevel = getPrivilegedConfidenceLevel(colName);
                       const cellValue = row[colName];
+                      const columnSchema = getColumnSchema(colName);
                       
                       // Only obfuscate high confidence privileged data
                       const shouldObfuscate = isHighConfidence && !showPrivilegedData;
-                      const displayValue = shouldObfuscate
-                        ? '••••••••' 
-                        : (cellValue === null || cellValue === undefined) 
-                          ? <span className="text-muted-foreground italic">NULL</span>
-                          : String(cellValue);
 
                       // Apply styling based on confidence level
                       let cellClassName = 'px-6 py-4 font-medium whitespace-nowrap ';
@@ -462,7 +459,14 @@ export default function TableDataPage({ params }: TableDataPageProps) {
                           className={cellClassName} 
                           key={colIndex}
                         >
-                          {displayValue}
+                          {shouldObfuscate ? (
+                            '••••••••'
+                          ) : (
+                            <CellValue 
+                              value={cellValue} 
+                              dataType={columnSchema?.data_type}
+                            />
+                          )}
                         </td>
                       );
                     })}

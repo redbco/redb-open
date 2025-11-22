@@ -49,19 +49,31 @@ type MappingFilter struct {
 
 // ResourceContainer represents the resource_containers table
 type ResourceContainer struct {
-	ContainerID       string                 `json:"container_id" db:"container_id"`
-	TenantID          string                 `json:"tenant_id" db:"tenant_id"`
-	WorkspaceID       string                 `json:"workspace_id" db:"workspace_id"`
-	ResourceURI       string                 `json:"resource_uri" db:"resource_uri"`
-	Protocol          string                 `json:"protocol" db:"protocol"`
-	Scope             string                 `json:"scope" db:"scope"`
-	ObjectType        string                 `json:"object_type" db:"object_type"`
-	ObjectName        string                 `json:"object_name" db:"object_name"`
-	DatabaseID        *string                `json:"database_id" db:"database_id"`
-	InstanceID        *string                `json:"instance_id" db:"instance_id"`
-	IntegrationID     *string                `json:"integration_id" db:"integration_id"`
-	MCPServerID       *string                `json:"mcpserver_id" db:"mcpserver_id"`
-	ConnectedToNodeID int64                  `json:"connected_to_node_id" db:"connected_to_node_id"`
+	ContainerID       string  `json:"container_id" db:"container_id"`
+	TenantID          string  `json:"tenant_id" db:"tenant_id"`
+	WorkspaceID       string  `json:"workspace_id" db:"workspace_id"`
+	ResourceURI       string  `json:"resource_uri" db:"resource_uri"`
+	Protocol          string  `json:"protocol" db:"protocol"`
+	Scope             string  `json:"scope" db:"scope"`
+	ObjectType        string  `json:"object_type" db:"object_type"`
+	ObjectName        string  `json:"object_name" db:"object_name"`
+	DatabaseID        *string `json:"database_id" db:"database_id"`
+	InstanceID        *string `json:"instance_id" db:"instance_id"`
+	IntegrationID     *string `json:"integration_id" db:"integration_id"`
+	MCPServerID       *string `json:"mcpserver_id" db:"mcpserver_id"`
+	ConnectedToNodeID *int64  `json:"connected_to_node_id" db:"connected_to_node_id"`
+
+	// Virtual resource tracking
+	IsVirtual             bool                   `json:"is_virtual" db:"is_virtual"`
+	VirtualSource         string                 `json:"virtual_source" db:"virtual_source"`
+	VirtualNamespace      string                 `json:"virtual_namespace" db:"virtual_namespace"`
+	BindingMode           string                 `json:"binding_mode" db:"binding_mode"`
+	BoundDatabaseID       *string                `json:"bound_database_id" db:"bound_database_id"`
+	ReconciliationStatus  string                 `json:"reconciliation_status" db:"reconciliation_status"`
+	ReconciledContainerID *string                `json:"reconciled_container_id" db:"reconciled_container_id"`
+	ReconciliationDetails map[string]interface{} `json:"reconciliation_details" db:"reconciliation_details"`
+	ReconciledAt          *time.Time             `json:"reconciled_at" db:"reconciled_at"`
+
 	OwnerID           string                 `json:"owner_id" db:"owner_id"`
 	Status            string                 `json:"status" db:"status"`
 	StatusMessage     string                 `json:"status_message" db:"status_message"`
@@ -85,59 +97,69 @@ type ResourceContainer struct {
 
 // ResourceItem represents the resource_items table
 type ResourceItem struct {
-	ItemID                   string                   `json:"item_id" db:"item_id"`
-	ContainerID              string                   `json:"container_id" db:"container_id"`
-	TenantID                 string                   `json:"tenant_id" db:"tenant_id"`
-	WorkspaceID              string                   `json:"workspace_id" db:"workspace_id"`
-	ResourceURI              string                   `json:"resource_uri" db:"resource_uri"`
-	Protocol                 string                   `json:"protocol" db:"protocol"`
-	Scope                    string                   `json:"scope" db:"scope"`
-	ItemType                 string                   `json:"item_type" db:"item_type"`
-	ItemName                 string                   `json:"item_name" db:"item_name"`
-	ItemDisplayName          string                   `json:"item_display_name" db:"item_display_name"`
-	ItemPath                 []string                 `json:"item_path" db:"item_path"`
-	DataType                 string                   `json:"data_type" db:"data_type"`
-	UnifiedDataType          *string                  `json:"unified_data_type" db:"unified_data_type"`
-	IsNullable               bool                     `json:"is_nullable" db:"is_nullable"`
-	IsPrimaryKey             bool                     `json:"is_primary_key" db:"is_primary_key"`
-	IsUnique                 bool                     `json:"is_unique" db:"is_unique"`
-	IsIndexed                bool                     `json:"is_indexed" db:"is_indexed"`
-	IsRequired               bool                     `json:"is_required" db:"is_required"`
-	IsArray                  bool                     `json:"is_array" db:"is_array"`
-	ArrayDimensions          int                      `json:"array_dimensions" db:"array_dimensions"`
-	DefaultValue             *string                  `json:"default_value" db:"default_value"`
-	Constraints              []map[string]interface{} `json:"constraints" db:"constraints"`
-	IsCustomType             bool                     `json:"is_custom_type" db:"is_custom_type"`
-	CustomTypeName           *string                  `json:"custom_type_name" db:"custom_type_name"`
-	CustomTypeDefinition     map[string]interface{}   `json:"custom_type_definition" db:"custom_type_definition"`
-	HasSchema                bool                     `json:"has_schema" db:"has_schema"`
-	SchemaFormat             *string                  `json:"schema_format" db:"schema_format"`
-	SchemaDefinition         map[string]interface{}   `json:"schema_definition" db:"schema_definition"`
-	SchemaVersion            *string                  `json:"schema_version" db:"schema_version"`
-	SchemaEvolutionVersion   int                      `json:"schema_evolution_version" db:"schema_evolution_version"`
-	SchemaValidationMode     string                   `json:"schema_validation_mode" db:"schema_validation_mode"`
-	SchemaMismatchAction     string                   `json:"schema_mismatch_action" db:"schema_mismatch_action"`
-	AllowNewFields           bool                     `json:"allow_new_fields" db:"allow_new_fields"`
-	AllowFieldTypeWidening   bool                     `json:"allow_field_type_widening" db:"allow_field_type_widening"`
-	AllowFieldRemoval        bool                     `json:"allow_field_removal" db:"allow_field_removal"`
-	SchemaEvolutionLog       []map[string]interface{} `json:"schema_evolution_log" db:"schema_evolution_log"`
-	NestedItems              []map[string]interface{} `json:"nested_items" db:"nested_items"`
-	MaxLength                *int                     `json:"max_length" db:"max_length"`
-	Precision                *int                     `json:"precision" db:"precision"`
-	Scale                    *int                     `json:"scale" db:"scale"`
-	ConnectedToNodeID        int64                    `json:"connected_to_node_id" db:"connected_to_node_id"`
-	Status                   string                   `json:"status" db:"status"`
-	Online                   bool                     `json:"online" db:"online"`
-	ItemMetadata             map[string]interface{}   `json:"item_metadata" db:"item_metadata"`
-	EnrichedMetadata         map[string]interface{}   `json:"enriched_metadata" db:"enriched_metadata"`
-	ItemComment              *string                  `json:"item_comment" db:"item_comment"`
-	IsPrivileged             bool                     `json:"is_privileged" db:"is_privileged"`
-	PrivilegedClassification *string                  `json:"privileged_classification" db:"privileged_classification"`
-	DetectionConfidence      *float64                 `json:"detection_confidence" db:"detection_confidence"`
-	DetectionMethod          *string                  `json:"detection_method" db:"detection_method"`
-	OrdinalPosition          *int                     `json:"ordinal_position" db:"ordinal_position"`
-	Created                  time.Time                `json:"created" db:"created"`
-	Updated                  time.Time                `json:"updated" db:"updated"`
+	ItemID                 string                   `json:"item_id" db:"item_id"`
+	ContainerID            string                   `json:"container_id" db:"container_id"`
+	TenantID               string                   `json:"tenant_id" db:"tenant_id"`
+	WorkspaceID            string                   `json:"workspace_id" db:"workspace_id"`
+	ResourceURI            string                   `json:"resource_uri" db:"resource_uri"`
+	Protocol               string                   `json:"protocol" db:"protocol"`
+	Scope                  string                   `json:"scope" db:"scope"`
+	ItemType               string                   `json:"item_type" db:"item_type"`
+	ItemName               string                   `json:"item_name" db:"item_name"`
+	ItemDisplayName        string                   `json:"item_display_name" db:"item_display_name"`
+	ItemPath               []string                 `json:"item_path" db:"item_path"`
+	DataType               string                   `json:"data_type" db:"data_type"`
+	UnifiedDataType        *string                  `json:"unified_data_type" db:"unified_data_type"`
+	IsNullable             bool                     `json:"is_nullable" db:"is_nullable"`
+	IsPrimaryKey           bool                     `json:"is_primary_key" db:"is_primary_key"`
+	IsUnique               bool                     `json:"is_unique" db:"is_unique"`
+	IsIndexed              bool                     `json:"is_indexed" db:"is_indexed"`
+	IsRequired             bool                     `json:"is_required" db:"is_required"`
+	IsArray                bool                     `json:"is_array" db:"is_array"`
+	ArrayDimensions        int                      `json:"array_dimensions" db:"array_dimensions"`
+	DefaultValue           *string                  `json:"default_value" db:"default_value"`
+	Constraints            []map[string]interface{} `json:"constraints" db:"constraints"`
+	IsCustomType           bool                     `json:"is_custom_type" db:"is_custom_type"`
+	CustomTypeName         *string                  `json:"custom_type_name" db:"custom_type_name"`
+	CustomTypeDefinition   map[string]interface{}   `json:"custom_type_definition" db:"custom_type_definition"`
+	HasSchema              bool                     `json:"has_schema" db:"has_schema"`
+	SchemaFormat           *string                  `json:"schema_format" db:"schema_format"`
+	SchemaDefinition       map[string]interface{}   `json:"schema_definition" db:"schema_definition"`
+	SchemaVersion          *string                  `json:"schema_version" db:"schema_version"`
+	SchemaEvolutionVersion int                      `json:"schema_evolution_version" db:"schema_evolution_version"`
+	SchemaValidationMode   string                   `json:"schema_validation_mode" db:"schema_validation_mode"`
+	SchemaMismatchAction   string                   `json:"schema_mismatch_action" db:"schema_mismatch_action"`
+	AllowNewFields         bool                     `json:"allow_new_fields" db:"allow_new_fields"`
+	AllowFieldTypeWidening bool                     `json:"allow_field_type_widening" db:"allow_field_type_widening"`
+	AllowFieldRemoval      bool                     `json:"allow_field_removal" db:"allow_field_removal"`
+	SchemaEvolutionLog     []map[string]interface{} `json:"schema_evolution_log" db:"schema_evolution_log"`
+	NestedItems            []map[string]interface{} `json:"nested_items" db:"nested_items"`
+	MaxLength              *int                     `json:"max_length" db:"max_length"`
+	Precision              *int                     `json:"precision" db:"precision"`
+	Scale                  *int                     `json:"scale" db:"scale"`
+	ConnectedToNodeID      *int64                   `json:"connected_to_node_id" db:"connected_to_node_id"`
+
+	// Virtual resource tracking
+	IsVirtual             bool                   `json:"is_virtual" db:"is_virtual"`
+	VirtualSource         string                 `json:"virtual_source" db:"virtual_source"`
+	BindingMode           *string                `json:"binding_mode" db:"binding_mode"`
+	ReconciliationStatus  string                 `json:"reconciliation_status" db:"reconciliation_status"`
+	ReconciledItemID      *string                `json:"reconciled_item_id" db:"reconciled_item_id"`
+	ReconciliationDetails map[string]interface{} `json:"reconciliation_details" db:"reconciliation_details"`
+	ReconciledAt          *time.Time             `json:"reconciled_at" db:"reconciled_at"`
+
+	Status                   string                 `json:"status" db:"status"`
+	Online                   bool                   `json:"online" db:"online"`
+	ItemMetadata             map[string]interface{} `json:"item_metadata" db:"item_metadata"`
+	EnrichedMetadata         map[string]interface{} `json:"enriched_metadata" db:"enriched_metadata"`
+	ItemComment              *string                `json:"item_comment" db:"item_comment"`
+	IsPrivileged             bool                   `json:"is_privileged" db:"is_privileged"`
+	PrivilegedClassification *string                `json:"privileged_classification" db:"privileged_classification"`
+	DetectionConfidence      *float64               `json:"detection_confidence" db:"detection_confidence"`
+	DetectionMethod          *string                `json:"detection_method" db:"detection_method"`
+	OrdinalPosition          *int                   `json:"ordinal_position" db:"ordinal_position"`
+	Created                  time.Time              `json:"created" db:"created"`
+	Updated                  time.Time              `json:"updated" db:"updated"`
 }
 
 // ResourceContainerFilter represents a filter for querying resource containers

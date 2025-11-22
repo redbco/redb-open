@@ -46,7 +46,12 @@ export function useDatabaseSchemaInfo(workspaceId: string, databaseName: string 
       // Parse the schema from the database object
       let schemaData: DatabaseSchema = {};
       
-      if (response.database.database_schema) {
+      // Priority 1: Check for resource_containers (new unified format)
+      if (response.database.resource_containers && Array.isArray(response.database.resource_containers)) {
+        // New format with resource_containers already parsed
+        schemaData.containers = response.database.resource_containers;
+      } else if (response.database.database_schema) {
+        // Priority 2: Parse from database_schema field
         try {
           // The schema is double-encoded JSON string that needs parsing twice
           let schemaString = response.database.database_schema;
@@ -219,7 +224,12 @@ export function useMultipleDatabaseSchemas(
         // Parse the schema from the database object
         let schemaData: DatabaseSchema = {};
         
-        if (response.database.database_schema) {
+        // Priority 1: Check for resource_containers (new unified format)
+        if (response.database.resource_containers && Array.isArray(response.database.resource_containers)) {
+          // New format with resource_containers already parsed
+          schemaData.containers = response.database.resource_containers;
+        } else if (response.database.database_schema) {
+          // Priority 2: Parse from database_schema field
           try {
             // The schema is double-encoded JSON string that needs parsing twice
             let schemaString = response.database.database_schema;

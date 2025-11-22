@@ -84,7 +84,7 @@ func PopulateResourcesFromUnifiedModel(
 			ObjectType:                    "table",
 			ObjectName:                    tableName,
 			DatabaseID:                    &dbID,
-			ConnectedToNodeID:             nodeIDInt64,
+			ConnectedToNodeID: &nodeIDInt64,
 			OwnerID:                       ownerID,
 			Status:                        "STATUS_CREATED",
 			Online:                        true,
@@ -136,7 +136,7 @@ func PopulateResourcesFromUnifiedModel(
 				AllowFieldRemoval:      false,
 				SchemaEvolutionLog:     []map[string]interface{}{},
 				NestedItems:            []map[string]interface{}{},
-				ConnectedToNodeID:      nodeIDInt64,
+				ConnectedToNodeID: &nodeIDInt64,
 				Status:                 "STATUS_CREATED",
 				Online:                 true,
 				ItemMetadata:           map[string]interface{}{},
@@ -183,7 +183,7 @@ func PopulateResourcesFromUnifiedModel(
 			ObjectType:                    "collection",
 			ObjectName:                    collectionName,
 			DatabaseID:                    &dbID,
-			ConnectedToNodeID:             nodeIDInt64,
+			ConnectedToNodeID: &nodeIDInt64,
 			OwnerID:                       ownerID,
 			Status:                        "STATUS_CREATED",
 			Online:                        true,
@@ -234,7 +234,7 @@ func PopulateResourcesFromUnifiedModel(
 				AllowFieldRemoval:      false,
 				SchemaEvolutionLog:     []map[string]interface{}{},
 				NestedItems:            []map[string]interface{}{},
-				ConnectedToNodeID:      nodeIDInt64,
+				ConnectedToNodeID: &nodeIDInt64,
 				Status:                 "STATUS_CREATED",
 				Online:                 true,
 				ItemMetadata:           map[string]interface{}{},
@@ -275,7 +275,7 @@ func PopulateResourcesFromUnifiedModel(
 			ObjectType:        "view",
 			ObjectName:        viewName,
 			DatabaseID:        &dbID,
-			ConnectedToNodeID: nodeIDInt64,
+			ConnectedToNodeID: &nodeIDInt64,
 			OwnerID:           ownerID,
 			Status:            "STATUS_CREATED",
 			Online:            true,
@@ -320,7 +320,7 @@ func PopulateResourcesFromUnifiedModel(
 				AllowFieldRemoval:      false,
 				SchemaEvolutionLog:     []map[string]interface{}{},
 				NestedItems:            []map[string]interface{}{},
-				ConnectedToNodeID:      nodeIDInt64,
+				ConnectedToNodeID: &nodeIDInt64,
 				Status:                 "STATUS_CREATED",
 				Online:                 true,
 				ItemMetadata:           map[string]interface{}{},
@@ -362,7 +362,7 @@ func PopulateResourcesFromUnifiedModel(
 			ObjectType:        "materialized_view",
 			ObjectName:        mvName,
 			DatabaseID:        &dbID,
-			ConnectedToNodeID: nodeIDInt64,
+			ConnectedToNodeID: &nodeIDInt64,
 			OwnerID:           ownerID,
 			Status:            "STATUS_CREATED",
 			Online:            true,
@@ -407,7 +407,7 @@ func PopulateResourcesFromUnifiedModel(
 				AllowFieldRemoval:      false,
 				SchemaEvolutionLog:     []map[string]interface{}{},
 				NestedItems:            []map[string]interface{}{},
-				ConnectedToNodeID:      nodeIDInt64,
+				ConnectedToNodeID: &nodeIDInt64,
 				Status:                 "STATUS_CREATED",
 				Online:                 true,
 				ItemMetadata:           map[string]interface{}{},
@@ -449,7 +449,7 @@ func PopulateResourcesFromUnifiedModel(
 			ObjectType:        "node",
 			ObjectName:        nodeName,
 			DatabaseID:        &dbID,
-			ConnectedToNodeID: nodeIDInt64,
+			ConnectedToNodeID: &nodeIDInt64,
 			OwnerID:           ownerID,
 			Status:            "STATUS_CREATED",
 			Online:            true,
@@ -502,7 +502,7 @@ func PopulateResourcesFromUnifiedModel(
 				AllowFieldRemoval:      false,
 				SchemaEvolutionLog:     []map[string]interface{}{},
 				NestedItems:            []map[string]interface{}{},
-				ConnectedToNodeID:      nodeIDInt64,
+				ConnectedToNodeID: &nodeIDInt64,
 				Status:                 "STATUS_CREATED",
 				Online:                 true,
 				ItemMetadata:           map[string]interface{}{},
@@ -543,7 +543,7 @@ func PopulateResourcesFromUnifiedModel(
 			ObjectType:        "relationship",
 			ObjectName:        relName,
 			DatabaseID:        &dbID,
-			ConnectedToNodeID: nodeIDInt64,
+			ConnectedToNodeID: &nodeIDInt64,
 			OwnerID:           ownerID,
 			Status:            "STATUS_CREATED",
 			Online:            true,
@@ -598,7 +598,7 @@ func PopulateResourcesFromUnifiedModel(
 				AllowFieldRemoval:      false,
 				SchemaEvolutionLog:     []map[string]interface{}{},
 				NestedItems:            []map[string]interface{}{},
-				ConnectedToNodeID:      nodeIDInt64,
+				ConnectedToNodeID: &nodeIDInt64,
 				Status:                 "STATUS_CREATED",
 				Online:                 true,
 				ItemMetadata:           map[string]interface{}{},
@@ -625,6 +625,310 @@ func PopulateResourcesFromUnifiedModel(
 
 			items = append(items, item)
 		}
+	}
+
+	// Process Embeddings (Vector databases)
+	for embeddingName, embedding := range um.Embeddings {
+		containerURI := GenerateContainerURI(protocol, scope, dbID, "embedding", embeddingName)
+		container := &models.ResourceContainer{
+			TenantID:          tenantID,
+			WorkspaceID:       workspaceID,
+			ResourceURI:       containerURI,
+			Protocol:          protocol,
+			Scope:             scope,
+			ObjectType:        "embedding",
+			ObjectName:        embeddingName,
+			DatabaseID:        &dbID,
+			ConnectedToNodeID: &nodeIDInt64,
+			OwnerID:           ownerID,
+			Status:            "STATUS_CREATED",
+			Online:            true,
+			ContainerMetadata: map[string]interface{}{
+				"model": embedding.Model,
+			},
+			EnrichedMetadata:              map[string]interface{}{},
+			DatabaseType:                  &databaseType,
+			ItemCount:                     0, // Embeddings don't have schema items like columns
+			ContainerClassificationSource: "auto",
+		}
+
+		if enrichment, ok := enrichmentMap[embeddingName]; ok && enrichment.PrimaryCategory != "" {
+			container.ContainerClassification = &enrichment.PrimaryCategory
+			container.ContainerClassificationConfidence = &enrichment.ClassificationConfidence
+		}
+
+		containers = append(containers, container)
+	}
+
+	// Process KeyValuePairs (Redis, DynamoDB)
+	for kvName, kv := range um.KeyValuePairs {
+		containerURI := GenerateContainerURI(protocol, scope, dbID, "key_value_pair", kvName)
+		metadata := map[string]interface{}{
+			"key":       kv.Key,
+			"data_type": kv.DataType,
+			"encoding":  kv.Encoding,
+		}
+		if kv.TTL != nil {
+			metadata["ttl"] = *kv.TTL
+		}
+
+		container := &models.ResourceContainer{
+			TenantID:                      tenantID,
+			WorkspaceID:                   workspaceID,
+			ResourceURI:                   containerURI,
+			Protocol:                      protocol,
+			Scope:                         scope,
+			ObjectType:                    "key_value_pair",
+			ObjectName:                    kvName,
+			DatabaseID:                    &dbID,
+			ConnectedToNodeID: &nodeIDInt64,
+			OwnerID:                       ownerID,
+			Status:                        "STATUS_CREATED",
+			Online:                        true,
+			ContainerMetadata:             metadata,
+			EnrichedMetadata:              map[string]interface{}{},
+			DatabaseType:                  &databaseType,
+			ItemCount:                     0, // Key-value pairs are the items themselves
+			ContainerClassificationSource: "auto",
+		}
+
+		if enrichment, ok := enrichmentMap[kvName]; ok && enrichment.PrimaryCategory != "" {
+			container.ContainerClassification = &enrichment.PrimaryCategory
+			container.ContainerClassificationConfidence = &enrichment.ClassificationConfidence
+		}
+
+		containers = append(containers, container)
+	}
+
+	// Process SearchDocuments (Elasticsearch, OpenSearch, Solr)
+	for docName, doc := range um.SearchDocuments {
+		containerURI := GenerateContainerURI(protocol, scope, dbID, "search_document", docName)
+		container := &models.ResourceContainer{
+			TenantID:          tenantID,
+			WorkspaceID:       workspaceID,
+			ResourceURI:       containerURI,
+			Protocol:          protocol,
+			Scope:             scope,
+			ObjectType:        "search_document",
+			ObjectName:        docName,
+			DatabaseID:        &dbID,
+			ConnectedToNodeID: &nodeIDInt64,
+			OwnerID:           ownerID,
+			Status:            "STATUS_CREATED",
+			Online:            true,
+			ContainerMetadata: map[string]interface{}{
+				"index":    doc.Index,
+				"type":     doc.Type,
+				"analyzer": doc.Analyzer,
+			},
+			EnrichedMetadata:              map[string]interface{}{},
+			DatabaseType:                  &databaseType,
+			ItemCount:                     len(doc.Fields),
+			ContainerClassificationSource: "auto",
+		}
+
+		if enrichment, ok := enrichmentMap[docName]; ok && enrichment.PrimaryCategory != "" {
+			container.ContainerClassification = &enrichment.PrimaryCategory
+			container.ContainerClassificationConfidence = &enrichment.ClassificationConfidence
+		}
+
+		containers = append(containers, container)
+
+		// Process search document fields
+		for fieldName, field := range doc.Fields {
+			itemURI := GenerateItemURI(containerURI, "field", fieldName, nil)
+			item := &models.ResourceItem{
+				TenantID:               tenantID,
+				WorkspaceID:            workspaceID,
+				ResourceURI:            itemURI,
+				Protocol:               protocol,
+				Scope:                  scope,
+				ItemType:               "field",
+				ItemName:               fieldName,
+				ItemDisplayName:        generateItemDisplayName(databaseName, docName, fieldName),
+				ItemPath:               []string{},
+				DataType:               field.Type,
+				IsNullable:             !field.Required,
+				IsPrimaryKey:           false,
+				IsUnique:               false,
+				IsIndexed:              true, // Search fields are typically indexed
+				IsRequired:             field.Required,
+				IsArray:                false,
+				ArrayDimensions:        1,
+				Constraints:            []map[string]interface{}{},
+				IsCustomType:           false,
+				HasSchema:              false,
+				SchemaEvolutionVersion: 1,
+				SchemaValidationMode:   "flexible",
+				SchemaMismatchAction:   "accept_and_index",
+				AllowNewFields:         true,
+				AllowFieldTypeWidening: true,
+				AllowFieldRemoval:      false,
+				SchemaEvolutionLog:     []map[string]interface{}{},
+				NestedItems:            []map[string]interface{}{},
+				ConnectedToNodeID: &nodeIDInt64,
+				Status:                 "STATUS_CREATED",
+				Online:                 true,
+				ItemMetadata:           map[string]interface{}{},
+				EnrichedMetadata:       map[string]interface{}{},
+				IsPrivileged:           false,
+			}
+
+			if colEnrichments, ok := columnEnrichmentMap[docName]; ok {
+				if enrichedCol, colOk := colEnrichments[fieldName]; colOk {
+					item.IsPrivileged = enrichedCol.IsPrivilegedData
+					if enrichedCol.DataCategory != "" {
+						item.PrivilegedClassification = &enrichedCol.DataCategory
+					}
+					if enrichedCol.PrivilegedConfidence > 0 {
+						item.DetectionConfidence = &enrichedCol.PrivilegedConfidence
+					}
+					if item.IsPrivileged {
+						detectionMethod := "auto"
+						item.DetectionMethod = &detectionMethod
+					}
+				}
+			}
+
+			items = append(items, item)
+		}
+	}
+
+	// Process TimeSeriesPoints (InfluxDB, Prometheus, VictoriaMetrics)
+	for tsName, ts := range um.TimeSeriesPoints {
+		containerURI := GenerateContainerURI(protocol, scope, dbID, "time_series_point", tsName)
+		container := &models.ResourceContainer{
+			TenantID:          tenantID,
+			WorkspaceID:       workspaceID,
+			ResourceURI:       containerURI,
+			Protocol:          protocol,
+			Scope:             scope,
+			ObjectType:        "time_series_point",
+			ObjectName:        tsName,
+			DatabaseID:        &dbID,
+			ConnectedToNodeID: &nodeIDInt64,
+			OwnerID:           ownerID,
+			Status:            "STATUS_CREATED",
+			Online:            true,
+			ContainerMetadata: map[string]interface{}{
+				"aggregation": ts.Aggregation,
+				"retention":   ts.Retention,
+				"precision":   ts.Precision,
+			},
+			EnrichedMetadata:              map[string]interface{}{},
+			DatabaseType:                  &databaseType,
+			ItemCount:                     len(ts.Fields),
+			ContainerClassificationSource: "auto",
+		}
+
+		if enrichment, ok := enrichmentMap[tsName]; ok && enrichment.PrimaryCategory != "" {
+			container.ContainerClassification = &enrichment.PrimaryCategory
+			container.ContainerClassificationConfidence = &enrichment.ClassificationConfidence
+		}
+
+		containers = append(containers, container)
+
+		// Process time-series fields
+		for fieldName, field := range ts.Fields {
+			itemURI := GenerateItemURI(containerURI, "field", fieldName, nil)
+			item := &models.ResourceItem{
+				TenantID:               tenantID,
+				WorkspaceID:            workspaceID,
+				ResourceURI:            itemURI,
+				Protocol:               protocol,
+				Scope:                  scope,
+				ItemType:               "field",
+				ItemName:               fieldName,
+				ItemDisplayName:        generateItemDisplayName(databaseName, tsName, fieldName),
+				ItemPath:               []string{},
+				DataType:               field.Type,
+				IsNullable:             !field.Required,
+				IsPrimaryKey:           false,
+				IsUnique:               false,
+				IsIndexed:              true, // Time-series fields are typically indexed
+				IsRequired:             field.Required,
+				IsArray:                false,
+				ArrayDimensions:        1,
+				Constraints:            []map[string]interface{}{},
+				IsCustomType:           false,
+				HasSchema:              false,
+				SchemaEvolutionVersion: 1,
+				SchemaValidationMode:   "strict",
+				SchemaMismatchAction:   "reject",
+				AllowNewFields:         false,
+				AllowFieldTypeWidening: false,
+				AllowFieldRemoval:      false,
+				SchemaEvolutionLog:     []map[string]interface{}{},
+				NestedItems:            []map[string]interface{}{},
+				ConnectedToNodeID: &nodeIDInt64,
+				Status:                 "STATUS_CREATED",
+				Online:                 true,
+				ItemMetadata:           map[string]interface{}{},
+				EnrichedMetadata:       map[string]interface{}{},
+				IsPrivileged:           false,
+			}
+
+			if colEnrichments, ok := columnEnrichmentMap[tsName]; ok {
+				if enrichedCol, colOk := colEnrichments[fieldName]; colOk {
+					item.IsPrivileged = enrichedCol.IsPrivilegedData
+					if enrichedCol.DataCategory != "" {
+						item.PrivilegedClassification = &enrichedCol.DataCategory
+					}
+					if enrichedCol.PrivilegedConfidence > 0 {
+						item.DetectionConfidence = &enrichedCol.PrivilegedConfidence
+					}
+					if item.IsPrivileged {
+						detectionMethod := "auto"
+						item.DetectionMethod = &detectionMethod
+					}
+				}
+			}
+
+			items = append(items, item)
+		}
+	}
+
+	// Process Blobs (S3, GCS, Azure Blob, MinIO)
+	for blobName, blob := range um.Blobs {
+		containerURI := GenerateContainerURI(protocol, scope, dbID, "blob", blobName)
+		metadata := map[string]interface{}{
+			"bucket":        blob.Bucket,
+			"path":          blob.Path,
+			"content_type":  blob.ContentType,
+			"storage_class": blob.StorageClass,
+			"encryption":    blob.Encryption,
+		}
+		if blob.ETag != "" {
+			metadata["etag"] = blob.ETag
+		}
+
+		container := &models.ResourceContainer{
+			TenantID:                      tenantID,
+			WorkspaceID:                   workspaceID,
+			ResourceURI:                   containerURI,
+			Protocol:                      protocol,
+			Scope:                         scope,
+			ObjectType:                    "blob",
+			ObjectName:                    blobName,
+			DatabaseID:                    &dbID,
+			ConnectedToNodeID: &nodeIDInt64,
+			OwnerID:                       ownerID,
+			Status:                        "STATUS_CREATED",
+			Online:                        true,
+			ContainerMetadata:             metadata,
+			EnrichedMetadata:              map[string]interface{}{},
+			DatabaseType:                  &databaseType,
+			ItemCount:                     0, // Blobs don't have schema items
+			SizeBytes:                     blob.Size,
+			ContainerClassificationSource: "auto",
+		}
+
+		if enrichment, ok := enrichmentMap[blobName]; ok && enrichment.PrimaryCategory != "" {
+			container.ContainerClassification = &enrichment.PrimaryCategory
+			container.ContainerClassificationConfidence = &enrichment.ClassificationConfidence
+		}
+
+		containers = append(containers, container)
 	}
 
 	return containers, items, nil

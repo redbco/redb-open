@@ -64,13 +64,42 @@ func (s *SchemaOps) DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedMo
 
 	// Convert tables slice to map
 	tablesMap := make(map[string]unifiedmodel.Table)
+	timeSeriesMap := make(map[string]unifiedmodel.TimeSeriesPoint)
+
 	for _, t := range tables {
 		tablesMap[t.Name] = *t
+
+		// Also create TimeSeriesPoint representation (primary container for time-series databases)
+		fields := make(map[string]unifiedmodel.Field)
+		for colName, col := range t.Columns {
+			// Skip metadata columns
+			if colName != "_time" && colName != "_measurement" {
+				fields[colName] = unifiedmodel.Field{
+					Name:     colName,
+					Type:     col.DataType,
+					Required: !col.Nullable,
+				}
+			}
+		}
+
+		tsPoint := unifiedmodel.TimeSeriesPoint{
+			Name:        t.Name,
+			Fields:      fields,
+			Aggregation: "raw", // Default aggregation
+			Retention:   "",    // TODO: Query retention policy
+			Precision:   "ns",  // InfluxDB uses nanosecond precision by default
+			Options: map[string]any{
+				"bucket":      bucket,
+				"measurement": t.Name,
+			},
+		}
+		timeSeriesMap[t.Name] = tsPoint
 	}
 
 	model := &unifiedmodel.UnifiedModel{
-		DatabaseType: s.conn.Type(),
-		Tables:       tablesMap,
+		DatabaseType:     s.conn.Type(),
+		Tables:           tablesMap,
+		TimeSeriesPoints: timeSeriesMap,
 	}
 
 	return model, nil

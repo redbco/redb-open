@@ -658,6 +658,8 @@ type SchemaItem struct {
 	Precision                *int                     `json:"precision,omitempty"`
 	Scale                    *int                     `json:"scale,omitempty"`
 	ItemComment              *string                  `json:"item_comment,omitempty"`
+	ResourceURI              string                   `json:"resource_uri,omitempty"`
+	ContainerURI             string                   `json:"container_uri,omitempty"`
 }
 
 // SchemaContainer represents a resource container with its items
@@ -905,21 +907,37 @@ func (s *Service) GetSchemaFromResourceRegistry(ctx context.Context, tenantID, d
 func (s *Service) GetTableSchemaFromResourceRegistry(ctx context.Context, tenantID, databaseID, tableName string) ([]SchemaItem, error) {
 	s.logger.Infof("Getting table schema from resource registry for table: %s in database: %s", tableName, databaseID)
 
-	// First, find the container_id for this table
+	// First, find the container_id and resource_uri for this container
+	// Support all primary data container types, plus stream topics and webhooks
 	containerQuery := `
-		SELECT container_id
+		SELECT container_id, resource_uri
 		FROM resource_containers
-		WHERE database_id = $1 AND tenant_id = $2 AND object_type = 'table' AND object_name = $3
+		WHERE database_id = $1 
+		  AND tenant_id = $2 
+		  AND object_name = $3
+		  AND object_type IN (
+			'table',              -- Relational/Wide-Column
+			'collection',         -- Document databases (MongoDB, etc.)
+			'node',               -- Graph nodes
+			'relationship',       -- Graph relationships
+			'embedding',          -- Vector databases
+			'key_value_pair',     -- Key-Value stores
+			'search_document',    -- Search engines
+			'time_series_point',  -- Time-Series databases
+			'blob',               -- Object storage
+			'topic',              -- Data streams (Kafka, etc.)
+			'webhook'             -- Webhook endpoints
+		  )
 		LIMIT 1
 	`
 
-	var containerID string
-	err := s.db.Pool().QueryRow(ctx, containerQuery, databaseID, tenantID, tableName).Scan(&containerID)
+	var containerID, containerURI string
+	err := s.db.Pool().QueryRow(ctx, containerQuery, databaseID, tenantID, tableName).Scan(&containerID, &containerURI)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find table container: %w", err)
 	}
 
-	// Query resource_items for this container
+	// Query resource_items for this container, including resource_uri
 	itemsQuery := `
 		SELECT 
 			item_name,
@@ -942,7 +960,8 @@ func (s *Service) GetTableSchemaFromResourceRegistry(ctx context.Context, tenant
 			max_length,
 			precision,
 			scale,
-			item_comment
+			item_comment,
+			resource_uri
 		FROM resource_items
 		WHERE container_id = $1 AND tenant_id = $2
 		ORDER BY COALESCE(ordinal_position, 999999), item_name
@@ -958,7 +977,7 @@ func (s *Service) GetTableSchemaFromResourceRegistry(ctx context.Context, tenant
 
 	// Process each item
 	for itemRows.Next() {
-		var itemName, itemDisplayName, dataType string
+		var itemName, itemDisplayName, dataType, resourceURI string
 		var unifiedDataType, defaultValue, privClass, detectionMethod, itemComment *string
 		var isNullable, isPrimaryKey, isUnique, isIndexed, isRequired, isArray, isPrivileged bool
 		var constraintsJSON []byte
@@ -988,6 +1007,7 @@ func (s *Service) GetTableSchemaFromResourceRegistry(ctx context.Context, tenant
 			&precision,
 			&scale,
 			&itemComment,
+			&resourceURI,
 		)
 		if err != nil {
 			s.logger.Warnf("Failed to scan item row: %v", err)
@@ -1011,6 +1031,8 @@ func (s *Service) GetTableSchemaFromResourceRegistry(ctx context.Context, tenant
 			DetectionMethod:          detectionMethod,
 			DefaultValue:             defaultValue,
 			ItemComment:              itemComment,
+			ResourceURI:              resourceURI,
+			ContainerURI:             containerURI,
 		}
 
 		if ordinalPosition != nil {

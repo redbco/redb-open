@@ -207,6 +207,13 @@ func (dh *DatabaseHandlers) ShowDatabase(w http.ResponseWriter, r *http.Request)
 		InstanceStatus:        grpcResp.Database.InstanceStatus,
 	}
 
+	// Convert resource containers
+	resourceContainers := make([]DatabaseResourceContainer, len(grpcResp.Database.ResourceContainers))
+	for i, protoContainer := range grpcResp.Database.ResourceContainers {
+		resourceContainers[i] = convertProtoContainer(protoContainer)
+	}
+	database.ResourceContainers = resourceContainers
+
 	response := ShowDatabaseResponse{
 		Database: database,
 	}
@@ -1376,6 +1383,8 @@ type TableColumnSchema struct {
 	Precision                *int32   `json:"precision,omitempty"`
 	Scale                    *int32   `json:"scale,omitempty"`
 	ItemComment              string   `json:"item_comment,omitempty"`
+	ResourceURI              string   `json:"resource_uri,omitempty"`
+	ContainerURI             string   `json:"container_uri,omitempty"`
 }
 
 // FetchTableDataResponse represents the response from fetching table data
@@ -1704,6 +1713,8 @@ func (dh *DatabaseHandlers) FetchTableData(w http.ResponseWriter, r *http.Reques
 			ClassificationConfidence: col.ClassificationConfidence,
 			OrdinalPosition:          col.OrdinalPosition,
 			ItemComment:              col.ItemComment,
+			ResourceURI:              col.ResourceUri,
+			ContainerURI:             col.ContainerUri,
 		}
 
 		// Set optional numeric fields
@@ -1951,4 +1962,118 @@ func (dh *DatabaseHandlers) UpdateTableData(w http.ResponseWriter, r *http.Reque
 	}
 
 	dh.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// convertProtoContainer converts a protobuf DatabaseResourceContainer to REST model
+func convertProtoContainer(proto *corev1.DatabaseResourceContainer) DatabaseResourceContainer {
+	container := DatabaseResourceContainer{
+		ObjectType:                    proto.ObjectType,
+		ObjectName:                    proto.ObjectName,
+		ContainerClassificationSource: proto.ContainerClassificationSource,
+		ItemCount:                     proto.ItemCount,
+		Status:                        proto.Status,
+		Items:                         make([]DatabaseResourceItem, len(proto.Items)),
+	}
+
+	if proto.ContainerClassification != nil {
+		container.ContainerClassification = *proto.ContainerClassification
+	}
+
+	if proto.ContainerClassificationConfidence != nil {
+		container.ContainerClassificationConfidence = *proto.ContainerClassificationConfidence
+	}
+
+	if proto.DatabaseType != nil {
+		container.DatabaseType = *proto.DatabaseType
+	}
+
+	if proto.Vendor != nil {
+		container.Vendor = *proto.Vendor
+	}
+
+	// Parse container metadata JSON
+	if proto.ContainerMetadataJson != "" && proto.ContainerMetadataJson != "{}" {
+		var metadata map[string]interface{}
+		if err := json.Unmarshal([]byte(proto.ContainerMetadataJson), &metadata); err == nil {
+			container.ContainerMetadata = metadata
+		}
+	}
+
+	// Parse enriched metadata JSON
+	if proto.EnrichedMetadataJson != "" && proto.EnrichedMetadataJson != "{}" {
+		var enriched map[string]interface{}
+		if err := json.Unmarshal([]byte(proto.EnrichedMetadataJson), &enriched); err == nil {
+			container.EnrichedMetadata = enriched
+		}
+	}
+
+	// Convert items
+	for i, protoItem := range proto.Items {
+		container.Items[i] = convertProtoItem(protoItem)
+	}
+
+	return container
+}
+
+// convertProtoItem converts a protobuf DatabaseResourceItem to REST model
+func convertProtoItem(proto *corev1.DatabaseResourceItem) DatabaseResourceItem {
+	item := DatabaseResourceItem{
+		ItemName:        proto.ItemName,
+		ItemDisplayName: proto.ItemDisplayName,
+		DataType:        proto.DataType,
+		IsNullable:      proto.IsNullable,
+		IsPrimaryKey:    proto.IsPrimaryKey,
+		IsUnique:        proto.IsUnique,
+		IsIndexed:       proto.IsIndexed,
+		IsRequired:      proto.IsRequired,
+		IsArray:         proto.IsArray,
+		IsPrivileged:    proto.IsPrivileged,
+		OrdinalPosition: proto.OrdinalPosition,
+	}
+
+	if proto.UnifiedDataType != nil {
+		item.UnifiedDataType = *proto.UnifiedDataType
+	}
+
+	if proto.DefaultValue != nil {
+		item.DefaultValue = *proto.DefaultValue
+	}
+
+	if proto.PrivilegedClassification != nil {
+		item.PrivilegedClassification = *proto.PrivilegedClassification
+	}
+
+	if proto.DetectionConfidence != nil {
+		item.DetectionConfidence = *proto.DetectionConfidence
+	}
+
+	if proto.DetectionMethod != nil {
+		item.DetectionMethod = *proto.DetectionMethod
+	}
+
+	if proto.MaxLength != nil {
+		item.MaxLength = *proto.MaxLength
+	}
+
+	if proto.Precision != nil {
+		item.Precision = *proto.Precision
+	}
+
+	if proto.Scale != nil {
+		item.Scale = *proto.Scale
+	}
+
+	if proto.ItemComment != nil {
+		item.ItemComment = *proto.ItemComment
+	}
+
+	// Parse constraints JSON
+	if proto.ConstraintsJson != "" && proto.ConstraintsJson != "[]" {
+		var constraints []map[string]interface{}
+		if err := json.Unmarshal([]byte(proto.ConstraintsJson), &constraints); err == nil {
+			item.Constraints = constraints
+		}
+	}
+
+	return item
 }

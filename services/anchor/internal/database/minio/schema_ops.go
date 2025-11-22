@@ -54,9 +54,65 @@ func (s *SchemaOps) DiscoverSchema(ctx context.Context) (*unifiedmodel.UnifiedMo
 	model := &unifiedmodel.UnifiedModel{
 		DatabaseType: s.conn.Type(),
 		Tables:       tablesMap,
+		Blobs:        make(map[string]unifiedmodel.Blob),
+	}
+
+	// Also list objects and create Blob entries (sample only)
+	if err := s.discoverBlobs(ctx, bucket, model); err != nil {
+		return nil, err
 	}
 
 	return model, nil
+}
+
+// discoverBlobs lists objects in the bucket and adds them as Blob entries (sample only).
+func (s *SchemaOps) discoverBlobs(ctx context.Context, bucket string, model *unifiedmodel.UnifiedModel) error {
+	// List a sample of objects (limit to prevent large listings)
+	const maxObjects = 100
+
+	objectCh := s.conn.client.Client().ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix:       "",
+		Recursive:    true,
+		MaxKeys:      maxObjects,
+		WithMetadata: true,
+	})
+
+	for object := range objectCh {
+		if object.Err != nil {
+			return fmt.Errorf("failed to list objects: %w", object.Err)
+		}
+
+		// Skip directory markers
+		if len(object.Key) > 0 && object.Key[len(object.Key)-1] == '/' {
+			continue
+		}
+
+		blob := unifiedmodel.Blob{
+			Name:         object.Key,
+			Bucket:       bucket,
+			Path:         object.Key,
+			Size:         object.Size,
+			ContentType:  object.ContentType,
+			StorageClass: object.StorageClass,
+			Encryption:   "", // MinIO encryption info is not in ObjectInfo
+			ETag:         object.ETag,
+			Options: map[string]any{
+				"bucket": bucket,
+			},
+		}
+
+		if !object.LastModified.IsZero() {
+			blob.Options["last_modified"] = object.LastModified.String()
+		}
+
+		if object.UserMetadata != nil && len(object.UserMetadata) > 0 {
+			blob.Options["metadata"] = object.UserMetadata
+		}
+
+		model.Blobs[object.Key] = blob
+	}
+
+	return nil
 }
 
 // listPrefixes lists common prefixes (simulating "folders") in the bucket.

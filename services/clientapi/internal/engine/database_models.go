@@ -35,6 +35,50 @@ type Database struct {
 	InstanceSSL           bool     `json:"instance_ssl"`
 	InstanceStatusMessage string   `json:"instance_status_message"`
 	InstanceStatus        string   `json:"instance_status"`
+
+	// Resource registry data (structured)
+	ResourceContainers []DatabaseResourceContainer `json:"resource_containers,omitempty"`
+}
+
+// DatabaseResourceItem represents an item in a database resource container
+type DatabaseResourceItem struct {
+	ItemName                 string                   `json:"item_name"`
+	ItemDisplayName          string                   `json:"item_display_name,omitempty"`
+	DataType                 string                   `json:"data_type"`
+	UnifiedDataType          string                   `json:"unified_data_type,omitempty"`
+	IsNullable               bool                     `json:"is_nullable"`
+	IsPrimaryKey             bool                     `json:"is_primary_key"`
+	IsUnique                 bool                     `json:"is_unique"`
+	IsIndexed                bool                     `json:"is_indexed"`
+	IsRequired               bool                     `json:"is_required"`
+	IsArray                  bool                     `json:"is_array"`
+	DefaultValue             string                   `json:"default_value,omitempty"`
+	Constraints              []map[string]interface{} `json:"constraints,omitempty"`
+	IsPrivileged             bool                     `json:"is_privileged"`
+	PrivilegedClassification string                   `json:"privileged_classification,omitempty"`
+	DetectionConfidence      float64                  `json:"detection_confidence,omitempty"`
+	DetectionMethod          string                   `json:"detection_method,omitempty"`
+	OrdinalPosition          int32                    `json:"ordinal_position"`
+	MaxLength                int32                    `json:"max_length,omitempty"`
+	Precision                int32                    `json:"precision,omitempty"`
+	Scale                    int32                    `json:"scale,omitempty"`
+	ItemComment              string                   `json:"item_comment,omitempty"`
+}
+
+// DatabaseResourceContainer represents a database resource container (table, collection, etc.)
+type DatabaseResourceContainer struct {
+	ObjectType                        string                     `json:"object_type"`
+	ObjectName                        string                     `json:"object_name"`
+	ContainerClassification           string                     `json:"container_classification,omitempty"`
+	ContainerClassificationConfidence float64                    `json:"container_classification_confidence,omitempty"`
+	ContainerClassificationSource     string                     `json:"container_classification_source"`
+	ContainerMetadata                 map[string]interface{}     `json:"container_metadata,omitempty"`
+	EnrichedMetadata                  map[string]interface{}     `json:"enriched_metadata,omitempty"`
+	DatabaseType                      string                     `json:"database_type,omitempty"`
+	Vendor                            string                     `json:"vendor,omitempty"`
+	ItemCount                         int32                      `json:"item_count"`
+	Status                            string                     `json:"status"`
+	Items                             []DatabaseResourceItem     `json:"items"`
 }
 
 type ListDatabasesResponse struct {

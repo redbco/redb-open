@@ -306,7 +306,8 @@ export interface Database {
   created?: string;
   updated?: string;
   database_schema?: string; // JSON string of schema data
-  database_tables?: string; // JSON string of tables data
+  database_tables?: string; // JSON string of tables data (legacy)
+  resource_containers?: SchemaContainer[]; // New unified container structure
   instance_host?: string;
   instance_port?: number;
   instance_ssl_mode?: string;

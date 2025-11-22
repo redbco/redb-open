@@ -67,7 +67,24 @@ func DiscoverSchema(client *PineconeClient) (*unifiedmodel.UnifiedModel, error) 
 			MetadataConfig: indexDetails.MetadataConfig,
 		}
 
-		// Convert to vector index directly
+		// Convert to Embedding (primary container for vector databases)
+		embedding := unifiedmodel.Embedding{
+			Name:  indexInfo.Name,
+			Model: indexInfo.PodType, // Use pod type as model identifier
+			Options: map[string]any{
+				"dimension":    indexInfo.Dimension,
+				"metric":       indexInfo.Metric,
+				"pods":         indexInfo.Pods,
+				"replicas":     indexInfo.Replicas,
+				"vector_count": indexInfo.VectorCount,
+				"index_size":   indexInfo.IndexSize,
+				"environment":  indexInfo.Environment,
+				"region":       indexInfo.Region,
+			},
+		}
+		um.Embeddings[indexName] = embedding
+
+		// Keep VectorIndex for compatibility
 		vectorIndex := unifiedmodel.VectorIndex{
 			Name:      indexInfo.Name,
 			Dimension: indexInfo.Dimension,

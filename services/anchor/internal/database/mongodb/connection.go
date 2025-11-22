@@ -308,16 +308,17 @@ func CollectDatabaseMetadata(ctx context.Context, db interface{}) (map[string]in
 
 // CollectInstanceMetadata collects metadata from a MongoDB instance
 func CollectInstanceMetadata(ctx context.Context, db interface{}) (map[string]interface{}, error) {
-	database, ok := db.(*mongo.Database)
+	// For instance connections, expect a *mongo.Client
+	client, ok := db.(*mongo.Client)
 	if !ok {
 		return nil, fmt.Errorf("invalid mongodb connection type")
 	}
 
 	metadata := make(map[string]interface{})
 
-	// Get server status
+	// Get server status from admin database
 	serverStatusCmd := bson.D{{Key: "serverStatus", Value: 1}}
-	serverStatusResult := database.Client().Database("admin").RunCommand(ctx, serverStatusCmd)
+	serverStatusResult := client.Database("admin").RunCommand(ctx, serverStatusCmd)
 	var statusDoc bson.M
 	if err := serverStatusResult.Decode(&statusDoc); err != nil {
 		return nil, fmt.Errorf("failed to get server status: %w", err)
@@ -343,7 +344,6 @@ func CollectInstanceMetadata(ctx context.Context, db interface{}) (map[string]in
 	}
 
 	// Get total databases
-	client := database.Client()
 	dbs, err := client.ListDatabaseNames(ctx, bson.D{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get total databases: %w", err)
@@ -378,13 +378,8 @@ func CollectInstanceMetadata(ctx context.Context, db interface{}) (map[string]in
 	return metadata, nil
 }
 
-// ExecuteCommand executes a command on a MongoDB database and returns results as bytes
+// ExecuteCommand executes a command on a MongoDB database or client and returns results as bytes
 func ExecuteCommand(ctx context.Context, db interface{}, command string) ([]byte, error) {
-	database, ok := db.(*mongo.Database)
-	if !ok {
-		return nil, fmt.Errorf("invalid mongodb connection type")
-	}
-
 	// Parse the command as BSON
 	var commandDoc bson.M
 	if err := bson.UnmarshalExtJSON([]byte(command), false, &commandDoc); err != nil {
@@ -398,8 +393,20 @@ func ExecuteCommand(ctx context.Context, db interface{}, command string) ([]byte
 		}
 	}
 
-	// Execute the command
-	result := database.RunCommand(ctx, commandDoc)
+	var result *mongo.SingleResult
+
+	// Handle both database and client connections
+	switch v := db.(type) {
+	case *mongo.Database:
+		// Execute command on the database
+		result = v.RunCommand(ctx, commandDoc)
+	case *mongo.Client:
+		// Execute command on the admin database for instance connections
+		result = v.Database("admin").RunCommand(ctx, commandDoc)
+	default:
+		return nil, fmt.Errorf("invalid mongodb connection type")
+	}
+
 	if result.Err() != nil {
 		return nil, fmt.Errorf("failed to execute command: %w", result.Err())
 	}

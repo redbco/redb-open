@@ -1211,6 +1211,8 @@ func (s *Server) FetchTableData(ctx context.Context, req *corev1.FetchTableDataR
 			IsArray:         item.IsArray,
 			IsPrivileged:    item.IsPrivileged,
 			OrdinalPosition: item.OrdinalPosition,
+			ResourceUri:     item.ResourceURI,
+			ContainerUri:    item.ContainerURI,
 		}
 
 		// Set optional string fields

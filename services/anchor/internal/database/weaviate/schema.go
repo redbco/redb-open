@@ -37,7 +37,23 @@ func DiscoverSchema(client *WeaviateClient) (*unifiedmodel.UnifiedModel, error) 
 			continue // Skip classes we can't describe
 		}
 
-		// Convert to vector index directly
+		// Convert to Embedding (primary container for vector databases)
+		embedding := unifiedmodel.Embedding{
+			Name:  details.Class,
+			Model: details.Vectorizer, // Use Weaviate's vectorizer as the model
+			Options: map[string]any{
+				"object_count":          details.ObjectCount,
+				"module_config":         details.ModuleConfig,
+				"sharding_config":       details.ShardingConfig,
+				"replication_config":    details.ReplicationConfig,
+				"multi_tenancy_config":  details.MultiTenancyConfig,
+				"inverted_index_config": details.InvertedIndexConfig,
+				"metric":                "cosine", // Default metric for Weaviate
+			},
+		}
+		um.Embeddings[className] = embedding
+
+		// Keep VectorIndex for compatibility
 		vectorIndex := unifiedmodel.VectorIndex{
 			Name:      details.Class,
 			Dimension: 0,        // Weaviate doesn't expose vector dimensions directly

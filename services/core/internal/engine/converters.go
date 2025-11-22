@@ -264,6 +264,21 @@ func (s *Server) databaseToProto(db *database.Database) *corev1.Database {
 		}
 	}
 
+	// Fetch resource containers and items from resource registry
+	databaseService := database.NewService(s.engine.db, s.engine.logger)
+	schemaResponse, err := databaseService.GetSchemaFromResourceRegistry(context.Background(), db.TenantID, db.ID)
+
+	var protoContainers []*corev1.DatabaseResourceContainer
+	if err != nil {
+		s.engine.logger.Warnf("Failed to fetch resource containers for database %s: %v", db.ID, err)
+		protoContainers = []*corev1.DatabaseResourceContainer{}
+	} else {
+		protoContainers = make([]*corev1.DatabaseResourceContainer, len(schemaResponse.Containers))
+		for i, container := range schemaResponse.Containers {
+			protoContainers[i] = s.containerToProto(&container)
+		}
+	}
+
 	return &corev1.Database{
 		TenantId:              db.TenantID,
 		WorkspaceId:           db.WorkspaceID,
@@ -295,6 +310,7 @@ func (s *Server) databaseToProto(db *database.Database) *corev1.Database {
 		InstanceSsl:           db.InstanceSSL,
 		InstanceStatusMessage: db.InstanceStatusMessage,
 		InstanceStatus:        db.InstanceStatus,
+		ResourceContainers:    protoContainers,
 	}
 }
 
@@ -917,4 +933,144 @@ func (s *Server) workspaceToProtoWithCounts(ctx context.Context, ws *workspace.W
 		RelationshipCount:    relationshipCount,
 		OwnerId:              ws.OwnerID,
 	}, nil
+}
+
+// containerToProto converts a SchemaContainer to protobuf
+func (s *Server) containerToProto(container *database.SchemaContainer) *corev1.DatabaseResourceContainer {
+	// Convert container metadata to JSON string
+	containerMetadataJSON := "{}"
+	if len(container.ContainerMetadata) > 0 {
+		if jsonBytes, err := json.Marshal(container.ContainerMetadata); err == nil {
+			containerMetadataJSON = string(jsonBytes)
+		}
+	}
+
+	// Convert enriched metadata to JSON string
+	enrichedMetadataJSON := "{}"
+	if len(container.EnrichedMetadata) > 0 {
+		if jsonBytes, err := json.Marshal(container.EnrichedMetadata); err == nil {
+			enrichedMetadataJSON = string(jsonBytes)
+		}
+	}
+
+	// Convert items
+	protoItems := make([]*corev1.DatabaseResourceItem, len(container.Items))
+	for i, item := range container.Items {
+		protoItems[i] = s.itemToProto(&item)
+	}
+
+	classification := ""
+	if container.ContainerClassification != nil {
+		classification = *container.ContainerClassification
+	}
+
+	confidence := 0.0
+	if container.ContainerClassificationConfidence != nil {
+		confidence = *container.ContainerClassificationConfidence
+	}
+
+	dbType := ""
+	if container.DatabaseType != nil {
+		dbType = *container.DatabaseType
+	}
+
+	vendor := ""
+	if container.Vendor != nil {
+		vendor = *container.Vendor
+	}
+
+	return &corev1.DatabaseResourceContainer{
+		ObjectType:                        container.ObjectType,
+		ObjectName:                        container.ObjectName,
+		ContainerClassification:           &classification,
+		ContainerClassificationConfidence: &confidence,
+		ContainerClassificationSource:     container.ContainerClassificationSource,
+		ContainerMetadataJson:             containerMetadataJSON,
+		EnrichedMetadataJson:              enrichedMetadataJSON,
+		DatabaseType:                      &dbType,
+		Vendor:                            &vendor,
+		ItemCount:                         int32(container.ItemCount),
+		Status:                            container.Status,
+		Items:                             protoItems,
+	}
+}
+
+// itemToProto converts a SchemaItem to protobuf
+func (s *Server) itemToProto(item *database.SchemaItem) *corev1.DatabaseResourceItem {
+	// Convert constraints to JSON string
+	constraintsJSON := "[]"
+	if len(item.Constraints) > 0 {
+		if jsonBytes, err := json.Marshal(item.Constraints); err == nil {
+			constraintsJSON = string(jsonBytes)
+		}
+	}
+
+	unifiedType := ""
+	if item.UnifiedDataType != nil {
+		unifiedType = *item.UnifiedDataType
+	}
+
+	defaultVal := ""
+	if item.DefaultValue != nil {
+		defaultVal = *item.DefaultValue
+	}
+
+	privClass := ""
+	if item.PrivilegedClassification != nil {
+		privClass = *item.PrivilegedClassification
+	}
+
+	confidence := 0.0
+	if item.DetectionConfidence != nil {
+		confidence = *item.DetectionConfidence
+	}
+
+	method := ""
+	if item.DetectionMethod != nil {
+		method = *item.DetectionMethod
+	}
+
+	comment := ""
+	if item.ItemComment != nil {
+		comment = *item.ItemComment
+	}
+
+	maxLen := int32(0)
+	if item.MaxLength != nil {
+		maxLen = int32(*item.MaxLength)
+	}
+
+	prec := int32(0)
+	if item.Precision != nil {
+		prec = int32(*item.Precision)
+	}
+
+	scaleVal := int32(0)
+	if item.Scale != nil {
+		scaleVal = int32(*item.Scale)
+	}
+
+	return &corev1.DatabaseResourceItem{
+		ItemName:                 item.ItemName,
+		ItemDisplayName:          item.ItemDisplayName,
+		DataType:                 item.DataType,
+		UnifiedDataType:          &unifiedType,
+		IsNullable:               item.IsNullable,
+		IsPrimaryKey:             item.IsPrimaryKey,
+		IsUnique:                 item.IsUnique,
+		IsIndexed:                item.IsIndexed,
+		IsRequired:               item.IsRequired,
+		IsArray:                  item.IsArray,
+		DefaultValue:             &defaultVal,
+		ConstraintsJson:          constraintsJSON,
+		IsPrivileged:             item.IsPrivileged,
+		PrivilegedClassification: &privClass,
+		DetectionConfidence:      &confidence,
+		DetectionMethod:          &method,
+		OrdinalPosition:          item.OrdinalPosition,
+		MaxLength:                &maxLen,
+		Precision:                &prec,
+		Scale:                    &scaleVal,
+		ItemComment:              &comment,
+	}
 }

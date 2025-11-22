@@ -2619,16 +2619,13 @@ func (s *Server) ValidateMapping(ctx context.Context, req *corev1.ValidateMappin
 		return nil, status.Errorf(codes.Internal, "failed to update validation status: %v", err)
 	}
 
-	// Get current timestamp
-	validatedAt := time.Now().Format(time.RFC3339)
-
 	s.engine.logger.Infof("Mapping '%s' validated: valid=%v, errors=%d, warnings=%d", req.MappingName, isValid, len(errors), len(warnings))
 
 	return &corev1.ValidateMappingResponse{
-		IsValid:     isValid,
-		Errors:      errors,
-		Warnings:    warnings,
-		ValidatedAt: validatedAt,
+		IsValid:            isValid,
+		ValidationErrors:   errors,
+		ValidationWarnings: warnings,
+		Status:             commonv1.Status_STATUS_SUCCESS,
 	}, nil
 }
 

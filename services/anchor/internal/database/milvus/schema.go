@@ -36,7 +36,7 @@ func DiscoverSchema(client *MilvusClient) (*unifiedmodel.UnifiedModel, error) {
 			continue // Skip collections we can't describe
 		}
 
-		// Convert to vector index directly
+		// Convert to Embedding (primary container for vector databases)
 		var dimensions int
 		for _, field := range details.Schema.Fields {
 			if field.Type == "FloatVector" || field.Type == "BinaryVector" {
@@ -47,6 +47,21 @@ func DiscoverSchema(client *MilvusClient) (*unifiedmodel.UnifiedModel, error) {
 			}
 		}
 
+		embedding := unifiedmodel.Embedding{
+			Name:  details.Name,
+			Model: "milvus", // Default model name
+			Options: map[string]any{
+				"shards_num": details.ShardsNum,
+				"row_count":  details.RowCount,
+				"size":       details.Size,
+				"status":     details.Status,
+				"dimension":  dimensions,
+				"metric":     "L2", // Default metric for Milvus
+			},
+		}
+		um.Embeddings[details.Name] = embedding
+
+		// Keep VectorIndex for compatibility
 		vectorIndex := unifiedmodel.VectorIndex{
 			Name:      details.Name,
 			Dimension: dimensions,
