@@ -56,6 +56,7 @@ type InstanceMetadata struct {
 	TotalDatabases   int
 	TotalConnections int
 	MaxConnections   int
+	Metadata         map[string]interface{} // Full metadata as JSONB
 }
 
 // Commit represents a commit stored in PostgreSQL

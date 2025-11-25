@@ -165,6 +165,17 @@ func (s *Server) instanceToProto(inst *instance.Instance) *corev1.Instance {
 		}
 	}
 
+	// Convert connected databases to protobuf
+	var connectedDatabases []*corev1.ConnectedDatabase
+	for _, db := range inst.ConnectedDatabases {
+		connectedDatabases = append(connectedDatabases, &corev1.ConnectedDatabase{
+			DatabaseName:     db.DatabaseName,
+			DatabaseDbName:   db.DatabaseDBName,
+			DatabaseUsername: db.DatabaseUsername,
+			Status:           statusStringToProto(db.Status),
+		})
+	}
+
 	return &corev1.Instance{
 		TenantId:                 inst.TenantID,
 		WorkspaceId:              inst.WorkspaceID,
@@ -195,6 +206,7 @@ func (s *Server) instanceToProto(inst *instance.Instance) *corev1.Instance {
 		Status:                   statusStringToProto(inst.Status),
 		Created:                  inst.Created.Format("2006-01-02T15:04:05Z"),
 		Updated:                  inst.Updated.Format("2006-01-02T15:04:05Z"),
+		ConnectedDatabases:       connectedDatabases,
 	}
 }
 
@@ -353,6 +365,48 @@ func (s *Server) repoToProto(r *repo.Repo) *corev1.Repo {
 		TenantId:        r.TenantID,
 		WorkspaceId:     r.WorkspaceID,
 		OwnerId:         r.OwnerID,
+		Created:         r.Created.Format("2006-01-02T15:04:05Z"),
+		Updated:         r.Updated.Format("2006-01-02T15:04:05Z"),
+	}
+}
+
+// Helper function to convert repo to protobuf with details (counts and connections)
+func (s *Server) repoToProtoWithDetails(r *repo.Repo, branchCount, commitCount int32, connections []*repo.DatabaseConnection, latestCommit *repo.LatestCommitInfo) *corev1.Repo {
+	// Convert database connections
+	protoConnections := make([]*corev1.DatabaseConnection, len(connections))
+	for i, conn := range connections {
+		protoConnections[i] = &corev1.DatabaseConnection{
+			BranchName:     conn.BranchName,
+			DatabaseName:   conn.DatabaseName,
+			DatabaseStatus: conn.DatabaseStatus,
+		}
+	}
+
+	// Handle latest commit info
+	latestCommitCode := ""
+	latestCommitBranch := ""
+	latestCommitDate := ""
+	if latestCommit != nil {
+		latestCommitCode = latestCommit.CommitCode
+		latestCommitBranch = latestCommit.BranchName
+		latestCommitDate = latestCommit.CommitDate.Format("2006-01-02T15:04:05Z")
+	}
+
+	return &corev1.Repo{
+		RepoId:              r.ID,
+		RepoName:            r.Name,
+		RepoDescription:     r.Description,
+		TenantId:            r.TenantID,
+		WorkspaceId:         r.WorkspaceID,
+		OwnerId:             r.OwnerID,
+		Created:             r.Created.Format("2006-01-02T15:04:05Z"),
+		Updated:             r.Updated.Format("2006-01-02T15:04:05Z"),
+		BranchCount:         branchCount,
+		CommitCount:         commitCount,
+		DatabaseConnections: protoConnections,
+		LatestCommitCode:    latestCommitCode,
+		LatestCommitBranch:  latestCommitBranch,
+		LatestCommitDate:    latestCommitDate,
 	}
 }
 

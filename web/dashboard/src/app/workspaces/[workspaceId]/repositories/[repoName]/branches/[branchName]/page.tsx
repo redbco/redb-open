@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useBranch } from '@/lib/hooks/useBranch';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { GitCommit, ArrowLeft } from 'lucide-react';
+import { GitCommit, ArrowLeft, GitBranch, Database, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { CommitCard } from '@/components/repositories/CommitCard';
 
@@ -28,7 +28,7 @@ export default function BranchDetailPage({ params }: BranchDetailPageProps) {
     });
   }, [params]);
 
-  const { branch, isLoading, error } = useBranch(workspaceId, repoName, branchName);
+  const { branch, isLoading, error, refetch } = useBranch(workspaceId, repoName, branchName);
 
   if (!workspaceId || !repoName || !branchName) {
     return (
@@ -42,64 +42,153 @@ export default function BranchDetailPage({ params }: BranchDetailPageProps) {
 
   // Sort commits by created date (latest first)
   const sortedCommits = [...commits].sort((a, b) => {
-    const dateA = new Date(a.created || 0).getTime();
-    const dateB = new Date(b.created || 0).getTime();
+    const dateA = new Date(a.commit_date || 0).getTime();
+    const dateB = new Date(b.commit_date || 0).getTime();
     return dateB - dateA;
   });
 
   // Determine HEAD commit and if it's deployed
   const headCommit = sortedCommits.find((c) => (c as any).is_head || (c as any).isHead);
-  const isHeadDeployed = !!branch?.attached_database_id;
+  const isHeadDeployed = !!branch?.connected_to_database;
+  
+  // Get the latest commit date
+  const latestCommit = sortedCommits[0];
+  const latestCommitDate = latestCommit?.commit_date;
+
+  const handleRefresh = () => {
+    refetch();
+  };
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <Link
-          href={`/workspaces/${workspaceId}/repositories/${encodeURIComponent(repoName)}`}
-          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-4"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to {repoName}
-        </Link>
+      <div className="flex items-center justify-between bg-gradient-to-r from-indigo-50/50 to-transparent dark:from-indigo-900/10 p-6 -mx-6 rounded-lg">
+        <div className="flex items-center gap-4">
+          <Link
+            href={`/workspaces/${workspaceId}/repositories/${encodeURIComponent(repoName)}`}
+            className="p-2 hover:bg-accent rounded-md transition-colors"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </Link>
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-indigo-50 to-indigo-100 dark:from-indigo-900/20 dark:to-indigo-800/20 rounded-xl flex items-center justify-center border border-border shadow-sm">
+              <GitBranch className="h-7 w-7 text-indigo-600 dark:text-indigo-400" />
+            </div>
+            <div>
+              <h2 className="text-3xl font-bold text-foreground">
+                <Link
+                  href={`/workspaces/${workspaceId}/repositories/${encodeURIComponent(repoName)}`}
+                  className="hover:text-primary transition-colors"
+                >
+                  {repoName}
+                </Link>
+                <span className="text-muted-foreground"> / </span>
+                {branchName}
+              </h2>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                {branch?.parent_branch_name && (
+                  <span>Branched from {branch.parent_branch_name}</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
         
-        <div>
-          <h2 className="text-3xl font-bold text-foreground">{branchName}</h2>
-          {branch?.branch_description && (
-            <p className="text-muted-foreground mt-2">
-              {branch.branch_description}
-            </p>
-          )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRefresh}
+            className="inline-flex items-center px-3 py-2 border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+            disabled={isLoading}
+          >
+            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </div>
 
-      {/* Branch Info */}
+      {/* Branch Info Stats */}
       {branch && (
-        <div className="bg-card border border-border rounded-lg p-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Repository</p>
-              <p className="text-lg font-semibold text-foreground font-mono">
-                {branch.repo_name}
-              </p>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-card border border-border rounded-xl p-5 hover:shadow-lg transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Repository</p>
+                <p className="text-2xl font-bold text-foreground mt-1 font-mono">{repoName}</p>
+                <p className="text-xs text-muted-foreground mt-1">Source repository</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-50 to-indigo-100 dark:from-indigo-900/20 dark:to-indigo-800/20 flex items-center justify-center border border-border shadow-sm">
+                <GitBranch className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
+              </div>
             </div>
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Parent Branch</p>
-              <p className="text-lg font-semibold text-foreground">
-                {branch.parent_branch_name || 'None'}
-              </p>
+          </div>
+
+          <div className="bg-card border border-border rounded-xl p-5 hover:shadow-lg transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Parent Branch</p>
+                <p className="text-2xl font-bold text-foreground mt-1">
+                  {branch.parent_branch_name || 'None'}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {branch.parent_branch_name ? 'Branched from' : 'Root branch'}
+                </p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 flex items-center justify-center border border-border shadow-sm">
+                <GitBranch className="h-6 w-6 text-purple-600 dark:text-purple-400" />
+              </div>
             </div>
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Attached Database</p>
-              <p className="text-lg font-semibold text-foreground">
-                {branch.attached_database_name || 'Not attached'}
-              </p>
+          </div>
+
+          <div className="bg-card border border-border rounded-xl p-5 hover:shadow-lg transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Attached Database</p>
+                <p className="text-2xl font-bold text-foreground mt-1">
+                  {branch.connected_to_database && branch.database_name ? (
+                    <Link
+                      href={`/workspaces/${workspaceId}/databases/${branch.database_name}/schema`}
+                      className="hover:text-primary hover:underline transition-colors"
+                    >
+                      {branch.database_name}
+                    </Link>
+                  ) : (
+                    'Not attached'
+                  )}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {branch.connected_to_database ? 'Connected' : 'No connection'}
+                </p>
+              </div>
+              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center border border-border shadow-sm ${
+                branch.connected_to_database
+                  ? 'from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20'
+                  : 'from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900'
+              }`}>
+                <Database className={`h-6 w-6 ${
+                  branch.connected_to_database
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-muted-foreground'
+                }`} />
+              </div>
             </div>
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Commits</p>
-              <p className="text-lg font-semibold text-foreground">
-                {commits.length}
-              </p>
+          </div>
+
+          <div className="bg-card border border-border rounded-xl p-5 hover:shadow-lg transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Total Commits</p>
+                <p className="text-3xl font-bold text-foreground mt-1">{commits.length}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {latestCommitDate
+                    ? `Latest: ${new Date(latestCommitDate).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric'
+                      })}`
+                    : 'No commits yet'}
+                </p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 flex items-center justify-center border border-border shadow-sm">
+                <GitCommit className="h-6 w-6 text-green-600 dark:text-green-400" />
+              </div>
             </div>
           </div>
         </div>

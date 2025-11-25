@@ -184,3 +184,17 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 	// For simplicity, just return success message
 	return []byte(fmt.Sprintf(`{"status":"executed","command":"%s"}`, command)), nil
 }
+
+// CollectInstanceMetrics collects performance metrics.
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// TODO: Implement database-specific metrics collection
+	return metrics, nil
+}
+
+// ListLogicalDatabases lists logical databases.
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	var databases []adapter.LogicalDatabaseInfo
+	// TODO: Implement database-specific database listing
+	return databases, nil
+}

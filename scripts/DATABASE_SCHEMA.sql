@@ -493,6 +493,76 @@ CREATE TABLE databases (
     UNIQUE(workspace_id, database_name)
 );
 
+-- Instance performance metrics (time-series data)
+CREATE TABLE instance_metrics (
+    metric_id BIGSERIAL,
+    instance_id ulid NOT NULL REFERENCES instances(instance_id) ON DELETE CASCADE,
+    collected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Connection metrics
+    active_connections INTEGER,
+    idle_connections INTEGER,
+    connection_utilization DECIMAL(5,2), -- percentage
+    
+    -- Performance metrics
+    queries_per_second DECIMAL(10,2),
+    transactions_per_second DECIMAL(10,2),
+    cache_hit_ratio DECIMAL(5,2), -- percentage
+    
+    -- Resource metrics
+    cpu_usage DECIMAL(5,2), -- percentage (if available)
+    memory_usage_bytes BIGINT,
+    memory_total_bytes BIGINT,
+    disk_usage_bytes BIGINT,
+    disk_total_bytes BIGINT,
+    
+    -- Latency metrics
+    avg_query_time_ms DECIMAL(10,2),
+    slow_query_count INTEGER,
+    
+    -- Replication metrics (for replicated instances)
+    replication_lag_seconds DECIMAL(10,2),
+    is_replica BOOLEAN,
+    
+    -- Database-specific metrics (JSONB for flexibility)
+    extended_metrics JSONB DEFAULT '{}',
+    
+    PRIMARY KEY (metric_id, collected_at)
+) PARTITION BY RANGE (collected_at);
+
+-- Create initial partitions for instance_metrics
+CREATE TABLE instance_metrics_2024 PARTITION OF instance_metrics
+    FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+CREATE TABLE instance_metrics_2025 PARTITION OF instance_metrics
+    FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+
+-- Create default partition for any dates outside defined ranges
+CREATE TABLE instance_metrics_default PARTITION OF instance_metrics DEFAULT;
+
+-- Function to automatically create monthly partitions for instance_metrics
+CREATE OR REPLACE FUNCTION create_instance_metrics_partition(start_date DATE)
+RETURNS VOID AS $$
+DECLARE
+    partition_name TEXT;
+    end_date DATE;
+BEGIN
+    -- Calculate partition name and end date
+    partition_name := 'instance_metrics_' || to_char(start_date, 'YYYY_MM');
+    end_date := start_date + INTERVAL '1 month';
+    
+    -- Create the partition
+    EXECUTE format('CREATE TABLE %I PARTITION OF instance_metrics FOR VALUES FROM (%L) TO (%L)',
+                   partition_name, start_date, end_date);
+                   
+    -- Create indexes on the new partition
+    EXECUTE format('CREATE INDEX %I ON %I (instance_id, collected_at)', 
+                   'idx_' || partition_name || '_instance_time', partition_name);
+    EXECUTE format('CREATE INDEX %I ON %I (collected_at)', 
+                   'idx_' || partition_name || '_collected', partition_name);
+END;
+$$ LANGUAGE plpgsql;
+
 -- =============================================================================
 -- VERSION CONTROL SYSTEM
 -- =============================================================================
@@ -1361,6 +1431,12 @@ CREATE INDEX idx_instances_node_id ON instances(connected_to_node_id);
 CREATE INDEX idx_instances_environment_id ON instances(environment_id);
 CREATE INDEX idx_databases_tenant_workspace ON databases(tenant_id, workspace_id);
 CREATE INDEX idx_databases_instance_id ON databases(instance_id);
+
+-- Instance metrics queries
+CREATE INDEX idx_instance_metrics_instance_time ON instance_metrics(instance_id, collected_at);
+CREATE INDEX idx_instance_metrics_collected ON instance_metrics(collected_at);
+CREATE INDEX idx_instance_metrics_instance_id ON instance_metrics(instance_id);
+CREATE INDEX idx_instance_metrics_extended_gin ON instance_metrics USING gin(extended_metrics);
 
 -- Repository and version control queries
 CREATE INDEX idx_repos_tenant_workspace ON repos(tenant_id, workspace_id);

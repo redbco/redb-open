@@ -14,8 +14,15 @@ import {
   Database,
   Calendar,
   MapPin,
+  Shield,
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
+  Unplug
 } from 'lucide-react';
 import Link from 'next/link';
+import { DatabaseIcon } from '../databases/DatabaseIcon';
+import { formatVendor, formatDatabaseType } from '@/lib/formatters';
 
 interface InstanceCardProps {
   instance: Instance;
@@ -25,49 +32,31 @@ interface InstanceCardProps {
 
 export function InstanceCard({ instance, workspaceId, onUpdate }: InstanceCardProps) {
   const [showMenu, setShowMenu] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const getStatusColor = (status: string) => {
-    switch (status) {
+    switch (status?.toLowerCase()) {
       case 'healthy':
-        return 'bg-green-500';
+      case 'connected':
+        return 'bg-emerald-500';
+      case 'warning':
+        return 'bg-amber-500';
+      case 'error':
+      case 'disconnected':
       case 'unhealthy':
-        return 'bg-red-500';
-      case 'unknown':
-        return 'bg-gray-500';
+        return 'bg-rose-500';
       default:
-        return 'bg-yellow-500';
-    }
-  };
-
-  const getTypeIcon = (type: string) => {
-    switch (type.toLowerCase()) {
-      case 'postgresql':
-      case 'postgres':
-        return '🐘';
-      case 'mysql':
-      case 'mariadb':
-        return '🐬';
-      case 'mongodb':
-        return '🍃';
-      case 'redis':
-        return '🔴';
-      case 'mssql':
-      case 'sqlserver':
-        return '🗄️';
-      case 'oracle':
-        return '🔶';
-      default:
-        return '💾';
+        return 'bg-slate-500';
     }
   };
 
   const formatDate = (dateString: string | undefined) => {
-    if (!dateString) return 'N/A';
+    if (!dateString) return '-';
     try {
-      return new Date(dateString).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
+      return new Date(dateString).toLocaleDateString(undefined, {
         year: 'numeric',
+        month: 'short',
+        day: 'numeric'
       });
     } catch {
       return dateString;
@@ -75,169 +64,230 @@ export function InstanceCard({ instance, workspaceId, onUpdate }: InstanceCardPr
   };
 
   return (
-    <div className="bg-card border border-border rounded-lg p-6 hover:border-primary/50 transition-all duration-200 hover:shadow-lg">
+    <div className="group bg-card border border-border rounded-xl p-5 hover:shadow-lg hover:border-primary/20 transition-all duration-200 flex flex-col h-full relative">
       {/* Header */}
       <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center space-x-3">
-          <div className="text-3xl">{getTypeIcon(instance.instance_type)}</div>
+        <div className="flex items-center space-x-4">
+          <div className="w-12 h-12 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl flex items-center justify-center border border-border shadow-sm group-hover:scale-105 transition-transform duration-200">
+            <DatabaseIcon type={instance.instance_type} className="h-7 w-7" />
+          </div>
           <div>
-            <h3 className="text-lg font-semibold text-foreground flex items-center">
-              {instance.instance_name}
-              <span className={`ml-2 w-2 h-2 rounded-full ${getStatusColor(instance.status)}`} />
-            </h3>
-            <p className="text-sm text-muted-foreground">{instance.instance_type}</p>
+            <div className="flex items-center gap-2">
+              <Link
+                href={`/workspaces/${workspaceId}/instances/${instance.instance_name}`}
+                className="font-bold text-lg text-foreground hover:text-primary hover:underline transition-colors flex items-center gap-1"
+                title="View Instance Details"
+              >
+                {instance.instance_name}
+                <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-50 transition-opacity" />
+              </Link>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+              <span className="font-medium truncate max-w-[200px]" title={`${formatVendor(instance.instance_vendor)} - ${formatDatabaseType(instance.instance_type)}`}>
+                {formatVendor(instance.instance_vendor)} • {formatDatabaseType(instance.instance_type)}
+              </span>
+            </div>
           </div>
         </div>
-        
-        <div className="relative">
-          <button
-            onClick={() => setShowMenu(!showMenu)}
-            className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground"
-          >
-            <MoreVertical className="h-5 w-5" />
-          </button>
-          
-          {showMenu && (
-            <>
-              <div
-                className="fixed inset-0 z-10"
-                onClick={() => setShowMenu(false)}
-              />
-              <div className="absolute right-0 mt-2 w-48 bg-popover border border-border rounded-md shadow-lg z-20 py-1">
-                <Link
-                  href={`/workspaces/${workspaceId}/instances/${instance.instance_name}`}
-                  className="flex items-center px-4 py-2 text-sm text-popover-foreground hover:bg-accent"
+
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <div className="relative flex h-2.5 w-2.5">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${getStatusColor(instance.status)}`}></span>
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${getStatusColor(instance.status)}`}></span>
+            </div>
+            <span className="text-xs font-medium text-muted-foreground capitalize">{instance.status || 'Unknown'}</span>
+          </div>
+
+          <div className="relative">
+            <button
+              onClick={() => setShowMenu(!showMenu)}
+              className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <MoreVertical className="h-4 w-4" />
+            </button>
+
+            {showMenu && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
                   onClick={() => setShowMenu(false)}
-                >
-                  <Eye className="h-4 w-4 mr-2" />
-                  View Details
-                </Link>
-                <button
-                  className="flex items-center w-full px-4 py-2 text-sm text-popover-foreground hover:bg-accent"
-                  onClick={() => {
-                    setShowMenu(false);
-                    // TODO: Implement reconnect
-                  }}
-                >
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Reconnect
-                </button>
-                <button
-                  className="flex items-center w-full px-4 py-2 text-sm text-popover-foreground hover:bg-accent"
-                  onClick={() => {
-                    setShowMenu(false);
-                    // TODO: Implement modify
-                  }}
-                >
-                  <Settings className="h-4 w-4 mr-2" />
-                  Modify
-                </button>
-                <div className="border-t border-border my-1" />
-                {instance.instance_enabled ? (
+                />
+                <div className="absolute right-0 mt-2 w-48 bg-popover border border-border rounded-md shadow-lg z-20 py-1">
+                  <Link
+                    href={`/workspaces/${workspaceId}/instances/${instance.instance_name}`}
+                    className="flex items-center px-4 py-2 text-sm text-popover-foreground hover:bg-accent"
+                    onClick={() => setShowMenu(false)}
+                  >
+                    <Eye className="h-4 w-4 mr-2" />
+                    View Details
+                  </Link>
                   <button
                     className="flex items-center w-full px-4 py-2 text-sm text-popover-foreground hover:bg-accent"
                     onClick={() => {
                       setShowMenu(false);
-                      // TODO: Implement disable
+                      // TODO: Implement reconnect
                     }}
                   >
-                    <PowerOff className="h-4 w-4 mr-2" />
-                    Disable
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Reconnect
                   </button>
-                ) : (
                   <button
                     className="flex items-center w-full px-4 py-2 text-sm text-popover-foreground hover:bg-accent"
                     onClick={() => {
                       setShowMenu(false);
-                      // TODO: Implement enable
+                      // TODO: Implement modify
                     }}
                   >
-                    <Power className="h-4 w-4 mr-2" />
-                    Enable
+                    <Settings className="h-4 w-4 mr-2" />
+                    Modify
                   </button>
-                )}
-                <button
-                  className="flex items-center w-full px-4 py-2 text-sm text-destructive hover:bg-accent"
-                  onClick={() => {
-                    setShowMenu(false);
-                    // TODO: Implement disconnect
-                  }}
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Disconnect
-                </button>
-              </div>
-            </>
-          )}
+                  <div className="border-t border-border my-1" />
+                  {instance.instance_enabled ? (
+                    <button
+                      className="flex items-center w-full px-4 py-2 text-sm text-popover-foreground hover:bg-accent"
+                      onClick={() => {
+                        setShowMenu(false);
+                        // TODO: Implement disable
+                      }}
+                    >
+                      <PowerOff className="h-4 w-4 mr-2" />
+                      Disable
+                    </button>
+                  ) : (
+                    <button
+                      className="flex items-center w-full px-4 py-2 text-sm text-popover-foreground hover:bg-accent"
+                      onClick={() => {
+                        setShowMenu(false);
+                        // TODO: Implement enable
+                      }}
+                    >
+                      <Power className="h-4 w-4 mr-2" />
+                      Enable
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Description */}
-      {instance.instance_description && (
-        <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
-          {instance.instance_description}
+      <div className="flex-grow">
+        <p className="text-sm text-muted-foreground mb-5 line-clamp-2 min-h-[2.5rem]">
+          {instance.instance_description || <span className="text-muted-foreground/60 italic">No description provided</span>}
         </p>
-      )}
 
-      {/* Connection Info */}
-      <div className="space-y-2 mb-4">
-        <div className="flex items-center text-sm">
-          <MapPin className="h-4 w-4 mr-2 text-muted-foreground" />
-          <span className="text-foreground font-mono">
-            {instance.instance_host}:{instance.instance_port}
-          </span>
-        </div>
-        {instance.instance_version && (
-          <div className="flex items-center text-sm">
-            <Server className="h-4 w-4 mr-2 text-muted-foreground flex-shrink-0" />
-            <span className="text-muted-foreground truncate">
-              Version {instance.instance_version}
+        <div className="grid grid-cols-2 gap-y-3 gap-x-4 mb-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <MapPin className="h-3.5 w-3.5" />
+              Host
+            </span>
+            <span className="text-sm font-medium text-foreground font-mono truncate" title={`${instance.instance_host}:${instance.instance_port}`}>
+              {instance.instance_host}
             </span>
           </div>
-        )}
-        <div className="flex items-center text-sm">
-          <Calendar className="h-4 w-4 mr-2 text-muted-foreground" />
-          <span className="text-muted-foreground">
-            Added {formatDate(instance.created)}
-          </span>
-        </div>
-      </div>
 
-      {/* Database Count */}
-      {instance.database_count !== undefined && (
-        <div className="flex items-center justify-between pt-4 border-t border-border">
-          <div className="flex items-center text-sm text-muted-foreground">
-            <Database className="h-4 w-4 mr-2" />
-            <span>{instance.database_count} {instance.database_count === 1 ? 'database' : 'databases'}</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Server className="h-3.5 w-3.5" />
+              Port
+            </span>
+            <span className="text-sm font-medium text-foreground font-mono">
+              {instance.instance_port}
+            </span>
           </div>
-          <Link
-            href={`/workspaces/${workspaceId}/instances/${instance.instance_name}`}
-            className="text-sm text-primary hover:text-primary/80 font-medium"
-          >
-            View Details →
-          </Link>
-        </div>
-      )}
 
-      {/* Status Badge */}
-      <div className="mt-4 pt-4 border-t border-border">
-        <div className="flex items-center justify-between">
-          <span
-            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-              instance.instance_enabled
-                ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400'
-            }`}
-          >
-            {instance.instance_enabled ? 'Enabled' : 'Disabled'}
-          </span>
-          {instance.instance_ssl && (
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Shield className="h-3.5 w-3.5" />
               SSL
             </span>
-          )}
+            <span className="text-sm font-medium text-foreground">
+              {instance.instance_ssl ? (instance.instance_ssl_mode || 'Enabled') : 'Disabled'}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" />
+              Created
+            </span>
+            <span className="text-sm font-medium text-foreground">
+              {formatDate(instance.created)}
+            </span>
+          </div>
         </div>
       </div>
+
+      <div className="mt-auto pt-4 border-t border-border/50 flex items-center justify-between">
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="text-xs text-muted-foreground hover:text-foreground font-medium flex items-center gap-1 transition-colors"
+        >
+          {isExpanded ? (
+            <>
+              <ChevronUp className="h-3.5 w-3.5" />
+              Hide Details
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-3.5 w-3.5" />
+              View Details
+            </>
+          )}
+        </button>
+
+        <div className="flex items-center gap-2">
+          {instance.database_count !== undefined && (
+            <div className="flex items-center text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded">
+              <Database className="h-3 w-3 mr-1.5" />
+              <span>{instance.database_count} DBs</span>
+            </div>
+          )}
+          <button
+            className="text-muted-foreground hover:text-red-600 dark:hover:text-red-400 p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+            title="Disconnect Instance"
+            onClick={() => {
+              // TODO: Implement disconnect
+            }}
+          >
+            <Unplug className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {isExpanded && (
+        <div className="mt-3 pt-3 border-t border-border/50 space-y-2.5 text-xs animate-in slide-in-from-top-2 duration-200">
+          <div className="grid grid-cols-[1fr,2fr] gap-2">
+            <span className="text-muted-foreground">Instance ID:</span>
+            <span className="font-mono text-foreground truncate select-all" title={instance.instance_id}>{instance.instance_id}</span>
+          </div>
+          <div className="grid grid-cols-[1fr,2fr] gap-2">
+            <span className="text-muted-foreground">Unique ID:</span>
+            <span className="font-mono text-foreground truncate select-all" title={instance.instance_unique_identifier}>{instance.instance_unique_identifier}</span>
+          </div>
+          {instance.instance_version && (
+            <div className="grid grid-cols-[1fr,2fr] gap-2">
+              <span className="text-muted-foreground">Version:</span>
+              <span className="text-foreground truncate" title={instance.instance_version}>{instance.instance_version}</span>
+            </div>
+          )}
+          {instance.instance_username && (
+            <div className="grid grid-cols-[1fr,2fr] gap-2">
+              <span className="text-muted-foreground">Username:</span>
+              <span className="font-mono text-foreground truncate">{instance.instance_username}</span>
+            </div>
+          )}
+          {instance.instance_system_db_name && (
+            <div className="grid grid-cols-[1fr,2fr] gap-2">
+              <span className="text-muted-foreground">System DB:</span>
+              <span className="font-mono text-foreground truncate">{instance.instance_system_db_name}</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

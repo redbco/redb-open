@@ -80,7 +80,7 @@ export function CommitTreeNode({
           
           <div className={`flex items-center text-muted-foreground ${isCompact ? 'text-xs' : 'text-xs'}`}>
             <Calendar className="h-3 w-3 mr-1" />
-            <span>{formatDate(commit.created)}</span>
+            <span>{formatDate(commit.commit_date)}</span>
           </div>
         </div>
       </div>

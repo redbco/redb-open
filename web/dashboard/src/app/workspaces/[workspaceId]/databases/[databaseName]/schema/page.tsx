@@ -1,17 +1,20 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { useDatabaseSchema, useDatabase } from '@/lib/hooks/useDatabases';
+import { useDatabase } from '@/lib/hooks/useDatabases';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useToast } from '@/components/ui/Toast';
-import { Database, ArrowLeft, AlertCircle, X } from 'lucide-react';
+import { Database, ArrowLeft, AlertCircle, X, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
+import { DatabaseIcon } from '@/components/databases/DatabaseIcon';
+import { formatDatabaseType } from '@/lib/formatters';
 import { SchemaOverview } from '@/components/databases/schema/SchemaOverview';
 import { TableCard } from '@/components/databases/schema/TableCard';
 import { DeploySchemaDialog } from '@/components/databases/schema/DeploySchemaDialog';
 import { ModifyTableDialog } from '@/components/databases/schema/ModifyTableDialog';
 import { AddColumnDialog } from '@/components/databases/schema/AddColumnDialog';
 import { ModifyColumnDialog } from '@/components/databases/schema/ModifyColumnDialog';
+import { DatabaseCommitTimeline } from '@/components/databases/DatabaseCommitTimeline';
 import type { SchemaColumn } from '@/lib/api/types';
 
 // Type for schema items from API response
@@ -83,74 +86,67 @@ export default function SchemaPage({ params }: SchemaPageProps) {
     });
   }, [params]);
 
-  const { database, isLoading: isDatabaseLoading } = useDatabase(workspaceId, databaseName);
-  const { schema, isLoading: isSchemaLoading, error, refetch } = useDatabaseSchema(workspaceId, databaseName);
+  const { database, isLoading, error, refetch } = useDatabase(workspaceId, databaseName);
 
-  const isLoading = isDatabaseLoading || isSchemaLoading;
+  // Extract schema from database.resource_containers
+  const schema = useMemo(() => {
+    if (!database?.resource_containers) return null;
+    return {
+      containers: database.resource_containers,
+    };
+  }, [database]);
+
+  // Extract commit timeline
+  const commitTimeline = database?.commit_timeline || [];
 
   // Filter and sort containers/tables based on search query (alphabetically by name)
   const filteredTables = useMemo(() => {
-    // Support both new containers and legacy tables
-    const items = (schema?.containers || schema?.tables || []) as unknown as (ContainerResponse | TableResponse)[];
-    return items
-      .filter((item) => {
-        const name = 'object_name' in item ? item.object_name : item.name;
-        return name.toLowerCase().includes(tableFilter.toLowerCase());
+    if (!schema?.containers) return [];
+    
+    return schema.containers
+      .filter((container) => {
+        return container.object_name.toLowerCase().includes(tableFilter.toLowerCase());
       })
-      .sort((a, b) => {
-        const nameA = 'object_name' in a ? a.object_name : a.name;
-        const nameB = 'object_name' in b ? b.object_name : b.name;
-        return nameA.localeCompare(nameB);
-      })
-      .map((item) => {
-        // Normalize to a common structure
-        if ('object_name' in item) {
-          // New container format - map items to columns with proper field names
-          const normalizedColumns = (item.items || []).map((schemaItem: SchemaItemResponse): SchemaColumn => ({
-            name: schemaItem.item_name,
-            dataType: schemaItem.data_type,
-            data_type: schemaItem.data_type,
-            isNullable: schemaItem.is_nullable,
-            is_nullable: schemaItem.is_nullable,
-            isPrimaryKey: schemaItem.is_primary_key,
-            is_primary_key: schemaItem.is_primary_key,
-            isUnique: schemaItem.is_unique,
-            is_unique: schemaItem.is_unique,
-            isIndexed: schemaItem.is_indexed,
-            is_indexed: schemaItem.is_indexed,
-            isArray: schemaItem.is_array,
-            defaultValue: schemaItem.default_value,
-            default_value: schemaItem.default_value,
-            constraints: (schemaItem.constraints || []) as unknown as string[],
-            isPrivileged: schemaItem.is_privileged,
-            is_privileged: schemaItem.is_privileged,
-            privilegedClassification: schemaItem.privileged_classification,
-            privileged_classification: schemaItem.privileged_classification,
-            detectionConfidence: schemaItem.detection_confidence,
-            detection_confidence: schemaItem.detection_confidence,
-            detectionMethod: schemaItem.detection_method,
-            detection_method: schemaItem.detection_method,
-            ordinalPosition: schemaItem.ordinal_position,
-            ordinal_position: schemaItem.ordinal_position,
-          }));
-          
-          return {
-            name: item.object_name,
-            object_type: item.object_type,
-            database_type: item.database_type,
-            container_classification: item.container_classification,
-            container_classification_confidence: item.container_classification_confidence,
-            container_classification_source: item.container_classification_source,
-            item_count: item.item_count,
-            status: item.status,
-            columns: normalizedColumns,
-            primaryCategory: item.container_classification,
-            classificationConfidence: item.container_classification_confidence,
-          };
-        }
-        // Legacy table format - already has the correct structure
-        return item;
-      });
+      .sort((a, b) => a.object_name.localeCompare(b.object_name))
+      .map((container) => ({
+        name: container.object_name,
+        object_type: container.object_type,
+        database_type: container.database_type,
+        container_classification: container.container_classification,
+        container_classification_confidence: container.container_classification_confidence,
+        container_classification_source: container.container_classification_source,
+        item_count: container.item_count,
+        status: container.status,
+        columns: (container.items || []).map((item): SchemaColumn => ({
+          name: item.item_name,
+          dataType: item.data_type,
+          data_type: item.data_type,
+          isNullable: item.is_nullable,
+          is_nullable: item.is_nullable,
+          isPrimaryKey: item.is_primary_key,
+          is_primary_key: item.is_primary_key,
+          isUnique: item.is_unique,
+          is_unique: item.is_unique,
+          isIndexed: item.is_indexed,
+          is_indexed: item.is_indexed,
+          isArray: item.is_array,
+          defaultValue: item.default_value,
+          default_value: item.default_value,
+          constraints: (item.constraints || []) as unknown as string[],
+          isPrivileged: item.is_privileged,
+          is_privileged: item.is_privileged,
+          privilegedClassification: item.privileged_classification,
+          privileged_classification: item.privileged_classification,
+          detectionConfidence: item.detection_confidence,
+          detection_confidence: item.detection_confidence,
+          detectionMethod: item.detection_method,
+          detection_method: item.detection_method,
+          ordinalPosition: item.ordinal_position,
+          ordinal_position: item.ordinal_position,
+        })),
+        primaryCategory: container.container_classification,
+        classificationConfidence: container.container_classification_confidence,
+      }));
   }, [schema, tableFilter]);
 
   // Handler functions for dialogs
@@ -345,43 +341,71 @@ export default function SchemaPage({ params }: SchemaPageProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <Link
-          href={`/workspaces/${workspaceId}/databases`}
-          className="p-2 hover:bg-accent rounded-md transition-colors"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </Link>
-        <div className="flex-1">
+      <div className="flex items-center justify-between bg-gradient-to-r from-blue-50/50 to-transparent dark:from-blue-900/10 p-6 -mx-6 rounded-lg mb-6">
+        <div className="flex items-center gap-4">
+          <Link
+            href={`/workspaces/${workspaceId}/databases`}
+            className="p-2 hover:bg-accent rounded-md transition-colors"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </Link>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-              <Database className="h-5 w-5 text-primary" />
+            <div className="w-12 h-12 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl flex items-center justify-center border border-border shadow-sm">
+              <DatabaseIcon type={database?.database_type || ''} className="h-7 w-7" />
             </div>
             <div>
-              <h2 className="text-3xl font-bold text-foreground">Database Schema</h2>
-              <p className="text-muted-foreground mt-1">
-                {databaseName} {database?.database_vendor && `• ${database.database_vendor}`}
-              </p>
+              <h2 className="text-3xl font-bold text-foreground">{databaseName}</h2>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                <span className="font-medium">
+                  {database?.database_type ? formatDatabaseType(database.database_type) : 'Database'}
+                </span>
+                {database?.instance_name && (
+                  <>
+                    <span>•</span>
+                    <Link
+                      href={`/workspaces/${workspaceId}/instances/${database.instance_name}`}
+                      className="hover:underline hover:text-primary transition-colors"
+                    >
+                      {database.instance_name}
+                    </Link>
+                  </>
+                )}
+              </div>
             </div>
           </div>
+        </div>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={handleRefresh}
+            className="inline-flex items-center px-3 py-2 border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+            disabled={isLoading}
+          >
+            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </div>
 
       {/* Schema Overview */}
       <SchemaOverview
         schema={schema}
-        databaseName={databaseName}
-        onRefresh={handleRefresh}
-        onDeploySchema={() => setShowDeployDialog(true)}
-        isRefreshing={isSchemaLoading}
+        database={database || undefined}
+        workspaceId={workspaceId}
+      />
+
+      {/* Commit Timeline */}
+      <DatabaseCommitTimeline
+        commitTimeline={commitTimeline}
+        workspaceId={workspaceId}
+        repoName={database?.connected_repo_name}
+        branchName={database?.connected_branch_name}
       />
 
       {/* Tables List */}
-      {((schema?.containers && schema.containers.length > 0) || (schema?.tables && schema.tables.length > 0)) ? (
+      {schema?.containers && schema.containers.length > 0 ? (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-xl font-semibold text-foreground">
-              {schema?.containers ? 'Containers' : 'Tables'} ({filteredTables.length}{filteredTables.length !== (schema?.containers || schema?.tables || []).length ? ` of ${(schema?.containers || schema?.tables || []).length}` : ''})
+              Containers ({filteredTables.length}{filteredTables.length !== schema.containers.length ? ` of ${schema.containers.length}` : ''})
             </h3>
             <div className="flex items-center gap-3">
               {/* Search/Filter Input */}
@@ -429,9 +453,17 @@ export default function SchemaPage({ params }: SchemaPageProps) {
                     setSelectedTable(tableName);
                     setShowModifyTableDialog(true);
                   }}
-                  onAddColumn={(tableName) => {
-                    setSelectedTable(tableName);
-                    setShowAddColumnDialog(true);
+                  onDeployTable={(tableName) => {
+                    // TODO: Implement deploy to database functionality
+                    console.log('Deploy table:', tableName);
+                  }}
+                  onDropTable={(tableName) => {
+                    // TODO: Implement drop table functionality
+                    console.log('Drop table:', tableName);
+                  }}
+                  onWipeTable={(tableName) => {
+                    // TODO: Implement wipe table data functionality
+                    console.log('Wipe table:', tableName);
                   }}
                   onModifyColumn={(tableName, columnName) => {
                     const column = table.columns.find((c: SchemaColumn) => c.name === columnName);

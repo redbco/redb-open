@@ -7,6 +7,7 @@ option go_package = "github.com/redbco/redb-open/api/proto/core/v1;corev1";
 import "google/protobuf/struct.proto";
 import "google/protobuf/any.proto";
 import "api/proto/common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
 
 // Mesh service for mesh management
 service MeshService {
@@ -96,6 +97,10 @@ service InstanceService {
   rpc ModifyInstance(ModifyInstanceRequest) returns (ModifyInstanceResponse);
   rpc DisconnectInstance(DisconnectInstanceRequest) returns (DisconnectInstanceResponse);
   rpc CreateDatabase(CreateDatabaseRequest) returns (CreateDatabaseResponse);
+  
+  // Metrics endpoints
+  rpc GetInstanceMetrics(GetInstanceMetricsRequest) returns (GetInstanceMetricsResponse);
+  rpc GetLatestInstanceMetrics(GetLatestInstanceMetricsRequest) returns (GetLatestInstanceMetricsResponse);
 }
 
 // Database service for database management
@@ -1237,6 +1242,14 @@ message DeleteEnvironmentResponse {
 
 // Instance messages
 
+// Connected database brief info (for instance response)
+message ConnectedDatabase {
+    string database_name = 1;
+    string database_db_name = 2;
+    string database_username = 3;
+    redbco.redbopen.common.v1.Status status = 4;
+}
+
 // The instance object
 message Instance {
     string tenant_id = 1;
@@ -1268,6 +1281,7 @@ message Instance {
     redbco.redbopen.common.v1.Status status = 27;
     string created = 28;
     string updated = 29;
+    repeated ConnectedDatabase connected_databases = 30;
 }
 
 // Show all instances request
@@ -1384,6 +1398,73 @@ message DisconnectInstanceResponse {
     redbco.redbopen.common.v1.Status status = 3;
 }
 
+// Instance metrics messages
+
+// InstanceMetrics represents performance metrics collected from a database instance
+message InstanceMetrics {
+    string instance_id = 1;
+    google.protobuf.Timestamp collected_at = 2;
+    
+    // Connection metrics
+    int32 active_connections = 3;
+    int32 idle_connections = 4;
+    double connection_utilization = 5;
+    
+    // Performance metrics
+    double queries_per_second = 6;
+    double transactions_per_second = 7;
+    double cache_hit_ratio = 8;
+    
+    // Resource metrics
+    double cpu_usage = 9;
+    int64 memory_usage_bytes = 10;
+    int64 memory_total_bytes = 11;
+    int64 disk_usage_bytes = 12;
+    int64 disk_total_bytes = 13;
+    
+    // Latency metrics
+    double avg_query_time_ms = 14;
+    int32 slow_query_count = 15;
+    
+    // Replication metrics
+    double replication_lag_seconds = 16;
+    bool is_replica = 17;
+    
+    // Database-specific extended metrics
+    google.protobuf.Struct extended_metrics = 18;
+}
+
+// GetInstanceMetricsRequest requests metrics for an instance
+message GetInstanceMetricsRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string instance_name = 3;
+    google.protobuf.Timestamp start_time = 4;
+    google.protobuf.Timestamp end_time = 5;
+    int32 limit = 6; // Maximum number of metric records to return
+}
+
+// GetInstanceMetricsResponse returns metrics for an instance
+message GetInstanceMetricsResponse {
+    repeated InstanceMetrics metrics = 1;
+    string message = 2;
+    bool success = 3;
+}
+
+// GetLatestInstanceMetricsRequest requests the latest metrics for an instance
+message GetLatestInstanceMetricsRequest {
+    string tenant_id = 1;
+    string workspace_name = 2;
+    string instance_name = 3;
+}
+
+// GetLatestInstanceMetricsResponse returns the latest metrics for an instance
+message GetLatestInstanceMetricsResponse {
+    InstanceMetrics metrics = 1;
+    string message = 2;
+    bool success = 3;
+}
+
 // Database messages
 
 // Database resource item (simplified for schema response)
@@ -1425,6 +1506,14 @@ message DatabaseResourceContainer {
     int32 item_count = 10;
     string status = 11;
     repeated DatabaseResourceItem items = 12;
+}
+
+// Commit timeline entry for database schema versioning
+message CommitTimelineEntry {
+    string commit_code = 1;
+    string commit_message = 2;
+    string created = 3;  // commit_date
+    bool is_head = 4;
 }
 
 // The database object
@@ -1469,6 +1558,13 @@ message Database {
     
     // Resource registry data (structured)
     repeated DatabaseResourceContainer resource_containers = 34;
+    
+    // Repository and commit timeline information
+    string connected_repo_id = 35;
+    string connected_repo_name = 36;
+    string connected_branch_id = 37;
+    string connected_branch_name = 38;
+    repeated CommitTimelineEntry commit_timeline = 39;
 }
 
 // Show all databases request
@@ -1914,6 +2010,13 @@ message GetDatabaseTablesResponse {
 
 // Repo messages
 
+// Database connection info for a branch
+message DatabaseConnection {
+    string branch_name = 1;
+    string database_name = 2;
+    string database_status = 3;
+}
+
 // The repo object
 message Repo {
     string tenant_id = 1;
@@ -1922,6 +2025,14 @@ message Repo {
     string repo_name = 4;
     string repo_description = 5;
     string owner_id = 6;
+    string created = 7;
+    string updated = 8;
+    int32 branch_count = 9;
+    int32 commit_count = 10;
+    repeated DatabaseConnection database_connections = 11;
+    string latest_commit_code = 12;
+    string latest_commit_branch = 13;
+    string latest_commit_date = 14;
 }
 
 // The repo object
@@ -1933,6 +2044,14 @@ message FullRepo {
     string repo_description = 5;
     string owner_id = 6;
     repeated Branch branches = 7;
+    string created = 8;
+    string updated = 9;
+    int32 branch_count = 10;
+    int32 commit_count = 11;
+    repeated DatabaseConnection database_connections = 12;
+    string latest_commit_code = 13;
+    string latest_commit_branch = 14;
+    string latest_commit_date = 15;
 }
 
 
@@ -2088,8 +2207,12 @@ message Branch {
     bool connected_to_database = 8;
     string database_id = 9;
     repeated Branch branches = 10;
-    repeated Commit commits = 11;
+    repeated CommitSummary commits = 11;
     redbco.redbopen.common.v1.Status status = 12;
+    string created = 13;
+    string updated = 14;
+    string repo_name = 15;
+    string database_name = 16;
 }
 
 
@@ -2174,7 +2297,7 @@ message DeleteBranchResponse {
 
 // Commit messages
 
-// The commit object
+// The commit object (full details including schema_structure)
 message Commit {
     string tenant_id = 1;
     string workspace_id = 2;
@@ -2187,6 +2310,20 @@ message Commit {
     string schema_type = 9;
     string schema_structure = 10;
     string commit_date = 11;
+}
+
+// The commit summary object (without schema_structure for list views)
+message CommitSummary {
+    string tenant_id = 1;
+    string workspace_id = 2;
+    string repo_id = 3;
+    string branch_id = 4;
+    string commit_id = 5;
+    string commit_code = 6;
+    bool is_head = 7;
+    string commit_message = 8;
+    string schema_type = 9;
+    string commit_date = 10;
 }
 
 

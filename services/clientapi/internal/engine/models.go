@@ -44,6 +44,7 @@ const (
 	StatusActive        Status = "active"
 	StatusClean         Status = "clean"
 	StatusInconsistent  Status = "inconsistent"
+	StatusUnchanged     Status = "unchanged"
 )
 
 // ErrorResponse represents an error response

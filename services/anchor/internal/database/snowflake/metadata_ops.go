@@ -71,6 +71,14 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 	return result, nil
 }
 
+
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Snowflake, "collect instance metrics", "not available on database connections")
+}
+
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Snowflake, "list logical databases", "not available on database connections")
+}
 type InstanceMetadataOps struct {
 	conn *InstanceConnection
 }
@@ -119,4 +127,17 @@ func (i *InstanceMetadataOps) ExecuteCommand(ctx context.Context, command string
 		return nil, adapter.WrapError(dbcapabilities.Snowflake, "execute_command", err)
 	}
 	return result, nil
+}
+
+
+func (i *InstanceMetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// TODO: Implement Snowflake-specific metrics collection
+	return metrics, nil
+}
+
+func (i *InstanceMetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	var databases []adapter.LogicalDatabaseInfo
+	// TODO: Implement Snowflake-specific database listing
+	return databases, nil
 }

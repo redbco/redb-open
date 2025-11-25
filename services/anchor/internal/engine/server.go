@@ -53,7 +53,7 @@ func (s *Server) ConnectInstance(ctx context.Context, req *pb.ConnectInstanceReq
 	_, err = s.engine.GetState().GetConnectionRegistry().ConnectInstance(instanceConfig)
 	if err != nil {
 		// Update connection status in repository
-		s.engine.GetState().GetConfigRepository().UpdateInstanceConnectionStatus(ctx, req.InstanceId, false, fmt.Sprintf("Connection failed: %v", err))
+		s.engine.GetState().GetConfigRepository().UpdateInstanceConnectionStatus(ctx, req.InstanceId, "STATUS_ERROR", fmt.Sprintf("Connection failed: %v", err))
 
 		return &pb.ConnectInstanceResponse{
 			Success:    false,
@@ -64,7 +64,7 @@ func (s *Server) ConnectInstance(ctx context.Context, req *pb.ConnectInstanceReq
 	}
 
 	// Update connection status in repository as successful
-	s.engine.GetState().GetConfigRepository().UpdateInstanceConnectionStatus(ctx, req.InstanceId, true, "Connected successfully")
+	s.engine.GetState().GetConfigRepository().UpdateInstanceConnectionStatus(ctx, req.InstanceId, "STATUS_CONNECTED", "Connected successfully")
 
 	// TODO: Collect and store instance metadata via adapter
 	// For now, metadata collection is temporarily disabled during migration
@@ -116,7 +116,7 @@ func (s *Server) DisconnectInstance(ctx context.Context, req *pb.DisconnectInsta
 
 	// Update connection status in repository as disconnected regardless of DatabaseManager result
 	// This ensures the repository is always in sync
-	err = s.engine.GetState().GetConfigRepository().UpdateInstanceConnectionStatus(ctx, req.InstanceId, false, "Disconnected successfully")
+	err = s.engine.GetState().GetConfigRepository().UpdateInstanceConnectionStatus(ctx, req.InstanceId, "STATUS_DISCONNECTED", "Disconnected successfully")
 	if err != nil {
 		// If we can't update the repository status, this is a more serious error
 		return &pb.DisconnectInstanceResponse{
@@ -155,7 +155,7 @@ func (s *Server) ConnectDatabase(ctx context.Context, req *pb.ConnectDatabaseReq
 	_, err = s.engine.GetState().GetConnectionRegistry().ConnectDatabase(dbConfig)
 	if err != nil {
 		// Update connection status in repository
-		s.engine.GetState().GetConfigRepository().UpdateDatabaseConnectionStatus(ctx, req.DatabaseId, false, fmt.Sprintf("Connection failed: %v", err))
+		s.engine.GetState().GetConfigRepository().UpdateDatabaseConnectionStatus(ctx, req.DatabaseId, "STATUS_ERROR", fmt.Sprintf("Connection failed: %v", err))
 
 		return &pb.ConnectDatabaseResponse{
 			Success:    false,
@@ -166,7 +166,7 @@ func (s *Server) ConnectDatabase(ctx context.Context, req *pb.ConnectDatabaseReq
 	}
 
 	// Update connection status in repository as successful
-	s.engine.GetState().GetConfigRepository().UpdateDatabaseConnectionStatus(ctx, req.DatabaseId, true, "Connected successfully")
+	s.engine.GetState().GetConfigRepository().UpdateDatabaseConnectionStatus(ctx, req.DatabaseId, "STATUS_CONNECTED", "Connected successfully")
 
 	return &pb.ConnectDatabaseResponse{
 		Success:    true,
@@ -195,7 +195,7 @@ func (s *Server) DisconnectDatabase(ctx context.Context, req *pb.DisconnectDatab
 	err := s.engine.GetState().GetConnectionRegistry().DisconnectDatabase(req.DatabaseId)
 	if err != nil {
 		// Update connection status in repository as failed to disconnect
-		s.engine.GetState().GetConfigRepository().UpdateDatabaseConnectionStatus(ctx, req.DatabaseId, true, fmt.Sprintf("Failed to disconnect: %v", err))
+		s.engine.GetState().GetConfigRepository().UpdateDatabaseConnectionStatus(ctx, req.DatabaseId, "STATUS_ERROR", fmt.Sprintf("Failed to disconnect: %v", err))
 
 		return &pb.DisconnectDatabaseResponse{
 			Success:    false,
@@ -206,7 +206,7 @@ func (s *Server) DisconnectDatabase(ctx context.Context, req *pb.DisconnectDatab
 	}
 
 	// Update connection status in repository as disconnected
-	s.engine.GetState().GetConfigRepository().UpdateDatabaseConnectionStatus(ctx, req.DatabaseId, false, "Disconnected successfully")
+	s.engine.GetState().GetConfigRepository().UpdateDatabaseConnectionStatus(ctx, req.DatabaseId, "STATUS_DISCONNECTED", "Disconnected successfully")
 
 	return &pb.DisconnectDatabaseResponse{
 		Success:    true,
@@ -543,12 +543,12 @@ func (s *Server) FetchData(ctx context.Context, req *pb.FetchDataRequest) (*pb.F
 	}
 
 	conn := client.AdapterConnection.(adapter.Connection)
-	
+
 	// Note: Most adapters don't support offset directly, so we fetch with limit
 	// For proper pagination support, we would need to enhance each adapter
 	// For now, we just use the limit parameter
 	data, err := conn.DataOperations().Fetch(ctx, req.TableName, limit)
-	
+
 	if err != nil {
 		// Send error response
 		response := &pb.FetchDataResponse{
@@ -1049,7 +1049,7 @@ func (s *Server) WipeTable(ctx context.Context, req *pb.WipeTableRequest) (*pb.W
 	}
 
 	conn := client.AdapterConnection.(adapter.Connection)
-	
+
 	// Delete all data from the table
 	rowsAffected, err := conn.DataOperations().Delete(ctx, req.TableName, make(map[string]interface{}))
 	if err != nil {
@@ -1099,7 +1099,7 @@ func (s *Server) DropTable(ctx context.Context, req *pb.DropTableRequest) (*pb.D
 		DatabaseId: req.DatabaseId,
 		TableName:  req.TableName,
 	}, nil
-	
+
 	/* Future implementation when DropTable is added to interface:
 	conn := client.AdapterConnection.(adapter.Connection)
 	err = conn.SchemaOperations().DropTable(ctx, req.TableName)
@@ -1153,7 +1153,7 @@ func (s *Server) UpdateTableData(ctx context.Context, req *pb.UpdateTableDataReq
 	}
 
 	conn := client.AdapterConnection.(adapter.Connection)
-	
+
 	// Execute each update operation
 	var totalRowsAffected int64
 	for _, update := range updates {
@@ -1907,4 +1907,3 @@ func extractContainerURIFromItemURI(itemURI string) string {
 
 	return itemURI
 }
-

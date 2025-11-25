@@ -4,9 +4,10 @@ import { useState, useEffect } from 'react';
 import { useInstances } from '@/lib/hooks/useInstances';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useToast } from '@/components/ui/Toast';
-import { Server, Plus, Database, Activity, RefreshCw, HardDrive } from 'lucide-react';
+import { Server, Plus, Database, Activity, RefreshCw, HardDrive, Cloud, Layers, CheckCircle2, AlertCircle } from 'lucide-react';
 import { InstanceCard } from '@/components/instances/InstanceCard';
 import { ConnectInstanceDialog } from '@/components/instances/ConnectInstanceDialog';
+import { formatVendor, formatDatabaseType } from '@/lib/formatters';
 
 interface InstancesPageProps {
   params: Promise<{
@@ -18,7 +19,7 @@ export default function InstancesPage({ params }: InstancesPageProps) {
   const [workspaceId, setWorkspaceId] = useState<string>('');
   const [showConnectDialog, setShowConnectDialog] = useState(false);
   const { showToast } = useToast();
-  
+
   // Initialize workspace ID from params
   useEffect(() => {
     params.then(({ workspaceId: id }) => setWorkspaceId(id));
@@ -75,17 +76,52 @@ export default function InstancesPage({ params }: InstancesPageProps) {
 
   // Calculate metrics
   const totalDatabases = instances.reduce((sum, inst) => sum + (inst.database_count || 0), 0);
-  const connectedInstances = instances.filter(i => i.status === 'healthy').length;
-  const enabledInstances = instances.filter(i => i.instance_enabled).length;
+  const connectedInstances = instances.filter(i => i.status === 'healthy' || i.status === 'connected').length;
+  const unhealthyInstances = instances.length - connectedInstances;
+
+  // Calculate Primary Provider (Mode)
+  const vendors = instances.map(i => i.instance_vendor);
+  const primaryProvider = vendors.sort((a, b) =>
+    vendors.filter(v => v === a).length - vendors.filter(v => v === b).length
+  ).pop();
+  const primaryProviderCount = instances.filter(i => i.instance_vendor === primaryProvider).length;
+
+  // Calculate Dominant Tech (Mode)
+  const types = instances.map(i => i.instance_type);
+  const dominantTech = types.sort((a, b) =>
+    types.filter(v => v === a).length - types.filter(v => v === b).length
+  ).pop();
+  const dominantTechCount = instances.filter(i => i.instance_type === dominantTech).length;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between bg-gradient-to-r from-purple-50/50 to-transparent dark:from-purple-900/10 p-6 -mx-6 rounded-lg mb-6">
         <div>
-          <h2 className="text-3xl font-bold text-foreground">Instances</h2>
-          <p className="text-muted-foreground mt-2">
-            Manage database server instances
-          </p>
+          <div className="flex items-center gap-3">
+            <Server className="w-8 h-8 text-purple-600 dark:text-purple-400" />
+            <h2 className="text-3xl font-bold text-foreground">Instances</h2>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <p className="text-muted-foreground">
+              Manage database server instances
+            </p>
+            {!isLoading && instances.length > 0 && (
+              <>
+                <span className="text-muted-foreground/30">•</span>
+                {unhealthyInstances > 0 ? (
+                  <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 text-sm font-medium animate-in fade-in duration-300">
+                    <AlertCircle className="w-4 h-4" />
+                    {unhealthyInstances} require attention
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium animate-in fade-in duration-300">
+                    <CheckCircle2 className="w-4 h-4" />
+                    All systems operational
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
         <div className="flex items-center space-x-2">
           <button
@@ -105,54 +141,7 @@ export default function InstancesPage({ params }: InstancesPageProps) {
         </div>
       </div>
 
-      {/* Overview Metrics */}
-      {!isLoading && instances.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          {[
-            {
-              title: 'Total Instances',
-              value: instances.length.toString(),
-              change: `${new Set(instances.map(i => i.instance_type)).size} database types`,
-              icon: Server,
-              color: 'text-blue-600 dark:text-blue-400'
-            },
-            {
-              title: 'Connected',
-              value: connectedInstances.toString(),
-              change: 'Active connections',
-              icon: HardDrive,
-              color: 'text-green-600 dark:text-green-400'
-            },
-            {
-              title: 'Total Databases',
-              value: totalDatabases > 0 ? totalDatabases.toString() : '-',
-              change: 'Across all instances',
-              icon: Database,
-              color: 'text-purple-600 dark:text-purple-400'
-            },
-            {
-              title: 'Enabled',
-              value: enabledInstances.toString(),
-              change: 'Active instances',
-              icon: Activity,
-              color: 'text-orange-600 dark:text-orange-400'
-            }
-          ].map((metric, index) => (
-            <div key={index} className="bg-card border border-border rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">{metric.title}</p>
-                  <p className="text-2xl font-bold text-foreground mt-1">{metric.value}</p>
-                  <p className="text-sm text-muted-foreground mt-1">{metric.change}</p>
-                </div>
-                <div className={`w-12 h-12 rounded-lg bg-muted/50 flex items-center justify-center ${metric.color}`}>
-                  <metric.icon className="h-6 w-6" />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+
 
       {/* Instance List */}
       {isLoading ? (

@@ -5,7 +5,7 @@ import { useMappings } from '@/lib/hooks/useMappings';
 import { useTransformations } from '@/lib/hooks/useTransformations';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useToast } from '@/components/ui/Toast';
-import { ArrowRightLeft, Plus, RefreshCw, Table, Database, Activity, CheckCircle, Sparkles } from 'lucide-react';
+import { ArrowRightLeft, Plus, RefreshCw, CheckCircle, Sparkles, AlertCircle } from 'lucide-react';
 import { MappingCard } from '@/components/mappings/MappingCard';
 import { CreateMappingDialog } from '@/components/mappings/CreateMappingDialog';
 import { TransformationsList } from '@/components/mappings/TransformationsList';
@@ -61,20 +61,39 @@ export default function MappingsPage({ params }: MappingsPageProps) {
   const error = activeTab === 'mappings' ? mappingsError : transformationsError;
   const isLoading = activeTab === 'mappings' ? mappingsLoading : transformationsLoading;
 
-  // Calculate metrics
-  const validatedMappings = mappings.filter(m => m.validated).length;
-  const tableMappings = mappings.filter(m => m.mapping_type === 'table').length;
-  const databaseMappings = mappings.filter(m => m.mapping_type === 'database').length;
-  const totalRules = mappings.reduce((sum, m) => sum + (m.mapping_rule_count || 0), 0);
+  // Calculate status metrics
+  const validatedMappingsCount = mappings.filter(m => m.validated).length;
+  const invalidMappingsCount = mappings.length - validatedMappingsCount;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between bg-gradient-to-r from-teal-50/50 to-transparent dark:from-teal-900/10 p-6 -mx-6 rounded-lg mb-6">
         <div>
-          <h2 className="text-3xl font-bold text-foreground">Mappings</h2>
-          <p className="text-muted-foreground mt-2">
-            Define schema and column mappings for data migration and replication
-          </p>
+          <div className="flex items-center gap-3">
+            <ArrowRightLeft className="w-8 h-8 text-teal-600 dark:text-teal-400" />
+            <h2 className="text-3xl font-bold text-foreground">Mappings</h2>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <p className="text-muted-foreground">
+              Define schema and column mappings for data migration and replication
+            </p>
+            {!mappingsLoading && mappings.length > 0 && (
+              <>
+                <span className="text-muted-foreground/30">•</span>
+                {invalidMappingsCount > 0 ? (
+                  <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 text-sm font-medium animate-in fade-in duration-300">
+                    <AlertCircle className="w-4 h-4" />
+                    {invalidMappingsCount} not validated
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium animate-in fade-in duration-300">
+                    <CheckCircle className="w-4 h-4" />
+                    All mappings validated
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
         <div className="flex items-center space-x-2">
           <button
@@ -159,55 +178,6 @@ export default function MappingsPage({ params }: MappingsPageProps) {
       {/* Mappings Tab Content */}
       {activeTab === 'mappings' && !error && (
         <>
-          {/* Overview Metrics */}
-          {!mappingsLoading && mappings.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              {[
-                {
-                  title: 'Total Mappings',
-                  value: mappings.length.toString(),
-                  change: `${tableMappings} table, ${databaseMappings} database`,
-                  icon: ArrowRightLeft,
-                  color: 'text-blue-600 dark:text-blue-400'
-                },
-                {
-                  title: 'Mapping Rules',
-                  value: totalRules.toString(),
-                  change: 'Total rules defined',
-                  icon: Activity,
-                  color: 'text-purple-600 dark:text-purple-400'
-                },
-                {
-                  title: 'Table Mappings',
-                  value: tableMappings.toString(),
-                  change: 'Table-level mappings',
-                  icon: Table,
-                  color: 'text-green-600 dark:text-green-400'
-                },
-                {
-                  title: 'Validated',
-                  value: validatedMappings.toString(),
-                  change: 'Ready for use',
-                  icon: CheckCircle,
-                  color: 'text-orange-600 dark:text-orange-400'
-                }
-              ].map((metric, index) => (
-                <div key={index} className="bg-card border border-border rounded-lg p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">{metric.title}</p>
-                      <p className="text-2xl font-bold text-foreground mt-1">{metric.value}</p>
-                      <p className="text-sm text-muted-foreground mt-1">{metric.change}</p>
-                    </div>
-                    <div className={`w-12 h-12 rounded-lg bg-muted/50 flex items-center justify-center ${metric.color}`}>
-                      <metric.icon className="h-6 w-6" />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
           {/* Mapping List */}
           {mappingsLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

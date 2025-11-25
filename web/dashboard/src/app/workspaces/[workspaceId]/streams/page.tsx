@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useStreams, useReconnectStream, useDisconnectStream } from '@/lib/hooks/useStreams';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useToast } from '@/components/ui/Toast';
-import { Plus, RefreshCw, Activity, GitBranch } from 'lucide-react';
+import { Plus, RefreshCw, Activity, CheckCircle2, AlertCircle, Waves } from 'lucide-react';
 import { StreamCard } from '@/components/streams/StreamCard';
 import { ConnectStreamDialog } from '@/components/streams/ConnectStreamDialog';
 import { DisconnectStreamDialog } from '@/components/streams/DisconnectStreamDialog';
@@ -22,13 +22,16 @@ export default function StreamsPage({ params }: StreamsPageProps) {
   const [showStreamMappingDialog, setShowStreamMappingDialog] = useState(false);
   const [disconnectStreamName, setDisconnectStreamName] = useState<string | null>(null);
   const { showToast } = useToast();
-  
+
   // Initialize workspace ID from params
   useEffect(() => {
     params.then(({ workspaceId: id }) => setWorkspaceId(id));
   }, [params]);
 
   const { streams, isLoading, error, refetch } = useStreams(workspaceId);
+
+  const connectedStreams = streams.filter(s => s.status.toLowerCase().includes('connected') || s.status.toLowerCase().includes('online')).length;
+  const disconnectedStreams = streams.length - connectedStreams;
 
   const handleRefresh = () => {
     refetch();
@@ -45,7 +48,7 @@ export default function StreamsPage({ params }: StreamsPageProps) {
         title: 'Reconnecting...',
         message: `Reconnecting stream ${streamName}`,
       });
-      
+
       // Trigger refetch to show updated status
       setTimeout(() => {
         refetch();
@@ -113,12 +116,33 @@ export default function StreamsPage({ params }: StreamsPageProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between bg-gradient-to-r from-orange-50/50 to-transparent dark:from-orange-900/10 p-6 -mx-6 rounded-lg mb-6">
         <div>
-          <h2 className="text-3xl font-bold text-foreground">Streams</h2>
-          <p className="text-muted-foreground mt-2">
-            Manage stream connections to messaging platforms
-          </p>
+          <div className="flex items-center gap-3">
+            <Waves className="w-8 h-8 text-orange-600 dark:text-orange-400" />
+            <h2 className="text-3xl font-bold text-foreground">Streams</h2>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <p className="text-muted-foreground">
+              Manage stream connections to messaging platforms
+            </p>
+            {!isLoading && streams.length > 0 && (
+              <>
+                <span className="text-muted-foreground/30">•</span>
+                {disconnectedStreams > 0 ? (
+                  <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 text-sm font-medium animate-in fade-in duration-300">
+                    <AlertCircle className="w-4 h-4" />
+                    {disconnectedStreams} disconnected
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium animate-in fade-in duration-300">
+                    <CheckCircle2 className="w-4 h-4" />
+                    All streams connected
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
         <div className="flex items-center space-x-2">
           <button
@@ -128,14 +152,7 @@ export default function StreamsPage({ params }: StreamsPageProps) {
           >
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
-          <button
-            onClick={() => setShowStreamMappingDialog(true)}
-            className="inline-flex items-center px-4 py-2 border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
-            disabled={streams.length === 0}
-          >
-            <GitBranch className="h-4 w-4 mr-2" />
-            Create Mapping
-          </button>
+
           <button
             onClick={() => setShowConnectDialog(true)}
             className="inline-flex items-center px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
@@ -146,40 +163,7 @@ export default function StreamsPage({ params }: StreamsPageProps) {
         </div>
       </div>
 
-      {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-card border border-border rounded-lg p-4">
-          <div className="flex items-center space-x-2">
-            <Activity className="h-5 w-5 text-primary" />
-            <div>
-              <p className="text-sm text-muted-foreground">Total Streams</p>
-              <p className="text-2xl font-bold text-foreground">{streams.length}</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-card border border-border rounded-lg p-4">
-          <div className="flex items-center space-x-2">
-            <Activity className="h-5 w-5 text-green-500" />
-            <div>
-              <p className="text-sm text-muted-foreground">Connected</p>
-              <p className="text-2xl font-bold text-foreground">
-                {streams.filter(s => s.status.toLowerCase().includes('connected')).length}
-              </p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-card border border-border rounded-lg p-4">
-          <div className="flex items-center space-x-2">
-            <Activity className="h-5 w-5 text-blue-500" />
-            <div>
-              <p className="text-sm text-muted-foreground">Total Topics</p>
-              <p className="text-2xl font-bold text-foreground">
-                {streams.reduce((sum, s) => sum + (s.monitored_topics?.length || 0), 0)}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
+
 
       {/* Streams Grid */}
       {isLoading ? (

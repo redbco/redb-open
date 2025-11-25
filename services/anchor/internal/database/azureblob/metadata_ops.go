@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	azcontainer "github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
+	"github.com/redbco/redb-open/pkg/anchor/adapter"
 )
 
 // MetadataOps implements metadata operations for Azure Blob Storage.
@@ -186,4 +187,18 @@ func (m *MetadataOps) countBlobs(ctx context.Context, client *AzureBlobClient, c
 	}
 
 	return count, nil
+}
+
+// CollectInstanceMetrics collects performance metrics.
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// TODO: Implement database-specific metrics collection
+	return metrics, nil
+}
+
+// ListLogicalDatabases lists logical databases.
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	var databases []adapter.LogicalDatabaseInfo
+	// TODO: Implement database-specific database listing
+	return databases, nil
 }

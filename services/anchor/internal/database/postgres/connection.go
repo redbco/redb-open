@@ -252,9 +252,14 @@ func CollectInstanceMetadata(ctx context.Context, db interface{}) (map[string]in
 	}
 	metadata["version"] = version
 
-	// Get uptime (PostgreSQL doesn't provide this directly, so we'll use a placeholder)
-	var uptimeSeconds int64 = 0
-	metadata["uptime_seconds"] = uptimeSeconds
+	// Get uptime (time since postmaster started)
+	var uptimeSeconds float64
+	err = pool.QueryRow(ctx, "SELECT EXTRACT(EPOCH FROM (now() - pg_postmaster_start_time()))").Scan(&uptimeSeconds)
+	if err == nil {
+		metadata["uptime_seconds"] = int64(uptimeSeconds)
+	} else {
+		metadata["uptime_seconds"] = int64(0)
+	}
 
 	// Get total databases
 	var totalDatabases int
@@ -286,6 +291,164 @@ func CollectInstanceMetadata(ctx context.Context, db interface{}) (map[string]in
 	}
 
 	metadata["max_connections"] = maxConnections
+
+	// Get logical databases list with sizes
+	logicalDatabases := []map[string]interface{}{}
+	dbQuery := `
+		SELECT 
+			datname,
+			pg_database_size(datname) as size_bytes,
+			datdba::regrole::text as owner,
+			pg_encoding_to_char(encoding) as encoding,
+			datcollate as collation
+		FROM pg_database
+		WHERE datistemplate = false
+		ORDER BY datname
+	`
+	rows, err := pool.Query(ctx, dbQuery)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var dbName, owner, encoding, collation string
+			var sizeBytes int64
+			if err := rows.Scan(&dbName, &sizeBytes, &owner, &encoding, &collation); err == nil {
+				logicalDatabases = append(logicalDatabases, map[string]interface{}{
+					"name":       dbName,
+					"size_bytes": sizeBytes,
+					"owner":      owner,
+					"encoding":   encoding,
+					"collation":  collation,
+				})
+			}
+		}
+	}
+	metadata["logical_databases"] = logicalDatabases
+
+	// Get installed extensions
+	extensions := []string{}
+	extQuery := "SELECT extname FROM pg_extension ORDER BY extname"
+	rows, err = pool.Query(ctx, extQuery)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var extName string
+			if err := rows.Scan(&extName); err == nil {
+				extensions = append(extensions, extName)
+			}
+		}
+	}
+	metadata["extensions"] = extensions
+
+	// Check replication status
+	var isReplica bool
+	err = pool.QueryRow(ctx, "SELECT pg_is_in_recovery()").Scan(&isReplica)
+	if err == nil {
+		metadata["is_replica"] = isReplica
+		metadata["replication_enabled"] = true
+	}
+
+	// Get replication slots if primary
+	if !isReplica {
+		var replicationSlots int
+		err = pool.QueryRow(ctx, "SELECT count(*) FROM pg_replication_slots").Scan(&replicationSlots)
+		if err == nil {
+			metadata["replication_slots"] = replicationSlots
+		}
+	}
+
+	// Check if SSL is enabled
+	var sslEnabled bool
+	err = pool.QueryRow(ctx, "SELECT setting = 'on' FROM pg_settings WHERE name = 'ssl'").Scan(&sslEnabled)
+	if err == nil {
+		metadata["ssl_enabled"] = sslEnabled
+	}
+
+	// Get key server settings
+	serverSettings := make(map[string]string)
+	settingsQuery := `
+		SELECT name, setting, unit
+		FROM pg_settings
+		WHERE name IN (
+			'shared_buffers', 'work_mem', 'maintenance_work_mem',
+			'effective_cache_size', 'max_wal_size', 'checkpoint_timeout',
+			'random_page_cost', 'effective_io_concurrency'
+		)
+	`
+	rows, err = pool.Query(ctx, settingsQuery)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name, setting string
+			var unit *string
+			if err := rows.Scan(&name, &setting, &unit); err == nil {
+				if unit != nil && *unit != "" {
+					serverSettings[name] = setting + *unit
+				} else {
+					serverSettings[name] = setting
+				}
+			}
+		}
+	}
+	metadata["server_settings"] = serverSettings
+
+	// Get platform/architecture information
+	var platformInfo string
+	err = pool.QueryRow(ctx, "SELECT version()").Scan(&platformInfo)
+	if err == nil {
+		// Extract platform from version string
+		if strings.Contains(platformInfo, "linux") {
+			metadata["platform"] = "linux"
+		} else if strings.Contains(platformInfo, "darwin") {
+			metadata["platform"] = "darwin"
+		} else if strings.Contains(platformInfo, "windows") || strings.Contains(platformInfo, "win32") {
+			metadata["platform"] = "windows"
+		}
+
+		if strings.Contains(platformInfo, "x86_64") {
+			metadata["architecture"] = "x86_64"
+		} else if strings.Contains(platformInfo, "aarch64") || strings.Contains(platformInfo, "arm64") {
+			metadata["architecture"] = "arm64"
+		}
+	}
+
+	// Detect PostgreSQL edition/distribution
+	edition := "PostgreSQL"
+	if strings.Contains(version, "EnterpriseDB") {
+		edition = "EnterpriseDB"
+	} else if strings.Contains(version, "Citus") {
+		edition = "Citus"
+	} else if strings.Contains(version, "Amazon Aurora") {
+		edition = "Amazon Aurora PostgreSQL"
+	} else if strings.Contains(version, "CloudSQL") {
+		edition = "Google Cloud SQL"
+	}
+	metadata["edition"] = edition
+
+	// Check for common features/capabilities
+	features := []string{}
+
+	// Check for partitioning support (native in PG 10+)
+	var hasPartitioning bool
+	err = pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_proc WHERE proname = 'pg_partition_tree')").Scan(&hasPartitioning)
+	if err == nil && hasPartitioning {
+		features = append(features, "partitioning")
+	}
+
+	// Check for logical replication (PG 10+)
+	var hasLogicalReplication bool
+	err = pool.QueryRow(ctx, "SELECT setting::int >= 1 FROM pg_settings WHERE name = 'wal_level' AND setting IN ('logical', 'replica')").Scan(&hasLogicalReplication)
+	if err == nil && hasLogicalReplication {
+		features = append(features, "logical_replication")
+	}
+
+	// Check for foreign data wrappers
+	var hasFDW int
+	err = pool.QueryRow(ctx, "SELECT count(*) FROM pg_foreign_data_wrapper").Scan(&hasFDW)
+	if err == nil && hasFDW > 0 {
+		features = append(features, "foreign_data_wrappers")
+	}
+
+	metadata["features"] = features
 
 	return metadata, nil
 }

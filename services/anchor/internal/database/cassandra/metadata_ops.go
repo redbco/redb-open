@@ -71,6 +71,14 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 	return []byte(result), nil
 }
 
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Cassandra, "collect instance metrics", "not available on database connections")
+}
+
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Cassandra, "list logical databases", "not available on database connections")
+}
+
 type InstanceMetadataOps struct {
 	conn *InstanceConnection
 }
@@ -120,4 +128,30 @@ func (i *InstanceMetadataOps) ExecuteCommand(ctx context.Context, command string
 	}
 	result := fmt.Sprintf(`{"success": true, "command": "%s"}`, command)
 	return []byte(result), nil
+}
+
+func (i *InstanceMetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// Cassandra metrics collection could query system tables
+	return metrics, nil
+}
+
+func (i *InstanceMetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	// List keyspaces in Cassandra
+	iter := i.conn.session.Query("SELECT keyspace_name FROM system_schema.keyspaces").WithContext(ctx).Iter()
+	var databases []adapter.LogicalDatabaseInfo
+	var keyspaceName string
+	for iter.Scan(&keyspaceName) {
+		if keyspaceName != "system" && keyspaceName != "system_schema" && keyspaceName != "system_auth" && keyspaceName != "system_traces" {
+			databases = append(databases, adapter.LogicalDatabaseInfo{
+				Name:      keyspaceName,
+				SizeBytes: 0, // Would need to query system.size_estimates
+				Owner:     "cassandra",
+			})
+		}
+	}
+	if err := iter.Close(); err != nil {
+		return nil, adapter.WrapError(dbcapabilities.Cassandra, "list_keyspaces", err)
+	}
+	return databases, nil
 }

@@ -6,7 +6,7 @@ import { useDataInventory } from '@/lib/hooks/useResourceInventory';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { EmptyState } from '@/components/ui/EmptyState';
-import type { ResourceItem, ResourceContainer } from '@/lib/api/types';
+import type { ResourceItem } from '@/lib/api/types';
 import { api } from '@/lib/api/endpoints';
 
 interface DataInventoryPageProps {
@@ -65,173 +65,168 @@ export default function DataInventoryPage({ params }: DataInventoryPageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="border-b border-border bg-card">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Package className="w-5 h-5 text-primary" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-foreground">Data Inventory</h1>
-                <p className="text-sm text-muted-foreground">Explore resource items and create data products</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setShowCreateDialog(true)}
-              disabled={inventory.selectedItems.length === 0}
-              className="flex items-center space-x-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Create Data Product</span>
-              {inventory.selectedItems.length > 0 && (
-                <span className="ml-2 px-2 py-0.5 bg-primary-foreground/20 rounded-full text-xs">
-                  {inventory.selectedItems.length}
-                </span>
-              )}
-            </button>
+      <div className="flex items-center justify-between bg-gradient-to-r from-amber-50/50 to-transparent dark:from-amber-900/10 p-6 -mx-6 rounded-lg mb-6">
+        <div>
+          <div className="flex items-center gap-3">
+            <Package className="w-8 h-8 text-amber-600 dark:text-amber-400" />
+            <h2 className="text-3xl font-bold text-foreground">Data Inventory</h2>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <p className="text-muted-foreground">
+              Explore resource items and create data products
+            </p>
           </div>
         </div>
+        <button
+          onClick={() => setShowCreateDialog(true)}
+          disabled={inventory.selectedItems.length === 0}
+          className="flex items-center space-x-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          <Plus className="w-4 h-4" />
+          <span>Create Data Product</span>
+          {inventory.selectedItems.length > 0 && (
+            <span className="ml-2 px-2 py-0.5 bg-primary-foreground/20 rounded-full text-xs">
+              {inventory.selectedItems.length}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* View Tabs */}
-      <div className="border-b border-border bg-card">
-        <div className="container mx-auto px-6">
-          <div className="flex space-x-8">
-            <button
-              onClick={() => setActiveView('items')}
-              className={`px-4 py-3 border-b-2 transition-colors ${
-                activeView === 'items'
-                  ? 'border-primary text-primary font-medium'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <div className="flex items-center space-x-2">
-                <Table className="w-4 h-4" />
-                <span>Resource Items</span>
-                <span className="px-2 py-0.5 bg-muted rounded-full text-xs">
-                  {inventory.items.length}
-                </span>
-              </div>
-            </button>
-            <button
-              onClick={() => setActiveView('products')}
-              className={`px-4 py-3 border-b-2 transition-colors ${
-                activeView === 'products'
-                  ? 'border-primary text-primary font-medium'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <div className="flex items-center space-x-2">
-                <Box className="w-4 h-4" />
-                <span>Data Products</span>
-                <span className="px-2 py-0.5 bg-muted rounded-full text-xs">
-                  {inventory.dataProducts.length}
-                </span>
-              </div>
-            </button>
-          </div>
+      <div className="border-b border-border">
+        <div className="flex space-x-8 -mx-6 px-6">
+          <button
+            onClick={() => setActiveView('items')}
+            className={`px-4 py-3 border-b-2 transition-colors ${
+              activeView === 'items'
+                ? 'border-primary text-primary font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <div className="flex items-center space-x-2">
+              <Table className="w-4 h-4" />
+              <span>Resource Items</span>
+              <span className="px-2 py-0.5 bg-muted rounded-full text-xs">
+                {inventory.items.length}
+              </span>
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveView('products')}
+            className={`px-4 py-3 border-b-2 transition-colors ${
+              activeView === 'products'
+                ? 'border-primary text-primary font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <div className="flex items-center space-x-2">
+              <Box className="w-4 h-4" />
+              <span>Data Products</span>
+              <span className="px-2 py-0.5 bg-muted rounded-full text-xs">
+                {inventory.dataProducts.length}
+              </span>
+            </div>
+          </button>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="container mx-auto px-6 py-6">
-        <div className="flex gap-6">
-          {/* Filters Sidebar */}
-          <aside className="w-64 flex-shrink-0">
-            <div className="sticky top-6 bg-card border border-border rounded-lg p-4">
-              <div className="flex items-center space-x-2 mb-4">
-                <Filter className="w-4 h-4 text-muted-foreground" />
-                <h3 className="font-medium text-foreground">Filters</h3>
-              </div>
-              
-              {activeView === 'items' && (
-                <div className="space-y-4">
-                  {/* Protocol Filter */}
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-2 block">Protocol</label>
-                    <select
-                      className="w-full px-3 py-2 bg-background border border-border rounded-md text-sm"
-                      onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, protocol: e.target.value || undefined }))}
-                    >
-                      <option value="">All</option>
-                      <option value="redb">redb</option>
-                      <option value="stream">stream</option>
-                      <option value="webhook">webhook</option>
-                      <option value="mcp">mcp</option>
-                    </select>
-                  </div>
-
-                  {/* Item Type Filter */}
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-2 block">Item Type</label>
-                    <select
-                      className="w-full px-3 py-2 bg-background border border-border rounded-md text-sm"
-                      onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, item_type: e.target.value || undefined }))}
-                    >
-                      <option value="">All</option>
-                      <option value="column">column</option>
-                      <option value="field">field</option>
-                      <option value="property">property</option>
-                    </select>
-                  </div>
-
-                  {/* Attribute Filters */}
-                  <div className="pt-2 border-t border-border">
-                    <label className="text-xs font-medium text-muted-foreground mb-2 block">Attributes</label>
-                    <div className="space-y-2">
-                      <label className="flex items-center space-x-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          className="rounded border-border"
-                          onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, is_primary_key: e.target.checked || undefined }))}
-                        />
-                        <span className="text-sm">Primary Key</span>
-                      </label>
-                      <label className="flex items-center space-x-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          className="rounded border-border"
-                          onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, is_unique: e.target.checked || undefined }))}
-                        />
-                        <span className="text-sm">Unique</span>
-                      </label>
-                      <label className="flex items-center space-x-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          className="rounded border-border"
-                          onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, is_indexed: e.target.checked || undefined }))}
-                        />
-                        <span className="text-sm">Indexed</span>
-                      </label>
-                      <label className="flex items-center space-x-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          className="rounded border-border"
-                          onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, is_privileged: e.target.checked || undefined }))}
-                        />
-                        <span className="text-sm">Privileged</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Selection Actions */}
-                  {inventory.selectedItems.length > 0 && (
-                    <div className="pt-2 border-t border-border">
-                      <button
-                        onClick={inventory.clearSelection}
-                        className="w-full px-3 py-2 text-sm bg-muted text-foreground rounded-md hover:bg-muted/80 transition-colors"
-                      >
-                        Clear Selection
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
+      <div className="flex gap-6">
+        {/* Filters Sidebar */}
+        <aside className="w-64 flex-shrink-0">
+          <div className="sticky top-6 bg-card border border-border rounded-xl p-4 shadow-sm">
+            <div className="flex items-center space-x-2 mb-4">
+              <Filter className="w-4 h-4 text-muted-foreground" />
+              <h3 className="font-medium text-foreground">Filters</h3>
             </div>
-          </aside>
+              
+            {activeView === 'items' && (
+              <div className="space-y-4">
+                  {/* Protocol Filter */}
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-2 block">Protocol</label>
+                  <select
+                    className="w-full px-3 py-2 bg-background border border-border rounded-md text-sm"
+                    onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, protocol: e.target.value || undefined }))}
+                  >
+                    <option value="">All</option>
+                    <option value="redb">redb</option>
+                    <option value="stream">stream</option>
+                    <option value="webhook">webhook</option>
+                    <option value="mcp">mcp</option>
+                  </select>
+                </div>
+
+                {/* Item Type Filter */}
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-2 block">Item Type</label>
+                  <select
+                    className="w-full px-3 py-2 bg-background border border-border rounded-md text-sm"
+                    onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, item_type: e.target.value || undefined }))}
+                  >
+                    <option value="">All</option>
+                    <option value="column">column</option>
+                    <option value="field">field</option>
+                    <option value="property">property</option>
+                  </select>
+                </div>
+
+                {/* Attribute Filters */}
+                <div className="pt-2 border-t border-border">
+                  <label className="text-xs font-medium text-muted-foreground mb-2 block">Attributes</label>
+                  <div className="space-y-2">
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="rounded border-border"
+                        onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, is_primary_key: e.target.checked || undefined }))}
+                      />
+                      <span className="text-sm">Primary Key</span>
+                    </label>
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="rounded border-border"
+                        onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, is_unique: e.target.checked || undefined }))}
+                      />
+                      <span className="text-sm">Unique</span>
+                    </label>
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="rounded border-border"
+                        onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, is_indexed: e.target.checked || undefined }))}
+                      />
+                      <span className="text-sm">Indexed</span>
+                    </label>
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="rounded border-border"
+                        onChange={(e) => inventory.setItemFilters(prev => ({ ...prev, is_privileged: e.target.checked || undefined }))}
+                      />
+                      <span className="text-sm">Privileged</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Selection Actions */}
+                {inventory.selectedItems.length > 0 && (
+                  <div className="pt-2 border-t border-border">
+                    <button
+                      onClick={inventory.clearSelection}
+                      className="w-full px-3 py-2 text-sm bg-muted text-foreground rounded-md hover:bg-muted/80 transition-colors"
+                    >
+                      Clear Selection
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </aside>
 
           {/* Main Content Area */}
           <main className="flex-1">
@@ -254,10 +249,10 @@ export default function DataInventoryPage({ params }: DataInventoryPageProps) {
                     {inventory.items.map((item) => (
                       <div
                         key={item.item_id}
-                        className={`group bg-card border rounded-lg p-4 transition-all cursor-pointer hover:border-primary/50 ${
+                        className={`group bg-card border rounded-xl p-4 transition-all cursor-pointer hover:shadow-lg ${
                           inventory.selectedItems.some(i => i.item_id === item.item_id)
                             ? 'border-primary bg-primary/5'
-                            : 'border-border'
+                            : 'border-border hover:border-primary/50'
                         }`}
                         onClick={() => inventory.toggleItemSelection(item)}
                       >
@@ -323,7 +318,7 @@ export default function DataInventoryPage({ params }: DataInventoryPageProps) {
                     {inventory.dataProducts.map((product) => (
                       <div
                         key={product.product_id}
-                        className="bg-card border border-border rounded-lg p-4 hover:border-primary/50 transition-all"
+                        className="bg-card border border-border rounded-xl p-4 hover:border-primary/50 hover:shadow-lg transition-all"
                       >
                         <div className="flex items-start justify-between mb-2">
                           <div>
@@ -344,7 +339,6 @@ export default function DataInventoryPage({ params }: DataInventoryPageProps) {
             )}
           </main>
         </div>
-      </div>
 
       {/* Simple Create Dialog */}
       {showCreateDialog && (
@@ -431,7 +425,7 @@ export default function DataInventoryPage({ params }: DataInventoryPageProps) {
                   Original Name
                 </label>
                 <p className="text-sm text-foreground px-3 py-2 bg-muted rounded-md">
-                  {editingItem.item_name}
+                  {editingItem?.item_name}
                 </p>
               </div>
               <div>

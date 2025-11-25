@@ -79,6 +79,14 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 	return []byte(result), nil
 }
 
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.SQLServer, "collect instance metrics", "not available on database connections")
+}
+
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.SQLServer, "list logical databases", "not available on database connections")
+}
+
 type InstanceMetadataOps struct {
 	conn *InstanceConnection
 }
@@ -129,4 +137,42 @@ func (i *InstanceMetadataOps) ExecuteCommand(ctx context.Context, command string
 	defer rows.Close()
 	result := fmt.Sprintf(`{"success": true, "command": "%s"}`, command)
 	return []byte(result), nil
+}
+
+func (i *InstanceMetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// Collect basic SQL Server metrics
+	var connections int32
+	if err := i.conn.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1").Scan(&connections); err == nil {
+		metrics["active_connections"] = connections
+	}
+	return metrics, nil
+}
+
+func (i *InstanceMetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	query := `
+		SELECT 
+			name,
+			CAST(SUM(size) * 8 * 1024 AS BIGINT) as size_bytes
+		FROM sys.databases d
+		LEFT JOIN sys.master_files f ON d.database_id = f.database_id
+		WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')
+		GROUP BY name
+		ORDER BY name
+	`
+	rows, err := i.conn.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, adapter.WrapError(dbcapabilities.SQLServer, "list_databases", err)
+	}
+	defer rows.Close()
+
+	var databases []adapter.LogicalDatabaseInfo
+	for rows.Next() {
+		var db adapter.LogicalDatabaseInfo
+		if err := rows.Scan(&db.Name, &db.SizeBytes); err == nil {
+			db.Owner = "sa" // SQL Server doesn't have per-database owners like PostgreSQL
+			databases = append(databases, db)
+		}
+	}
+	return databases, nil
 }

@@ -93,7 +93,7 @@ func (ih *InstanceHandlers) ListInstances(w http.ResponseWriter, r *http.Request
 			InstanceHost:             inst.InstanceHost,
 			InstancePort:             inst.InstancePort,
 			InstanceUsername:         inst.InstanceUsername,
-			InstancePassword:         inst.InstancePassword,
+			// Note: InstancePassword is deliberately omitted from REST API response for security
 			InstanceSystemDBName:     inst.InstanceSystemDbName,
 			InstanceEnabled:          inst.InstanceEnabled,
 			InstanceSSL:              inst.InstanceSsl,
@@ -107,6 +107,19 @@ func (ih *InstanceHandlers) ListInstances(w http.ResponseWriter, r *http.Request
 			Status:                   convertStatus(inst.Status),
 			Created:                  inst.Created,
 			Updated:                  inst.Updated,
+		}
+		// Convert protobuf Struct to map[string]interface{} for metadata
+		if inst.InstanceMetadata != nil {
+			instances[i].InstanceMetadata = inst.InstanceMetadata.AsMap()
+		}
+		// Convert connected databases
+		for _, db := range inst.ConnectedDatabases {
+			instances[i].ConnectedDatabases = append(instances[i].ConnectedDatabases, ConnectedDatabase{
+				DatabaseName:     db.DatabaseName,
+				DatabaseDBName:   db.DatabaseDbName,
+				DatabaseUsername: db.DatabaseUsername,
+				Status:           convertStatus(db.Status),
+			})
 		}
 	}
 
@@ -192,7 +205,7 @@ func (ih *InstanceHandlers) ShowInstance(w http.ResponseWriter, r *http.Request)
 		InstanceHost:             grpcResp.Instance.InstanceHost,
 		InstancePort:             grpcResp.Instance.InstancePort,
 		InstanceUsername:         grpcResp.Instance.InstanceUsername,
-		InstancePassword:         grpcResp.Instance.InstancePassword,
+		// Note: InstancePassword is deliberately omitted from REST API response for security
 		InstanceSystemDBName:     grpcResp.Instance.InstanceSystemDbName,
 		InstanceEnabled:          grpcResp.Instance.InstanceEnabled,
 		InstanceSSL:              grpcResp.Instance.InstanceSsl,
@@ -206,6 +219,21 @@ func (ih *InstanceHandlers) ShowInstance(w http.ResponseWriter, r *http.Request)
 		Status:                   convertStatus(grpcResp.Instance.Status),
 		Created:                  grpcResp.Instance.Created,
 		Updated:                  grpcResp.Instance.Updated,
+	}
+
+	// Convert protobuf Struct to map[string]interface{} for metadata
+	if grpcResp.Instance.InstanceMetadata != nil {
+		instance.InstanceMetadata = grpcResp.Instance.InstanceMetadata.AsMap()
+	}
+
+	// Convert connected databases
+	for _, db := range grpcResp.Instance.ConnectedDatabases {
+		instance.ConnectedDatabases = append(instance.ConnectedDatabases, ConnectedDatabase{
+			DatabaseName:     db.DatabaseName,
+			DatabaseDBName:   db.DatabaseDbName,
+			DatabaseUsername: db.DatabaseUsername,
+			Status:           convertStatus(db.Status),
+		})
 	}
 
 	response := ShowInstanceResponse{
@@ -353,7 +381,7 @@ func (ih *InstanceHandlers) ConnectInstance(w http.ResponseWriter, r *http.Reque
 		InstanceHost:             grpcResp.Instance.InstanceHost,
 		InstancePort:             grpcResp.Instance.InstancePort,
 		InstanceUsername:         grpcResp.Instance.InstanceUsername,
-		InstancePassword:         grpcResp.Instance.InstancePassword,
+		// Note: InstancePassword is deliberately omitted from REST API response for security
 		InstanceSystemDBName:     grpcResp.Instance.InstanceSystemDbName,
 		InstanceEnabled:          grpcResp.Instance.InstanceEnabled,
 		InstanceSSL:              grpcResp.Instance.InstanceSsl,
@@ -559,7 +587,7 @@ func (ih *InstanceHandlers) ModifyInstance(w http.ResponseWriter, r *http.Reques
 		InstanceHost:             grpcResp.Instance.InstanceHost,
 		InstancePort:             grpcResp.Instance.InstancePort,
 		InstanceUsername:         grpcResp.Instance.InstanceUsername,
-		InstancePassword:         grpcResp.Instance.InstancePassword,
+		// Note: InstancePassword is deliberately omitted from REST API response for security
 		InstanceSystemDBName:     grpcResp.Instance.InstanceSystemDbName,
 		InstanceEnabled:          grpcResp.Instance.InstanceEnabled,
 		InstanceSSL:              grpcResp.Instance.InstanceSsl,
@@ -1352,7 +1380,7 @@ func (ih *InstanceHandlers) ConnectInstanceString(w http.ResponseWriter, r *http
 		InstanceHost:             grpcResp.Instance.InstanceHost,
 		InstancePort:             grpcResp.Instance.InstancePort,
 		InstanceUsername:         grpcResp.Instance.InstanceUsername,
-		InstancePassword:         grpcResp.Instance.InstancePassword,
+		// Note: InstancePassword is deliberately omitted from REST API response for security
 		InstanceSystemDBName:     grpcResp.Instance.InstanceSystemDbName,
 		InstanceEnabled:          grpcResp.Instance.InstanceEnabled,
 		InstanceSSL:              grpcResp.Instance.InstanceSsl,

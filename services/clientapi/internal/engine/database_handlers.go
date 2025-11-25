@@ -93,7 +93,6 @@ func (dh *DatabaseHandlers) ListDatabases(w http.ResponseWriter, r *http.Request
 			DatabaseVendor:        db.DatabaseVendor,
 			DatabaseVersion:       db.DatabaseVersion,
 			DatabaseUsername:      db.DatabaseUsername,
-			DatabasePassword:      db.DatabasePassword,
 			DatabaseDBName:        db.DatabaseDbName,
 			DatabaseEnabled:       db.DatabaseEnabled,
 			PolicyIDs:             db.PolicyIds,
@@ -185,7 +184,6 @@ func (dh *DatabaseHandlers) ShowDatabase(w http.ResponseWriter, r *http.Request)
 		DatabaseVendor:        grpcResp.Database.DatabaseVendor,
 		DatabaseVersion:       grpcResp.Database.DatabaseVersion,
 		DatabaseUsername:      grpcResp.Database.DatabaseUsername,
-		DatabasePassword:      grpcResp.Database.DatabasePassword,
 		DatabaseDBName:        grpcResp.Database.DatabaseDbName,
 		DatabaseEnabled:       grpcResp.Database.DatabaseEnabled,
 		PolicyIDs:             grpcResp.Database.PolicyIds,
@@ -194,8 +192,6 @@ func (dh *DatabaseHandlers) ShowDatabase(w http.ResponseWriter, r *http.Request)
 		Status:                convertStatus(grpcResp.Database.Status),
 		Created:               grpcResp.Database.Created,
 		Updated:               grpcResp.Database.Updated,
-		DatabaseSchema:        grpcResp.Database.DatabaseSchema,
-		DatabaseTables:        grpcResp.Database.DatabaseTables,
 		InstanceHost:          grpcResp.Database.InstanceHost,
 		InstancePort:          grpcResp.Database.InstancePort,
 		InstanceSSLMode:       grpcResp.Database.InstanceSslMode,
@@ -213,6 +209,24 @@ func (dh *DatabaseHandlers) ShowDatabase(w http.ResponseWriter, r *http.Request)
 		resourceContainers[i] = convertProtoContainer(protoContainer)
 	}
 	database.ResourceContainers = resourceContainers
+
+	// Add repository and commit timeline fields
+	database.ConnectedRepoID = grpcResp.Database.ConnectedRepoId
+	database.ConnectedRepoName = grpcResp.Database.ConnectedRepoName
+	database.ConnectedBranchID = grpcResp.Database.ConnectedBranchId
+	database.ConnectedBranchName = grpcResp.Database.ConnectedBranchName
+
+	// Convert commit timeline
+	commitTimeline := make([]CommitTimelineEntry, len(grpcResp.Database.CommitTimeline))
+	for i, protoCommit := range grpcResp.Database.CommitTimeline {
+		commitTimeline[i] = CommitTimelineEntry{
+			CommitCode:    protoCommit.CommitCode,
+			CommitMessage: protoCommit.CommitMessage,
+			CommitDate:    protoCommit.Created,
+			IsHead:        protoCommit.IsHead,
+		}
+	}
+	database.CommitTimeline = commitTimeline
 
 	response := ShowDatabaseResponse{
 		Database: database,
@@ -332,7 +346,6 @@ func (dh *DatabaseHandlers) ConnectDatabase(w http.ResponseWriter, r *http.Reque
 		DatabaseVendor:        grpcResp.Database.DatabaseVendor,
 		DatabaseVersion:       grpcResp.Database.DatabaseVersion,
 		DatabaseUsername:      grpcResp.Database.DatabaseUsername,
-		DatabasePassword:      grpcResp.Database.DatabasePassword,
 		DatabaseDBName:        grpcResp.Database.DatabaseDbName,
 		DatabaseEnabled:       grpcResp.Database.DatabaseEnabled,
 		PolicyIDs:             grpcResp.Database.PolicyIds,
@@ -453,7 +466,6 @@ func (dh *DatabaseHandlers) ConnectDatabaseWithInstance(w http.ResponseWriter, r
 		DatabaseVendor:        grpcResp.Database.DatabaseVendor,
 		DatabaseVersion:       grpcResp.Database.DatabaseVersion,
 		DatabaseUsername:      grpcResp.Database.DatabaseUsername,
-		DatabasePassword:      grpcResp.Database.DatabasePassword,
 		DatabaseDBName:        grpcResp.Database.DatabaseDbName,
 		DatabaseEnabled:       grpcResp.Database.DatabaseEnabled,
 		PolicyIDs:             grpcResp.Database.PolicyIds,
@@ -547,7 +559,6 @@ func (dh *DatabaseHandlers) ReconnectDatabase(w http.ResponseWriter, r *http.Req
 		DatabaseVendor:        grpcResp.Database.DatabaseVendor,
 		DatabaseVersion:       grpcResp.Database.DatabaseVersion,
 		DatabaseUsername:      grpcResp.Database.DatabaseUsername,
-		DatabasePassword:      grpcResp.Database.DatabasePassword,
 		DatabaseDBName:        grpcResp.Database.DatabaseDbName,
 		DatabaseEnabled:       grpcResp.Database.DatabaseEnabled,
 		PolicyIDs:             grpcResp.Database.PolicyIds,
@@ -669,7 +680,6 @@ func (dh *DatabaseHandlers) ModifyDatabase(w http.ResponseWriter, r *http.Reques
 		DatabaseVendor:        grpcResp.Database.DatabaseVendor,
 		DatabaseVersion:       grpcResp.Database.DatabaseVersion,
 		DatabaseUsername:      grpcResp.Database.DatabaseUsername,
-		DatabasePassword:      grpcResp.Database.DatabasePassword,
 		DatabaseDBName:        grpcResp.Database.DatabaseDbName,
 		DatabaseEnabled:       grpcResp.Database.DatabaseEnabled,
 		PolicyIDs:             grpcResp.Database.PolicyIds,
@@ -1318,7 +1328,6 @@ func (dh *DatabaseHandlers) ConnectDatabaseString(w http.ResponseWriter, r *http
 		DatabaseVendor:        grpcResp.Database.DatabaseVendor,
 		DatabaseVersion:       grpcResp.Database.DatabaseVersion,
 		DatabaseUsername:      grpcResp.Database.DatabaseUsername,
-		DatabasePassword:      grpcResp.Database.DatabasePassword,
 		DatabaseDBName:        grpcResp.Database.DatabaseDbName,
 		DatabaseEnabled:       grpcResp.Database.DatabaseEnabled,
 		PolicyIDs:             grpcResp.Database.PolicyIds,
@@ -1327,8 +1336,6 @@ func (dh *DatabaseHandlers) ConnectDatabaseString(w http.ResponseWriter, r *http
 		Status:                convertStatus(grpcResp.Status),
 		Created:               grpcResp.Database.Created,
 		Updated:               grpcResp.Database.Updated,
-		DatabaseSchema:        grpcResp.Database.DatabaseSchema,
-		DatabaseTables:        grpcResp.Database.DatabaseTables,
 		InstanceHost:          grpcResp.Database.InstanceHost,
 		InstancePort:          grpcResp.Database.InstancePort,
 		InstanceSSLMode:       grpcResp.Database.InstanceSslMode,

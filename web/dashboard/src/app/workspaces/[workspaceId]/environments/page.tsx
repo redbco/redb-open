@@ -51,12 +51,17 @@ export default function EnvironmentsPage({ params }: EnvironmentsPageProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between bg-gradient-to-r from-slate-50/50 to-transparent dark:from-slate-900/10 p-6 -mx-6 rounded-lg mb-6">
         <div>
-          <h2 className="text-3xl font-bold text-foreground">Environments</h2>
-          <p className="text-muted-foreground mt-2">
-            Manage deployment environments for instances and databases
-          </p>
+          <div className="flex items-center gap-3">
+            <Layers className="w-8 h-8 text-slate-600 dark:text-slate-400" />
+            <h2 className="text-3xl font-bold text-foreground">Environments</h2>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <p className="text-muted-foreground">
+              Manage deployment environments for instances and databases
+            </p>
+          </div>
         </div>
         <div className="flex items-center space-x-3">
           <button

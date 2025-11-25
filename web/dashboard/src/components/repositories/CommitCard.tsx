@@ -72,7 +72,7 @@ export function CommitCard({
             </div>
             
             <span className="text-xs text-muted-foreground">
-              {formatDate(commit.created)}
+              {formatDate(commit.commit_date)}
             </span>
           </div>
           

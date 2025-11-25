@@ -45,6 +45,7 @@ enum Status {
     STATUS_ACTIVE = 34;
     STATUS_CLEAN = 35;
     STATUS_INCONSISTENT = 36;
+    STATUS_UNCHANGED = 37;
 }
 
 // ServiceInfo contains basic information about a service

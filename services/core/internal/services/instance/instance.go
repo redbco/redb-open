@@ -60,36 +60,45 @@ func NewService(db *database.PostgreSQL, logger *logger.Logger) *Service {
 }
 
 // Instance represents an instance in the system
+// ConnectedDatabaseInfo represents basic info about a connected database
+type ConnectedDatabaseInfo struct {
+	DatabaseName     string
+	DatabaseDBName   string
+	DatabaseUsername string
+	Status           string
+}
+
 type Instance struct {
-	ID                string
-	TenantID          string
-	WorkspaceID       string
-	EnvironmentID     *string
-	ConnectedToNodeID string
-	Name              string
-	Description       string
-	Type              string
-	Vendor            string
-	Version           string
-	UniqueIdentifier  string
-	Host              string
-	Port              int32
-	Username          string
-	Password          string
-	SystemDBName      string
-	Enabled           bool
-	SSL               bool
-	SSLMode           string
-	SSLCert           *string
-	SSLKey            *string
-	SSLRootCert       *string
-	Metadata          map[string]interface{}
-	PolicyIDs         []string
-	OwnerID           string
-	StatusMessage     string
-	Status            string
-	Created           time.Time
-	Updated           time.Time
+	ID                  string
+	TenantID            string
+	WorkspaceID         string
+	EnvironmentID       *string
+	ConnectedToNodeID   string
+	Name                string
+	Description         string
+	Type                string
+	Vendor              string
+	Version             string
+	UniqueIdentifier    string
+	Host                string
+	Port                int32
+	Username            string
+	Password            string
+	SystemDBName        string
+	Enabled             bool
+	SSL                 bool
+	SSLMode             string
+	SSLCert             *string
+	SSLKey              *string
+	SSLRootCert         *string
+	Metadata            map[string]interface{}
+	PolicyIDs           []string
+	OwnerID             string
+	StatusMessage       string
+	Status              string
+	Created             time.Time
+	Updated             time.Time
+	ConnectedDatabases  []ConnectedDatabaseInfo
 }
 
 // Create creates a new instance
@@ -340,6 +349,28 @@ func (s *Service) Get(ctx context.Context, tenantID, workspaceName, name string)
 	// Set policy IDs
 	instance.PolicyIDs = policyIDsArray
 
+	// Fetch connected databases
+	dbQuery := `
+		SELECT database_name, database_db_name, database_username, status
+		FROM databases
+		WHERE instance_id = $1
+		ORDER BY database_name
+	`
+	dbRows, err := s.db.Pool().Query(ctx, dbQuery, instance.ID)
+	if err != nil {
+		s.logger.Warnf("Failed to fetch connected databases for instance %s: %v", instance.ID, err)
+	} else {
+		defer dbRows.Close()
+		for dbRows.Next() {
+			var connDB ConnectedDatabaseInfo
+			if err := dbRows.Scan(&connDB.DatabaseName, &connDB.DatabaseDBName, &connDB.DatabaseUsername, &connDB.Status); err != nil {
+				s.logger.Warnf("Failed to scan connected database: %v", err)
+				continue
+			}
+			instance.ConnectedDatabases = append(instance.ConnectedDatabases, connDB)
+		}
+	}
+
 	return &instance, nil
 }
 
@@ -425,6 +456,43 @@ func (s *Service) List(ctx context.Context, tenantID, workspaceName string) ([]*
 
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+
+	// Fetch connected databases for all instances
+	if len(instances) > 0 {
+		// Build instance IDs for IN clause
+		instanceIDs := make([]string, len(instances))
+		for i, inst := range instances {
+			instanceIDs[i] = inst.ID
+		}
+
+		dbQuery := `
+			SELECT instance_id, database_name, database_db_name, database_username, status
+			FROM databases
+			WHERE instance_id = ANY($1)
+			ORDER BY instance_id, database_name
+		`
+		dbRows, err := s.db.Pool().Query(ctx, dbQuery, instanceIDs)
+		if err != nil {
+			s.logger.Warnf("Failed to fetch connected databases for instances: %v", err)
+		} else {
+			defer dbRows.Close()
+			// Create a map to organize databases by instance
+			dbsByInstance := make(map[string][]ConnectedDatabaseInfo)
+			for dbRows.Next() {
+				var instanceID string
+				var connDB ConnectedDatabaseInfo
+				if err := dbRows.Scan(&instanceID, &connDB.DatabaseName, &connDB.DatabaseDBName, &connDB.DatabaseUsername, &connDB.Status); err != nil {
+					s.logger.Warnf("Failed to scan connected database: %v", err)
+					continue
+				}
+				dbsByInstance[instanceID] = append(dbsByInstance[instanceID], connDB)
+			}
+			// Assign databases to their instances
+			for _, inst := range instances {
+				inst.ConnectedDatabases = dbsByInstance[inst.ID]
+			}
+		}
 	}
 
 	return instances, nil

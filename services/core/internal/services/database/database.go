@@ -316,6 +316,28 @@ func (s *Service) GetByID(ctx context.Context, databaseID string) (*Database, er
 	return &database, nil
 }
 
+// GetDatabaseNameByID retrieves the database name by database ID
+func (s *Service) GetDatabaseNameByID(ctx context.Context, databaseID string) (string, error) {
+	s.logger.Infof("Getting database name for database ID: %s", databaseID)
+	query := `
+		SELECT database_name
+		FROM databases
+		WHERE database_id = $1
+	`
+
+	var databaseName string
+	err := s.db.Pool().QueryRow(ctx, query, databaseID).Scan(&databaseName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errors.New("database not found")
+		}
+		s.logger.Errorf("Failed to get database name by ID: %v", err)
+		return "", err
+	}
+
+	return databaseName, nil
+}
+
 // populateInstanceDetails fetches and populates instance details for a database
 func (s *Service) populateInstanceDetails(ctx context.Context, database *Database) error {
 	if database.InstanceID == "" {

@@ -1,22 +1,19 @@
 'use client';
 
-import { Table, Columns, Shield, Activity, RefreshCw, GitBranch } from 'lucide-react';
-import type { DatabaseSchema } from '@/lib/api/types';
+import { Table, Columns, Shield, GitBranch, AlertCircle, Clock } from 'lucide-react';
+import Link from 'next/link';
+import type { DatabaseSchema, Database } from '@/lib/api/types';
 
 interface SchemaOverviewProps {
   schema: DatabaseSchema;
-  databaseName: string;
-  onRefresh?: () => void;
-  onDeploySchema?: () => void;
-  isRefreshing?: boolean;
+  database?: Database;
+  workspaceId?: string;
 }
 
 export function SchemaOverview({
   schema,
-  databaseName,
-  onRefresh,
-  onDeploySchema,
-  isRefreshing = false,
+  database,
+  workspaceId,
 }: SchemaOverviewProps) {
   // Helper function to get containers or tables
   const getContainersOrTables = () => {
@@ -50,6 +47,7 @@ export function SchemaOverview({
   const privilegedColumnStats = containers.reduce(
     (acc, container) => {
       const columns = container.columns || [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       columns.forEach((col: any) => {
         // Check for both new and legacy field names
         const isPrivileged = col.is_privileged || col.isPrivilegedData || col.is_privileged_data;
@@ -77,6 +75,7 @@ export function SchemaOverview({
   // Count tables with privileged data
   const privilegedTableCount = containers.filter((container) => {
     const columns = container.columns || [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return columns.some((col: any) => {
       const isPrivileged = col.is_privileged || col.isPrivilegedData || col.is_privileged_data;
       const confidence = col.detection_confidence || col.privilegedConfidence || col.privileged_confidence || 0;
@@ -84,70 +83,85 @@ export function SchemaOverview({
     });
   }).length;
   
-  // Count data categories from enriched schema data
-  const dataCategoryCounts = containers.reduce((acc, container) => {
-    const columns = container.columns || [];
-    columns.forEach((col: any) => {
-      const category = col.data_category || col.dataCategory;
-      const isPrivileged = col.is_privileged || col.isPrivilegedData || col.is_privileged_data;
-      if (category && isPrivileged) {
-        acc[category] = (acc[category] || 0) + 1;
-      }
-    });
-    return acc;
-  }, {} as Record<string, number>);
+  // Determine connection status for real-time indicator
+  const isConnected = database?.status?.toLowerCase() === 'connected' || database?.status?.toLowerCase() === 'healthy';
+  const isError = database?.status?.toLowerCase() === 'error';
+  const isDisconnected = database?.status?.toLowerCase() === 'disconnected';
+  const hasError = isError || isDisconnected;
   
-  const topCategories = Object.entries(dataCategoryCounts)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 3);
+  // Get appropriate status styling and text
+  const getStatusConfig = () => {
+    if (isConnected) {
+      return {
+        bgColor: 'bg-green-100 dark:bg-green-900/20',
+        textColor: 'text-green-800 dark:text-green-400',
+        borderColor: 'border-green-200 dark:border-green-800',
+        dotColor: 'bg-green-500',
+        pingColor: 'bg-green-400',
+        label: 'LIVE',
+        subtitle: 'Real-time Schema'
+      };
+    } else {
+      return {
+        bgColor: 'bg-amber-100 dark:bg-amber-900/20',
+        textColor: 'text-amber-800 dark:text-amber-400',
+        borderColor: 'border-amber-200 dark:border-amber-800',
+        dotColor: 'bg-amber-500',
+        pingColor: 'bg-amber-400',
+        label: 'CACHED',
+        subtitle: 'Most Recent Version'
+      };
+    }
+  };
+  
+  const statusConfig = getStatusConfig();
 
   return (
     <div className="space-y-6">
+      {/* Error Banner */}
+      {hasError && database?.database_status_message && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h4 className="font-semibold text-red-900 dark:text-red-300 mb-1">
+                Connection {isError ? 'Error' : 'Disconnected'}
+              </h4>
+              <p className="text-sm text-red-800 dark:text-red-400">
+                Error: {database.database_status_message}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    
       {/* Real-time Indicator & Actions */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          {/* Live Badge */}
-          <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400 border border-green-200 dark:border-green-800">
+          {/* Status Badge */}
+          <div className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border ${statusConfig.bgColor} ${statusConfig.textColor} ${statusConfig.borderColor}`}>
             <div className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+              {isConnected && (
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${statusConfig.pingColor} opacity-75`}></span>
+              )}
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${statusConfig.dotColor}`}></span>
             </div>
-            <span className="font-semibold text-sm">LIVE</span>
-            <span className="text-sm">Real-time Schema</span>
+            <span className="font-semibold text-sm">{statusConfig.label}</span>
+            <span className="text-sm">{statusConfig.subtitle}</span>
           </div>
 
-          <div className="text-sm text-muted-foreground">
+          <div className="text-sm text-muted-foreground flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5" />
             Last updated: {new Date().toLocaleTimeString()}
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-2">
-          {onRefresh && (
-            <button
-              onClick={onRefresh}
-              disabled={isRefreshing}
-              className="inline-flex items-center gap-2 px-4 py-2 border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
-          )}
-          {onDeploySchema && (
-            <button
-              onClick={onDeploySchema}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              <GitBranch className="h-4 w-4" />
-              Deploy to Repository
-            </button>
-          )}
-        </div>
+        {/* Action Buttons - Removed, handled in page header */}
       </div>
 
       {/* Statistics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-card border border-border rounded-lg p-5">
+        <div className="bg-card border border-border rounded-xl p-5 hover:shadow-lg transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-muted-foreground">Tables</p>
@@ -156,26 +170,26 @@ export function SchemaOverview({
                 {privilegedTableCount} with privileged data
               </p>
             </div>
-            <div className="w-12 h-12 rounded-lg bg-blue-100 dark:bg-blue-900/20 flex items-center justify-center">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 flex items-center justify-center border border-border shadow-sm">
               <Table className="h-6 w-6 text-blue-600 dark:text-blue-400" />
             </div>
           </div>
         </div>
 
-        <div className="bg-card border border-border rounded-lg p-5">
+        <div className="bg-card border border-border rounded-xl p-5 hover:shadow-lg transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-muted-foreground">Columns</p>
               <p className="text-3xl font-bold text-foreground mt-1">{columnCount}</p>
               <p className="text-xs text-muted-foreground mt-1">Across all tables</p>
             </div>
-            <div className="w-12 h-12 rounded-lg bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 flex items-center justify-center border border-border shadow-sm">
               <Columns className="h-6 w-6 text-purple-600 dark:text-purple-400" />
             </div>
           </div>
         </div>
 
-        <div className="bg-card border border-border rounded-lg p-5">
+        <div className="bg-card border border-border rounded-xl p-5 hover:shadow-lg transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-muted-foreground">Privileged Data</p>
@@ -202,53 +216,44 @@ export function SchemaOverview({
                 )}
               </div>
             </div>
-            <div className="w-12 h-12 rounded-lg bg-red-100 dark:bg-red-900/20 flex items-center justify-center">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20 flex items-center justify-center border border-border shadow-sm">
               <Shield className="h-6 w-6 text-red-600 dark:text-red-400" />
             </div>
           </div>
         </div>
 
-        <div className="bg-card border border-border rounded-lg p-5">
+        <div className="bg-card border border-border rounded-xl p-5 hover:shadow-lg transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Schema Status</p>
-              <p className="text-3xl font-bold text-green-600 dark:text-green-400 mt-1">Active</p>
-              <p className="text-xs text-muted-foreground mt-1">Database connected</p>
-            </div>
-            <div className="w-12 h-12 rounded-lg bg-green-100 dark:bg-green-900/20 flex items-center justify-center">
-              <Activity className="h-6 w-6 text-green-600 dark:text-green-400" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Info Banner */}
-      <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-        <div className="flex items-start gap-3">
-          <div className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-600 dark:bg-blue-400 flex items-center justify-center mt-0.5">
-            <span className="text-white text-xs font-bold">i</span>
-          </div>
-          <div className="flex-1">
-            <p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
-              Real-time Schema with Enhanced Privileged Data Detection
-            </p>
-            <p className="text-sm text-blue-800 dark:text-blue-200 mt-1">
-              This view shows the current live state of the database <strong>{databaseName}</strong> with 
-              enriched privileged data classifications from automatic detection. 
-              {topCategories.length > 0 && (
+              <p className="text-sm font-medium text-muted-foreground">Connected to Repository</p>
+              {database?.connected_repo_name && database?.connected_branch_name ? (
                 <>
-                  {' '}Top detected categories:{' '}
-                  {topCategories.map(([category, count], idx) => (
-                    <span key={category}>
-                      <strong>{category}</strong> ({count})
-                      {idx < topCategories.length - 1 ? ', ' : ''}
-                    </span>
-                  ))}
-                  .
+                  {workspaceId ? (
+                    <Link
+                      href={`/workspaces/${workspaceId}/repositories/${encodeURIComponent(
+                        database.connected_repo_name
+                      )}/branches/${encodeURIComponent(database.connected_branch_name)}`}
+                      className="text-2xl font-bold text-foreground mt-1 hover:underline block"
+                    >
+                      {database.connected_repo_name}/{database.connected_branch_name}
+                    </Link>
+                  ) : (
+                    <p className="text-2xl font-bold text-foreground mt-1">
+                      {database.connected_repo_name}/{database.connected_branch_name}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-1">Connected</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-muted-foreground mt-1">Not Connected</p>
+                  <p className="text-xs text-muted-foreground mt-1">No repository attached</p>
                 </>
               )}
-              {' '}Any changes made directly to the database will be reflected here immediately upon refresh.
-            </p>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 flex items-center justify-center border border-border shadow-sm">
+              <GitBranch className="h-6 w-6 text-green-600 dark:text-green-400" />
+            </div>
           </div>
         </div>
       </div>

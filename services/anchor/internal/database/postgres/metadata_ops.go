@@ -89,6 +89,24 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 	return result, nil
 }
 
+// CollectInstanceMetrics collects performance metrics (not available on database connection)
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	return nil, adapter.NewUnsupportedOperationError(
+		dbcapabilities.PostgreSQL,
+		"collect instance metrics",
+		"not available on database connections - use instance connection",
+	)
+}
+
+// ListLogicalDatabases lists logical databases (not available on database connection)
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	return nil, adapter.NewUnsupportedOperationError(
+		dbcapabilities.PostgreSQL,
+		"list logical databases",
+		"not available on database connections - use instance connection",
+	)
+}
+
 // InstanceMetadataOps implements adapter.MetadataOperator for PostgreSQL instance connections.
 type InstanceMetadataOps struct {
 	conn *InstanceConnection
@@ -159,4 +177,114 @@ func (i *InstanceMetadataOps) ExecuteCommand(ctx context.Context, command string
 		return nil, adapter.WrapError(dbcapabilities.PostgreSQL, "execute_command", err)
 	}
 	return result, nil
+}
+
+// CollectInstanceMetrics collects performance metrics from the PostgreSQL instance
+func (i *InstanceMetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+
+	// Connection metrics
+	var activeConn, idleConn, totalConn int32
+	query := `
+		SELECT 
+			COUNT(*) FILTER (WHERE state = 'active') as active,
+			COUNT(*) FILTER (WHERE state = 'idle') as idle,
+			COUNT(*) as total
+		FROM pg_stat_activity
+		WHERE datname IS NOT NULL
+	`
+	err := i.conn.pool.QueryRow(ctx, query).Scan(&activeConn, &idleConn, &totalConn)
+	if err == nil {
+		metrics["active_connections"] = activeConn
+		metrics["idle_connections"] = idleConn
+
+		// Get max connections for utilization
+		var maxConn int32
+		if err := i.conn.pool.QueryRow(ctx, "SHOW max_connections").Scan(&maxConn); err == nil && maxConn > 0 {
+			metrics["connection_utilization"] = float64(totalConn) / float64(maxConn) * 100.0
+		}
+	}
+
+	// Cache hit ratio
+	cacheQuery := `
+		SELECT 
+			CASE 
+				WHEN (SUM(heap_blks_hit) + SUM(heap_blks_read)) > 0 
+				THEN ROUND(100.0 * SUM(heap_blks_hit) / NULLIF(SUM(heap_blks_hit) + SUM(heap_blks_read), 0), 2)
+				ELSE 0 
+			END as cache_hit_ratio
+		FROM pg_statio_user_tables
+	`
+	var cacheHitRatio float64
+	if err := i.conn.pool.QueryRow(ctx, cacheQuery).Scan(&cacheHitRatio); err == nil {
+		metrics["cache_hit_ratio"] = cacheHitRatio
+	}
+
+	// Transaction metrics
+	txQuery := `
+		SELECT 
+			COALESCE(SUM(xact_commit + xact_rollback), 0) as total_transactions,
+			EXTRACT(EPOCH FROM (now() - MIN(stats_reset)))::float8 as stats_age_seconds
+		FROM pg_stat_database
+		WHERE datname NOT IN ('template0', 'template1')
+	`
+	var totalTx int64
+	var statsAge float64
+	if err := i.conn.pool.QueryRow(ctx, txQuery).Scan(&totalTx, &statsAge); err == nil && statsAge > 0 {
+		metrics["transactions_per_second"] = float64(totalTx) / statsAge
+	}
+
+	// Replication metrics
+	var isReplica bool
+	if err := i.conn.pool.QueryRow(ctx, "SELECT pg_is_in_recovery()").Scan(&isReplica); err == nil {
+		metrics["is_replica"] = isReplica
+		if isReplica {
+			var lagSeconds float64
+			lagQuery := `SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::float8`
+			if err := i.conn.pool.QueryRow(ctx, lagQuery).Scan(&lagSeconds); err == nil {
+				metrics["replication_lag_seconds"] = lagSeconds
+			}
+		}
+	}
+
+	return metrics, nil
+}
+
+// ListLogicalDatabases lists all logical databases in the PostgreSQL instance
+func (i *InstanceMetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	query := `
+		SELECT 
+			datname,
+			pg_database_size(datname) as size_bytes,
+			pg_catalog.pg_get_userbyid(datdba) as owner,
+			pg_encoding_to_char(encoding) as encoding,
+			datcollate as collation
+		FROM pg_database
+		WHERE datistemplate = false
+		ORDER BY datname
+	`
+
+	rows, err := i.conn.pool.Query(ctx, query)
+	if err != nil {
+		return nil, adapter.WrapError(dbcapabilities.PostgreSQL, "list_databases", err)
+	}
+	defer rows.Close()
+
+	var databases []adapter.LogicalDatabaseInfo
+	for rows.Next() {
+		var db adapter.LogicalDatabaseInfo
+		var collation string
+		err := rows.Scan(&db.Name, &db.SizeBytes, &db.Owner, &db.Encoding, &collation)
+		if err != nil {
+			continue
+		}
+		db.Collation = collation
+		databases = append(databases, db)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, adapter.WrapError(dbcapabilities.PostgreSQL, "list_databases", err)
+	}
+
+	return databases, nil
 }

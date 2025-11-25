@@ -1,10 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { GitBranch, ChevronRight, ChevronDown, Database, History } from 'lucide-react';
+import { GitBranch, ChevronRight, ChevronDown, Database, History, CheckCircle2, XCircle } from 'lucide-react';
 import Link from 'next/link';
 import { CommitTreeNode } from './CommitTreeNode';
-import type { Branch } from '@/lib/api/types';
+import type { Branch, DatabaseConnection } from '@/lib/api/types';
 
 interface BranchTreeNodeProps {
   branch: Branch;
@@ -12,6 +12,7 @@ interface BranchTreeNodeProps {
   repoName: string;
   level?: number;
   allBranches: Branch[];
+  databaseConnections: DatabaseConnection[];
 }
 
 export function BranchTreeNode({
@@ -20,6 +21,7 @@ export function BranchTreeNode({
   repoName,
   level = 0,
   allBranches,
+  databaseConnections,
 }: BranchTreeNodeProps) {
   const [showCommits, setShowCommits] = useState(false);
   const [showChildren, setShowChildren] = useState(true);
@@ -29,10 +31,16 @@ export function BranchTreeNode({
     (b) => b.parent_branch_id === branch.branch_id
   );
 
-  // Sort commits by created date (latest first)
+  // Check if this branch is connected to a database
+  const databaseConnection = databaseConnections.find(
+    (conn) => conn.branch_name === branch.branch_name
+  );
+  const isConnected = !!databaseConnection;
+
+  // Sort commits by commit date (latest first)
   const sortedCommits = [...(branch.commits || [])].sort((a, b) => {
-    const dateA = new Date(a.created || 0).getTime();
-    const dateB = new Date(b.created || 0).getTime();
+    const dateA = new Date(a.commit_date || 0).getTime();
+    const dateB = new Date(b.commit_date || 0).getTime();
     return dateB - dateA;
   });
 
@@ -77,22 +85,20 @@ export function BranchTreeNode({
                   href={branchUrl}
                   className="text-lg font-semibold text-foreground hover:text-primary transition-colors"
                 >
-                  {branch.branch_name}
+                  {repoName} / {branch.branch_name}
                 </Link>
                 
                 <div className="flex items-center gap-3 mt-1">
-                  {branch.attached_database_name && (
-                    <div className="inline-flex items-center gap-1 text-sm text-muted-foreground">
-                      <Database className="h-3.5 w-3.5" />
-                      <span>Attached to: </span>
-                      <span className="font-mono text-foreground">{branch.attached_database_name}</span>
+                  {isConnected ? (
+                    <div className="inline-flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <span>Connected to {databaseConnection.database_name}</span>
                     </div>
-                  )}
-                  
-                  {branch.parent_branch_name && (
-                    <span className="text-sm text-muted-foreground">
-                      From: {branch.parent_branch_name}
-                    </span>
+                  ) : (
+                    <div className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+                      <XCircle className="h-3.5 w-3.5" />
+                      <span>Not connected to a database</span>
+                    </div>
                   )}
                 </div>
               </div>
@@ -181,6 +187,7 @@ export function BranchTreeNode({
               repoName={repoName}
               level={level + 1}
               allBranches={allBranches}
+              databaseConnections={databaseConnections}
             />
           ))}
         </div>

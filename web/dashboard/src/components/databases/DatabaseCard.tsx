@@ -3,8 +3,10 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Database as DatabaseType } from '@/lib/api/types';
-import { Database, Server, Activity, Unplug } from 'lucide-react';
+import { Server, Activity, Unplug, Calendar, Shield, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { DisconnectDatabaseDialog } from './DisconnectDatabaseDialog';
+import { DatabaseIcon } from './DatabaseIcon';
+import { formatDatabaseType } from '@/lib/formatters';
 
 interface DatabaseCardProps {
   database: DatabaseType;
@@ -20,130 +22,172 @@ export function DatabaseCard({ database, workspaceId, onUpdate }: DatabaseCardPr
     switch (status.toLowerCase()) {
       case 'healthy':
       case 'connected':
-        return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400';
+        return 'bg-emerald-500';
       case 'warning':
-        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
+        return 'bg-amber-500';
       case 'error':
       case 'disconnected':
-        return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400';
+        return 'bg-rose-500';
       default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
+        return 'bg-slate-500';
     }
   };
 
-  const getVendorIcon = (vendor: string) => {
-    // In the future, we can add specific icons for different vendors
-    return Database;
+  const formatDate = (dateString: string) => {
+    try {
+      return new Date(dateString).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    } catch (e) {
+      return dateString;
+    }
   };
 
-  const VendorIcon = getVendorIcon(database.database_vendor);
-
   return (
-    <div className="bg-card border border-border rounded-lg p-6 hover:shadow-md transition-shadow">
+    <div className="group bg-card border border-border rounded-xl p-5 hover:shadow-lg hover:border-primary/20 transition-all duration-200 flex flex-col h-full relative">
       <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-            <VendorIcon className="h-5 w-5 text-primary" />
+        <div className="flex items-center space-x-4">
+          <div className="w-12 h-12 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl flex items-center justify-center border border-border shadow-sm group-hover:scale-105 transition-transform duration-200">
+            <DatabaseIcon type={database.database_type} className="h-7 w-7" />
           </div>
           <div>
-            <Link
-              href={`/workspaces/${workspaceId}/databases/${database.database_name}/schema`}
-              className="font-semibold text-foreground hover:text-primary transition-colors"
-              title="View Database Schema"
-            >
-              {database.database_name}
-            </Link>
-            <p className="text-sm text-muted-foreground">{database.database_vendor}</p>
+            <div className="flex items-center gap-2">
+              <Link
+                href={`/workspaces/${workspaceId}/databases/${database.database_name}/schema`}
+                className="font-bold text-lg text-foreground hover:text-primary hover:underline transition-colors flex items-center gap-1"
+                title="View Database Schema"
+              >
+                {database.database_name}
+                <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-50 transition-opacity" />
+              </Link>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+              <span className="font-medium truncate max-w-[200px]">
+                {formatDatabaseType(database.database_type)}
+              </span>
+              <span>•</span>
+              <Link
+                href={`/workspaces/${workspaceId}/instances/${database.instance_name}`}
+                className="truncate max-w-[120px] hover:underline hover:text-primary transition-colors"
+                title={`View Instance: ${database.instance_name}`}
+              >
+                {database.instance_name}
+              </Link>
+            </div>
           </div>
         </div>
-        <div className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(database.status)}`}>
-          {database.status}
+
+        <div className="flex items-center gap-2">
+          <div className="relative flex h-2.5 w-2.5">
+            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${getStatusColor(database.status)}`}></span>
+            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${getStatusColor(database.status)}`}></span>
+          </div>
+          <span className="text-xs font-medium text-muted-foreground capitalize">{database.status}</span>
         </div>
       </div>
-      <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
-        {database.database_description || <span className="text-muted-foreground italic">No description</span>}
-      </p>
-      <div className="space-y-3">
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground flex items-center">
-            <Server className="h-4 w-4 mr-1" />
-            Instance
-          </span>
-          <span className="font-medium text-foreground">{database.instance_name}</span>
-        </div>
-        
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground flex items-center">
-            <Database className="h-4 w-4 mr-1" />
-            DB Name
-          </span>
-          <span className="font-medium text-foreground font-mono text-xs">{database.database_db_name}</span>
-        </div>
 
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground flex items-center">
-            <Activity className="h-4 w-4 mr-1" />
-            Status
-          </span>
-          <span className="font-medium text-foreground">{database.database_enabled ? 'Enabled' : 'Disabled'}</span>
-        </div>
+      <div className="flex-grow">
+        <p className="text-sm text-muted-foreground mb-5 line-clamp-2 min-h-[2.5rem]">
+          {database.database_description || <span className="text-muted-foreground/60 italic">No description provided</span>}
+        </p>
 
-        {database.instance_host && (
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Host</span>
-            <span className="font-medium text-foreground font-mono text-xs">
-              {database.instance_host}:{database.instance_port}
+        <div className="grid grid-cols-2 gap-y-3 gap-x-4 mb-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Server className="h-3.5 w-3.5" />
+              Host
+            </span>
+            <span className="text-sm font-medium text-foreground font-mono truncate" title={`${database.instance_host}:${database.instance_port}`}>
+              {database.instance_host}
             </span>
           </div>
-        )}
+
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Activity className="h-3.5 w-3.5" />
+              Port
+            </span>
+            <span className="text-sm font-medium text-foreground font-mono">
+              {database.instance_port}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Shield className="h-3.5 w-3.5" />
+              SSL
+            </span>
+            <span className="text-sm font-medium text-foreground">
+              {database.instance_ssl ? (database.instance_ssl_mode || 'Enabled') : 'Disabled'}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" />
+              Created
+            </span>
+            <span className="text-sm font-medium text-foreground">
+              {database.created ? formatDate(database.created) : '-'}
+            </span>
+          </div>
+        </div>
       </div>
 
-      <div className="mt-4 pt-4 border-t border-border">
-        <div className="flex items-center justify-between">
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="text-sm text-primary hover:text-primary/80 font-medium"
-          >
-            {isExpanded ? 'Hide Details' : 'View Details'}
-          </button>
-          <button
-            onClick={() => setShowDisconnectDialog(true)}
-            className="text-sm text-red-600 hover:text-red-700 dark:text-red-500 dark:hover:text-red-400 font-medium flex items-center gap-1"
-          >
-            <Unplug className="h-3.5 w-3.5" />
-            Disconnect
-          </button>
-        </div>
+      <div className="mt-auto pt-4 border-t border-border/50 flex items-center justify-between">
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="text-xs text-muted-foreground hover:text-foreground font-medium flex items-center gap-1 transition-colors"
+        >
+          {isExpanded ? (
+            <>
+              <ChevronUp className="h-3.5 w-3.5" />
+              Hide Details
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-3.5 w-3.5" />
+              View Details
+            </>
+          )}
+        </button>
+        <button
+          onClick={() => setShowDisconnectDialog(true)}
+          className="text-muted-foreground hover:text-red-600 dark:hover:text-red-400 p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+          title="Disconnect Database"
+        >
+          <Unplug className="h-4 w-4" />
+        </button>
       </div>
 
       {isExpanded && (
-        <div className="mt-4 pt-4 border-t border-border space-y-2 text-sm">
-          <div className="flex justify-between">
+        <div className="mt-3 pt-3 border-t border-border/50 space-y-2.5 text-xs animate-in slide-in-from-top-2 duration-200">
+          <div className="grid grid-cols-[1fr,2fr] gap-2">
             <span className="text-muted-foreground">Database ID:</span>
-            <span className="font-mono text-xs text-foreground">{database.database_id}</span>
+            <span className="font-mono text-foreground truncate select-all" title={database.database_id}>{database.database_id}</span>
           </div>
-          <div className="flex justify-between">
+          <div className="grid grid-cols-[1fr,2fr] gap-2">
             <span className="text-muted-foreground">Instance ID:</span>
-            <span className="font-mono text-xs text-foreground">{database.instance_id}</span>
+            <span className="font-mono text-foreground truncate select-all" title={database.instance_id}>{database.instance_id}</span>
           </div>
           {database.database_version && (
-            <div className="flex justify-between">
-              <span className="text-muted-foreground flex-shrink-0">Version:</span>
-              <span className="font-medium text-foreground truncate ml-2">{database.database_version}</span>
+            <div className="grid grid-cols-[1fr,2fr] gap-2">
+              <span className="text-muted-foreground">Version:</span>
+              <span className="text-foreground truncate" title={database.database_version}>{database.database_version}</span>
             </div>
           )}
           {database.database_username && (
-            <div className="flex justify-between">
+            <div className="grid grid-cols-[1fr,2fr] gap-2">
               <span className="text-muted-foreground">Username:</span>
-              <span className="font-mono text-xs text-foreground">{database.database_username}</span>
+              <span className="font-mono text-foreground truncate">{database.database_username}</span>
             </div>
           )}
-          {database.instance_ssl && (
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">SSL:</span>
-              <span className="font-medium text-foreground">{database.instance_ssl_mode || 'Enabled'}</span>
-            </div>
-          )}
+          <div className="grid grid-cols-[1fr,2fr] gap-2">
+            <span className="text-muted-foreground">DB Name:</span>
+            <span className="font-mono text-foreground truncate">{database.database_db_name}</span>
+          </div>
         </div>
       )}
 

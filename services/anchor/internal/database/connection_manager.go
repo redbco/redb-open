@@ -76,7 +76,7 @@ func (cm *ConnectionManager) Connect(ctx context.Context, cfg adapter.Connection
 	// Establish connection via adapter (cfg is already adapter.ConnectionConfig)
 	conn, err := adp.Connect(ctx, cfg)
 	if err != nil {
-		cm.safeLog("error", "Failed to connect to database %s: %v", cfg.DatabaseID, err)
+		cm.safeLog("warn", "Failed to connect to database %s: %v", cfg.DatabaseID, err)
 		return fmt.Errorf("adapter connection failed: %w", err)
 	}
 
@@ -105,7 +105,7 @@ func (cm *ConnectionManager) ConnectInstance(ctx context.Context, cfg adapter.In
 	// Establish connection via adapter (cfg is already adapter.InstanceConfig)
 	instance, err := adp.ConnectInstance(ctx, cfg)
 	if err != nil {
-		cm.safeLog("error", "Failed to connect to instance %s: %v", cfg.InstanceID, err)
+		cm.safeLog("warn", "Failed to connect to instance %s: %v", cfg.InstanceID, err)
 		return fmt.Errorf("adapter instance connection failed: %w", err)
 	}
 

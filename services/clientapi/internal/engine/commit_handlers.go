@@ -85,7 +85,7 @@ func (ch *CommitHandlers) ShowCommit(w http.ResponseWriter, r *http.Request) {
 		IsHead:          grpcResp.Commit.IsHead,
 		CommitMessage:   grpcResp.Commit.CommitMessage,
 		SchemaType:      grpcResp.Commit.SchemaType,
-		SchemaStructure: grpcResp.Commit.SchemaStructure,
+		SchemaStructure: ch.parseSchemaStructure(grpcResp.Commit.SchemaStructure),
 		CommitDate:      grpcResp.Commit.CommitDate,
 	}
 
@@ -177,7 +177,7 @@ func (ch *CommitHandlers) BranchCommit(w http.ResponseWriter, r *http.Request) {
 		IsHead:          grpcResp.Commit.IsHead,
 		CommitMessage:   grpcResp.Commit.CommitMessage,
 		SchemaType:      grpcResp.Commit.SchemaType,
-		SchemaStructure: grpcResp.Commit.SchemaStructure,
+		SchemaStructure: ch.parseSchemaStructure(grpcResp.Commit.SchemaStructure),
 		CommitDate:      grpcResp.Commit.CommitDate,
 	}
 
@@ -255,7 +255,7 @@ func (ch *CommitHandlers) MergeCommit(w http.ResponseWriter, r *http.Request) {
 		IsHead:          grpcResp.Commit.IsHead,
 		CommitMessage:   grpcResp.Commit.CommitMessage,
 		SchemaType:      grpcResp.Commit.SchemaType,
-		SchemaStructure: grpcResp.Commit.SchemaStructure,
+		SchemaStructure: ch.parseSchemaStructure(grpcResp.Commit.SchemaStructure),
 		CommitDate:      grpcResp.Commit.CommitDate,
 	}
 
@@ -333,7 +333,7 @@ func (ch *CommitHandlers) DeployCommit(w http.ResponseWriter, r *http.Request) {
 		IsHead:          grpcResp.Commit.IsHead,
 		CommitMessage:   grpcResp.Commit.CommitMessage,
 		SchemaType:      grpcResp.Commit.SchemaType,
-		SchemaStructure: grpcResp.Commit.SchemaStructure,
+		SchemaStructure: ch.parseSchemaStructure(grpcResp.Commit.SchemaStructure),
 		CommitDate:      grpcResp.Commit.CommitDate,
 	}
 
@@ -639,6 +639,25 @@ func (ch *CommitHandlers) ForkCommit(w http.ResponseWriter, r *http.Request) {
 }
 
 // Helper methods
+
+// parseSchemaStructure tries to parse the schema_structure string as JSON
+// If parsing fails, returns the string as-is for backward compatibility
+func (ch *CommitHandlers) parseSchemaStructure(schemaStructureStr string) interface{} {
+	if schemaStructureStr == "" {
+		return nil
+	}
+
+	var parsedSchema interface{}
+	err := json.Unmarshal([]byte(schemaStructureStr), &parsedSchema)
+	if err != nil {
+		// If parsing fails, use the string as-is (for backward compatibility with legacy formats)
+		if ch.engine.logger != nil {
+			ch.engine.logger.Debugf("Schema structure is not valid JSON, returning as string: %v", err)
+		}
+		return schemaStructureStr
+	}
+	return parsedSchema
+}
 
 func (ch *CommitHandlers) handleGRPCError(w http.ResponseWriter, err error, defaultMessage string) {
 	if st, ok := status.FromError(err); ok {

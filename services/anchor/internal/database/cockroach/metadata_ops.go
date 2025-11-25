@@ -100,6 +100,14 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 }
 
 // InstanceMetadataOps implements adapter.MetadataOperator for CockroachDB instance connections.
+
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.CockroachDB, "collect instance metrics", "not available on database connections")
+}
+
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.CockroachDB, "list logical databases", "not available on database connections")
+}
 type InstanceMetadataOps struct {
 	conn *InstanceConnection
 }
@@ -173,4 +181,17 @@ func (i *InstanceMetadataOps) ExecuteCommand(ctx context.Context, command string
 	// Simple implementation: return success message
 	result := fmt.Sprintf(`{"success": true, "command": "%s"}`, command)
 	return []byte(result), nil
+}
+
+
+func (i *InstanceMetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// TODO: Implement CockroachDB-specific metrics collection
+	return metrics, nil
+}
+
+func (i *InstanceMetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	var databases []adapter.LogicalDatabaseInfo
+	// TODO: Implement CockroachDB-specific database listing
+	return databases, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -11,26 +12,31 @@ import (
 	"github.com/redbco/redb-open/pkg/logger"
 	"github.com/redbco/redb-open/services/anchor/internal/config"
 	"github.com/redbco/redb-open/services/anchor/internal/database"
+	"github.com/redbco/redb-open/services/anchor/internal/metrics"
 	"github.com/redbco/redb-open/services/anchor/internal/state"
 )
 
 type ConfigWatcher struct {
-	state      *state.GlobalState
-	repository *config.Repository
-	logger     *logger.Logger
+	state       *state.GlobalState
+	repository  *config.Repository
+	metricsRepo *metrics.Repository
+	logger      *logger.Logger
 }
 
-func NewConfigWatcher(repository *config.Repository, supervisorAddr string, logger *logger.Logger) *ConfigWatcher {
+func NewConfigWatcher(repository *config.Repository, metricsRepo *metrics.Repository, supervisorAddr string, logger *logger.Logger) *ConfigWatcher {
 	return &ConfigWatcher{
-		state:      state.GetInstance(),
-		repository: repository,
-		logger:     logger,
+		state:       state.GetInstance(),
+		repository:  repository,
+		metricsRepo: metricsRepo,
+		logger:      logger,
 	}
 }
 
 func (w *ConfigWatcher) Start(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	healthTicker := time.NewTicker(30 * time.Second)
+	metricsTicker := time.NewTicker(60 * time.Second)
+	defer healthTicker.Stop()
+	defer metricsTicker.Stop()
 
 	w.logger.Info("Config watcher starting...")
 	defer w.logger.Info("Config watcher shutdown complete")
@@ -39,7 +45,7 @@ func (w *ConfigWatcher) Start(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-healthTicker.C:
 			// Check if context is cancelled before starting work
 			if ctx.Err() != nil {
 				w.logger.Info("Config watcher shutting down, skipping work")
@@ -50,6 +56,19 @@ func (w *ConfigWatcher) Start(ctx context.Context) {
 				// Don't log context cancellation errors as they're expected during shutdown
 				if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 					w.logger.Error("Failed to check connection health: %v", err)
+				}
+			}
+		case <-metricsTicker.C:
+			// Collect metrics from all instances
+			if ctx.Err() != nil {
+				w.logger.Info("Config watcher shutting down, skipping metrics collection")
+				return
+			}
+
+			if err := w.collectAllInstanceMetrics(ctx); err != nil {
+				// Don't log context cancellation errors
+				if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					w.logger.Error("Failed to collect instance metrics: %v", err)
 				}
 			}
 		}
@@ -131,16 +150,17 @@ func (w *ConfigWatcher) processDatabaseConfigs(ctx context.Context, nodeID strin
 		client, err := registry.ConnectDatabase(dbConnConfig)
 		if err != nil {
 			// Client database connection failures are warnings, not errors
-			// (detailed logging is already handled by DatabaseManager's unified logging)
-			w.logger.Warn("Client database connection failed: %s", clientID)
-			w.repository.UpdateDatabaseConnectionStatus(ctx, clientID, false, fmt.Sprintf("Connection failed: %v", err))
+			// Extract relevant error message for logging and storage
+			errorMsg := extractRelevantError(err)
+			w.logger.Warn("Client database connection failed: %s - %s", clientID, errorMsg)
+			w.repository.UpdateDatabaseConnectionStatus(ctx, clientID, "STATUS_ERROR", errorMsg)
 			connectionErrors++
 			continue
 		}
 
 		// Mark as connected if successful
 		atomic.StoreInt32(&client.IsConnected, 1)
-		w.repository.UpdateDatabaseConnectionStatus(ctx, clientID, true, "Connected successfully")
+		w.repository.UpdateDatabaseConnectionStatus(ctx, clientID, "STATUS_CONNECTED", "Connection healthy")
 		w.logger.Info("Connected to database %s", clientID)
 
 		// Collect metadata via adapter
@@ -210,16 +230,17 @@ func (w *ConfigWatcher) processInstanceConfigs(ctx context.Context, nodeID strin
 		client, err := registry.ConnectInstance(dbConnConfig)
 		if err != nil {
 			// Client instance connection failures are warnings, not errors
-			// (detailed logging is already handled by DatabaseManager's unified logging)
-			w.logger.Warn("Client instance connection failed: %s", clientID)
-			w.repository.UpdateInstanceConnectionStatus(ctx, clientID, false, fmt.Sprintf("Connection failed: %v", err))
+			// Extract relevant error message for logging and storage
+			errorMsg := extractRelevantError(err)
+			w.logger.Warn("Client instance connection failed: %s - %s", clientID, errorMsg)
+			w.repository.UpdateInstanceConnectionStatus(ctx, clientID, "STATUS_ERROR", errorMsg)
 			connectionErrors++
 			continue
 		}
 
 		// Mark as connected if successful
 		atomic.StoreInt32(&client.IsConnected, 1)
-		w.repository.UpdateInstanceConnectionStatus(ctx, clientID, true, "Connected successfully")
+		w.repository.UpdateInstanceConnectionStatus(ctx, clientID, "STATUS_CONNECTED", "Connection healthy")
 		w.logger.Info("Connected to instance %s", clientID)
 
 		// Collect metadata via adapter
@@ -295,7 +316,7 @@ func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, registry 
 		}
 
 		// Update connection status
-		if err := w.repository.UpdateDatabaseConnectionStatus(ctx, clientID, true, "Connection healthy"); err != nil {
+		if err := w.repository.UpdateDatabaseConnectionStatus(ctx, clientID, "STATUS_CONNECTED", "Connection healthy"); err != nil {
 			w.logger.Error("Failed to update database connection status: %v", err)
 			continue
 		}
@@ -363,7 +384,7 @@ func (w *ConfigWatcher) checkAllConnectionsHealth(ctx context.Context, registry 
 		}
 
 		// Update connection status
-		if err := w.repository.UpdateInstanceConnectionStatus(ctx, clientID, true, "Connection healthy"); err != nil {
+		if err := w.repository.UpdateInstanceConnectionStatus(ctx, clientID, "STATUS_CONNECTED", "Connection healthy"); err != nil {
 			w.logger.Error("Failed to update instance connection status: %v", err)
 			continue
 		}
@@ -416,9 +437,10 @@ func convertDatabaseMetadata(databaseID string, metadataMap map[string]interface
 func convertInstanceMetadata(instanceID string, metadataMap map[string]interface{}) *config.InstanceMetadata {
 	meta := &config.InstanceMetadata{
 		InstanceID: instanceID,
+		Metadata:   metadataMap, // Store full metadata
 	}
 
-	// Extract fields with type assertions
+	// Extract fields with type assertions for backward compatibility fields
 	if v, ok := metadataMap["version"].(string); ok {
 		meta.Version = v
 	}
@@ -480,4 +502,204 @@ func (w *ConfigWatcher) InitialConnect(ctx context.Context) error {
 	// Don't return error to prevent service startup failure
 	// The periodic watcher will continue to attempt connections
 	return nil
+}
+
+// collectAllInstanceMetrics collects metrics from all connected instances
+func (w *ConfigWatcher) collectAllInstanceMetrics(ctx context.Context) error {
+	if w.metricsRepo == nil {
+		w.logger.Debug("Metrics repository not initialized, skipping metrics collection")
+		return nil
+	}
+
+	registry := w.state.GetConnectionRegistry()
+	instanceIDs := registry.GetAllInstanceClientIDs()
+
+	if len(instanceIDs) == 0 {
+		w.logger.Debug("No instances connected, skipping metrics collection")
+		return nil
+	}
+
+	w.logger.Debug("Collecting metrics from %d instances", len(instanceIDs))
+	collectedCount := 0
+	errorCount := 0
+
+	for _, instanceID := range instanceIDs {
+		// Check if context is cancelled
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		// Get instance client
+		client, err := registry.GetInstanceClient(instanceID)
+		if err != nil {
+			w.logger.Debug("Failed to get instance client %s: %v", instanceID, err)
+			errorCount++
+			continue
+		}
+
+		// Check if client is still connected
+		if atomic.LoadInt32(&client.IsConnected) == 0 {
+			w.logger.Debug("Instance client %s is not connected, skipping metrics", instanceID)
+			continue
+		}
+
+		// Collect metrics via adapter
+		if client.AdapterConnection != nil {
+			conn, ok := client.AdapterConnection.(adapter.InstanceConnection)
+			if ok {
+				metricsMap, err := conn.MetadataOperations().CollectInstanceMetrics(ctx)
+				if err != nil {
+					w.logger.Debug("Failed to collect metrics for instance %s: %v", instanceID, err)
+					errorCount++
+					continue
+				}
+
+				// Convert map to metrics structure
+				metrics := convertToInstanceMetrics(instanceID, metricsMap)
+
+				// Store metrics
+				if err := w.metricsRepo.StoreInstanceMetrics(ctx, metrics); err != nil {
+					w.logger.Error("Failed to store metrics for instance %s: %v", instanceID, err)
+					errorCount++
+					continue
+				}
+
+				collectedCount++
+				w.logger.Debug("Successfully collected and stored metrics for instance %s", instanceID)
+			}
+		}
+	}
+
+	if collectedCount > 0 {
+		w.logger.Info("Collected metrics from %d/%d instances (%d errors)", collectedCount, len(instanceIDs), errorCount)
+	}
+
+	return nil
+}
+
+// convertToInstanceMetrics converts adapter metrics map to metrics.InstanceMetrics
+func convertToInstanceMetrics(instanceID string, metricsMap map[string]interface{}) *metrics.InstanceMetrics {
+	m := &metrics.InstanceMetrics{
+		InstanceID:      instanceID,
+		CollectedAt:     time.Now(),
+		ExtendedMetrics: make(map[string]interface{}),
+	}
+
+	// Extract standard metrics with type assertions
+	if v, ok := metricsMap["active_connections"].(int32); ok {
+		m.ActiveConnections = &v
+	}
+	if v, ok := metricsMap["idle_connections"].(int32); ok {
+		m.IdleConnections = &v
+	}
+	if v, ok := metricsMap["connection_utilization"].(float64); ok {
+		m.ConnectionUtilization = &v
+	}
+	if v, ok := metricsMap["queries_per_second"].(float64); ok {
+		m.QueriesPerSecond = &v
+	}
+	if v, ok := metricsMap["transactions_per_second"].(float64); ok {
+		m.TransactionsPerSecond = &v
+	}
+	if v, ok := metricsMap["cache_hit_ratio"].(float64); ok {
+		m.CacheHitRatio = &v
+	}
+	if v, ok := metricsMap["cpu_usage"].(float64); ok {
+		m.CPUUsage = &v
+	}
+	if v, ok := metricsMap["memory_usage_bytes"].(int64); ok {
+		m.MemoryUsageBytes = &v
+	}
+	if v, ok := metricsMap["memory_total_bytes"].(int64); ok {
+		m.MemoryTotalBytes = &v
+	}
+	if v, ok := metricsMap["disk_usage_bytes"].(int64); ok {
+		m.DiskUsageBytes = &v
+	}
+	if v, ok := metricsMap["disk_total_bytes"].(int64); ok {
+		m.DiskTotalBytes = &v
+	}
+	if v, ok := metricsMap["avg_query_time_ms"].(float64); ok {
+		m.AvgQueryTimeMs = &v
+	}
+	if v, ok := metricsMap["slow_query_count"].(int32); ok {
+		m.SlowQueryCount = &v
+	}
+	if v, ok := metricsMap["replication_lag_seconds"].(float64); ok {
+		m.ReplicationLagSeconds = &v
+	}
+	if v, ok := metricsMap["is_replica"].(bool); ok {
+		m.IsReplica = &v
+	}
+
+	// Store any additional metrics in extended_metrics
+	for key, value := range metricsMap {
+		// Skip if already extracted to standard fields
+		switch key {
+		case "active_connections", "idle_connections", "connection_utilization",
+			"queries_per_second", "transactions_per_second", "cache_hit_ratio",
+			"cpu_usage", "memory_usage_bytes", "memory_total_bytes",
+			"disk_usage_bytes", "disk_total_bytes", "avg_query_time_ms",
+			"slow_query_count", "replication_lag_seconds", "is_replica":
+			continue
+		default:
+			m.ExtendedMetrics[key] = value
+		}
+	}
+
+	return m
+}
+
+// extractRelevantError extracts the most relevant error message from a connection error
+// This handles errors from 30+ database types which may have different error formats
+func extractRelevantError(err error) string {
+	if err == nil {
+		return "Unknown error"
+	}
+
+	errMsg := err.Error()
+
+	// Common error patterns to extract (works across multiple database types)
+	patterns := []string{
+		"password authentication failed",
+		"FATAL:",
+		"access denied",
+		"unknown database",
+		"connection refused",
+		"no route to host",
+		"timeout",
+		"certificate",
+		"SSL",
+		"TLS",
+	}
+
+	// Try to find the most relevant part
+	for _, pattern := range patterns {
+		if idx := strings.Index(errMsg, pattern); idx != -1 {
+			// Extract from pattern to end of line or next newline
+			remaining := errMsg[idx:]
+			if endIdx := strings.Index(remaining, "\n"); endIdx != -1 {
+				extracted := strings.TrimSpace(remaining[:endIdx])
+				// Remove any trailing context like (SQLSTATE ...)
+				if parenIdx := strings.Index(extracted, " (SQLSTATE"); parenIdx != -1 {
+					extracted = strings.TrimSpace(extracted[:parenIdx])
+				}
+				return extracted
+			}
+			// Return up to 300 chars if no newline found
+			if len(remaining) > 300 {
+				return strings.TrimSpace(remaining[:297]) + "..."
+			}
+			return strings.TrimSpace(remaining)
+		}
+	}
+
+	// If no specific pattern found, return first line or first 300 chars
+	if idx := strings.Index(errMsg, "\n"); idx != -1 {
+		return strings.TrimSpace(errMsg[:idx])
+	}
+	if len(errMsg) > 300 {
+		return errMsg[:297] + "..."
+	}
+	return errMsg
 }

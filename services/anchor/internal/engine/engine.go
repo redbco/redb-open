@@ -16,6 +16,7 @@ import (
 	"github.com/redbco/redb-open/pkg/logger"
 	internalconfig "github.com/redbco/redb-open/services/anchor/internal/config"
 	internaldatabase "github.com/redbco/redb-open/services/anchor/internal/database"
+	"github.com/redbco/redb-open/services/anchor/internal/metrics"
 	"github.com/redbco/redb-open/services/anchor/internal/resources"
 	"github.com/redbco/redb-open/services/anchor/internal/state"
 	"github.com/redbco/redb-open/services/anchor/internal/watcher"
@@ -24,19 +25,19 @@ import (
 )
 
 type Engine struct {
-	config               *config.Config
-	grpcServer           *grpc.Server
-	database             *database.PostgreSQL
-	coreConn             *grpc.ClientConn
-	umConn               *grpc.ClientConn
-	configWatcher        *watcher.ConfigWatcher
-	schemaWatcher        *watcher.SchemaWatcher
-	replicationWatcher   *watcher.ReplicationWatcher
+	config                *config.Config
+	grpcServer            *grpc.Server
+	database              *database.PostgreSQL
+	coreConn              *grpc.ClientConn
+	umConn                *grpc.ClientConn
+	configWatcher         *watcher.ConfigWatcher
+	schemaWatcher         *watcher.SchemaWatcher
+	replicationWatcher    *watcher.ReplicationWatcher
 	resourceStatusMonitor *watcher.ResourceStatusMonitor
-	nodeID               string
-	standalone           bool
-	logger               *logger.Logger
-	state                struct {
+	nodeID                string
+	standalone            bool
+	logger                *logger.Logger
+	state                 struct {
 		sync.Mutex
 		isRunning         bool
 		ongoingOperations int32
@@ -151,17 +152,20 @@ func (e *Engine) Start(ctx context.Context) error {
 		globalState.Initialize(configRepository, e.nodeID)
 		globalState.SetDB(e.database)
 
+		// Create metrics repository
+		metricsRepo := metrics.NewRepository(e.database.Pool())
+
 		// Create watchers
-		e.configWatcher = watcher.NewConfigWatcher(globalState.GetConfigRepository(), "", e.logger)
-	e.schemaWatcher = watcher.NewSchemaWatcher(globalState.GetDB(), e.umConn, e.coreConn, "", e.logger)
-	e.replicationWatcher = watcher.NewReplicationWatcher(globalState.GetConfigRepository(), e.logger)
+		e.configWatcher = watcher.NewConfigWatcher(globalState.GetConfigRepository(), metricsRepo, "", e.logger)
+		e.schemaWatcher = watcher.NewSchemaWatcher(globalState.GetDB(), e.umConn, e.coreConn, "", e.logger)
+		e.replicationWatcher = watcher.NewReplicationWatcher(globalState.GetConfigRepository(), e.logger)
 
-	// Create resource repository and status monitor
-	resourceRepo := resources.NewRepository(e.database.Pool())
-	e.resourceStatusMonitor = watcher.NewResourceStatusMonitor(e.database.Pool(), resourceRepo, e.logger)
+		// Create resource repository and status monitor
+		resourceRepo := resources.NewRepository(e.database.Pool())
+		e.resourceStatusMonitor = watcher.NewResourceStatusMonitor(e.database.Pool(), resourceRepo, e.logger)
 
-	// Create context for watchers with cancellation
-	e.watcherCtx, e.watcherCancel = context.WithCancel(ctx)
+		// Create context for watchers with cancellation
+		e.watcherCtx, e.watcherCancel = context.WithCancel(ctx)
 
 		// Perform initial database connections with retry logic
 		maxRetries := 3
@@ -184,14 +188,14 @@ func (e *Engine) Start(ctx context.Context) error {
 		}
 
 		// Start watchers with the cancellable context
-	go e.configWatcher.Start(e.watcherCtx)
-	go e.schemaWatcher.Start(e.watcherCtx)
-	go e.replicationWatcher.Start(e.watcherCtx)
-	go e.resourceStatusMonitor.Start(e.watcherCtx)
-} else {
-	// In standalone mode, initialize state without external dependencies
-	globalState.Initialize(nil, e.nodeID)
-}
+		go e.configWatcher.Start(e.watcherCtx)
+		go e.schemaWatcher.Start(e.watcherCtx)
+		go e.replicationWatcher.Start(e.watcherCtx)
+		go e.resourceStatusMonitor.Start(e.watcherCtx)
+	} else {
+		// In standalone mode, initialize state without external dependencies
+		globalState.Initialize(nil, e.nodeID)
+	}
 
 	// Service is already registered in SetGRPCServer, just mark as running
 	e.state.isRunning = true
@@ -368,7 +372,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 
 			// Update all instance statuses to STATUS_DISCONNECTED (synchronous)
 			for _, instanceID := range registry.GetAllInstanceClientIDs() {
-				if err := configRepo.UpdateInstanceConnectionStatus(shutdownCtx, instanceID, false, "Service shutdown"); err != nil {
+				if err := configRepo.UpdateInstanceConnectionStatus(shutdownCtx, instanceID, "STATUS_DISCONNECTED", "Service shutdown"); err != nil {
 					if e.logger != nil {
 						e.logger.Error("Failed to update instance %s status during shutdown: %v", instanceID, err)
 					}
@@ -379,7 +383,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 
 			// Update all database statuses to STATUS_DISCONNECTED (synchronous)
 			for _, databaseID := range registry.GetAllDatabaseClientIDs() {
-				if err := configRepo.UpdateDatabaseConnectionStatus(shutdownCtx, databaseID, false, "Service shutdown"); err != nil {
+				if err := configRepo.UpdateDatabaseConnectionStatus(shutdownCtx, databaseID, "STATUS_DISCONNECTED", "Service shutdown"); err != nil {
 					if e.logger != nil {
 						e.logger.Error("Failed to update database %s status during shutdown: %v", databaseID, err)
 					}

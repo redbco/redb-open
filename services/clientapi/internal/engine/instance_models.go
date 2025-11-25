@@ -1,35 +1,45 @@
 package engine
 
 // Instance represents an instance
+// ConnectedDatabase represents basic info about a connected database
+type ConnectedDatabase struct {
+	DatabaseName     string `json:"database_name"`
+	DatabaseDBName   string `json:"database_db_name"`
+	DatabaseUsername string `json:"database_username"`
+	Status           Status `json:"status"`
+}
+
 type Instance struct {
-	TenantID                 string   `json:"tenant_id"`
-	WorkspaceID              string   `json:"workspace_id"`
-	EnvironmentID            string   `json:"environment_id"`
-	InstanceID               string   `json:"instance_id"`
-	InstanceName             string   `json:"instance_name"`
-	InstanceDescription      string   `json:"instance_description,omitempty"`
-	InstanceType             string   `json:"instance_type"`
-	InstanceVendor           string   `json:"instance_vendor"`
-	InstanceVersion          string   `json:"instance_version"`
-	InstanceUniqueIdentifier string   `json:"instance_unique_identifier"`
-	ConnectedToNodeID        string   `json:"connected_to_node_id"`
-	InstanceHost             string   `json:"instance_host"`
-	InstancePort             int32    `json:"instance_port"`
-	InstanceUsername         string   `json:"instance_username"`
-	InstancePassword         string   `json:"instance_password"`
-	InstanceSystemDBName     string   `json:"instance_system_db_name"`
-	InstanceEnabled          bool     `json:"instance_enabled"`
-	InstanceSSL              bool     `json:"instance_ssl"`
-	InstanceSSLMode          string   `json:"instance_ssl_mode"`
-	InstanceSSLCert          string   `json:"instance_ssl_cert"`
-	InstanceSSLKey           string   `json:"instance_ssl_key"`
-	InstanceSSLRootCert      string   `json:"instance_ssl_root_cert"`
-	PolicyIDs                []string `json:"policy_ids"`
-	OwnerID                  string   `json:"owner_id"`
-	InstanceStatusMessage    string   `json:"instance_status_message"`
-	Status                   Status   `json:"status"`
-	Created                  string   `json:"created"`
-	Updated                  string   `json:"updated"`
+	TenantID                 string                 `json:"tenant_id"`
+	WorkspaceID              string                 `json:"workspace_id"`
+	EnvironmentID            string                 `json:"environment_id"`
+	InstanceID               string                 `json:"instance_id"`
+	InstanceName             string                 `json:"instance_name"`
+	InstanceDescription      string                 `json:"instance_description,omitempty"`
+	InstanceType             string                 `json:"instance_type"`
+	InstanceVendor           string                 `json:"instance_vendor"`
+	InstanceVersion          string                 `json:"instance_version"`
+	InstanceUniqueIdentifier string                 `json:"instance_unique_identifier"`
+	ConnectedToNodeID        string                 `json:"connected_to_node_id"`
+	InstanceHost             string                 `json:"instance_host"`
+	InstancePort             int32                  `json:"instance_port"`
+	InstanceUsername         string                 `json:"instance_username"`
+	// InstancePassword removed - should not be exposed via API
+	InstanceSystemDBName     string                 `json:"instance_system_db_name"`
+	InstanceEnabled          bool                   `json:"instance_enabled"`
+	InstanceSSL              bool                   `json:"instance_ssl"`
+	InstanceSSLMode          string                 `json:"instance_ssl_mode"`
+	InstanceSSLCert          string                 `json:"instance_ssl_cert"`
+	InstanceSSLKey           string                 `json:"instance_ssl_key"`
+	InstanceSSLRootCert      string                 `json:"instance_ssl_root_cert"`
+	InstanceMetadata         map[string]interface{} `json:"instance_metadata,omitempty"`
+	PolicyIDs                []string               `json:"policy_ids"`
+	OwnerID                  string                 `json:"owner_id"`
+	InstanceStatusMessage    string                 `json:"instance_status_message"`
+	Status                   Status                 `json:"status"`
+	Created                  string                 `json:"created"`
+	Updated                  string                 `json:"updated"`
+	ConnectedDatabases       []ConnectedDatabase    `json:"connected_databases,omitempty"`
 }
 
 type ListInstancesResponse struct {

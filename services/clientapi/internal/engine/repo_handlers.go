@@ -76,13 +76,31 @@ func (rh *RepoHandlers) ListRepos(w http.ResponseWriter, r *http.Request) {
 	// Convert gRPC response to REST response
 	repos := make([]Repo, len(grpcResp.Repos))
 	for i, repo := range grpcResp.Repos {
+		// Convert database connections
+		databaseConnections := make([]DatabaseConnection, len(repo.DatabaseConnections))
+		for j, conn := range repo.DatabaseConnections {
+			databaseConnections[j] = DatabaseConnection{
+				BranchName:     conn.BranchName,
+				DatabaseName:   conn.DatabaseName,
+				DatabaseStatus: conn.DatabaseStatus,
+			}
+		}
+
 		repos[i] = Repo{
-			TenantID:        repo.TenantId,
-			WorkspaceID:     repo.WorkspaceId,
-			RepoID:          repo.RepoId,
-			RepoName:        repo.RepoName,
-			RepoDescription: repo.RepoDescription,
-			OwnerID:         repo.OwnerId,
+			TenantID:            repo.TenantId,
+			WorkspaceID:         repo.WorkspaceId,
+			RepoID:              repo.RepoId,
+			RepoName:            repo.RepoName,
+			RepoDescription:     repo.RepoDescription,
+			OwnerID:             repo.OwnerId,
+			Created:             repo.Created,
+			Updated:             repo.Updated,
+			BranchCount:         repo.BranchCount,
+			CommitCount:         repo.CommitCount,
+			DatabaseConnections: databaseConnections,
+			LatestCommitCode:    repo.LatestCommitCode,
+			LatestCommitBranch:  repo.LatestCommitBranch,
+			LatestCommitDate:    repo.LatestCommitDate,
 		}
 	}
 
@@ -143,14 +161,32 @@ func (rh *RepoHandlers) ShowRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert gRPC response to REST response
+	// Convert database connections
+	databaseConnections := make([]DatabaseConnection, len(grpcResp.Repo.DatabaseConnections))
+	for i, conn := range grpcResp.Repo.DatabaseConnections {
+		databaseConnections[i] = DatabaseConnection{
+			BranchName:     conn.BranchName,
+			DatabaseName:   conn.DatabaseName,
+			DatabaseStatus: conn.DatabaseStatus,
+		}
+	}
+
 	repo := FullRepo{
-		TenantID:        grpcResp.Repo.TenantId,
-		WorkspaceID:     grpcResp.Repo.WorkspaceId,
-		RepoID:          grpcResp.Repo.RepoId,
-		RepoName:        grpcResp.Repo.RepoName,
-		RepoDescription: grpcResp.Repo.RepoDescription,
-		OwnerID:         grpcResp.Repo.OwnerId,
-		Branches:        convertBranchesFromGRPC(grpcResp.Repo.Branches),
+		TenantID:            grpcResp.Repo.TenantId,
+		WorkspaceID:         grpcResp.Repo.WorkspaceId,
+		RepoID:              grpcResp.Repo.RepoId,
+		RepoName:            grpcResp.Repo.RepoName,
+		RepoDescription:     grpcResp.Repo.RepoDescription,
+		OwnerID:             grpcResp.Repo.OwnerId,
+		Created:             grpcResp.Repo.Created,
+		Updated:             grpcResp.Repo.Updated,
+		BranchCount:         grpcResp.Repo.BranchCount,
+		CommitCount:         grpcResp.Repo.CommitCount,
+		DatabaseConnections: databaseConnections,
+		LatestCommitCode:    grpcResp.Repo.LatestCommitCode,
+		LatestCommitBranch:  grpcResp.Repo.LatestCommitBranch,
+		LatestCommitDate:    grpcResp.Repo.LatestCommitDate,
+		Branches:            convertBranchesFromGRPC(grpcResp.Repo.Branches),
 	}
 
 	response := ShowRepoResponse{

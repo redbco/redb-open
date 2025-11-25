@@ -6,6 +6,7 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/iterator"
+	"github.com/redbco/redb-open/pkg/anchor/adapter"
 )
 
 // MetadataOps implements metadata operations for BigQuery.
@@ -188,4 +189,18 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 	}
 
 	return []byte(fmt.Sprintf("Command executed successfully. Job ID: %s", job.ID())), nil
+}
+
+// CollectInstanceMetrics collects performance metrics.
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// TODO: Implement database-specific metrics collection
+	return metrics, nil
+}
+
+// ListLogicalDatabases lists logical databases.
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	var databases []adapter.LogicalDatabaseInfo
+	// TODO: Implement database-specific database listing
+	return databases, nil
 }

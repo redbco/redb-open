@@ -1,23 +1,46 @@
 package engine
 
+// DatabaseConnection represents a branch-database connection
+type DatabaseConnection struct {
+	BranchName     string `json:"branch_name"`
+	DatabaseName   string `json:"database_name"`
+	DatabaseStatus string `json:"database_status,omitempty"`
+}
+
 // Repo represents a repository
 type Repo struct {
-	TenantID        string `json:"tenant_id"`
-	WorkspaceID     string `json:"workspace_id"`
-	RepoID          string `json:"repo_id"`
-	RepoName        string `json:"repo_name"`
-	RepoDescription string `json:"repo_description,omitempty"`
-	OwnerID         string `json:"owner_id"`
+	TenantID            string               `json:"tenant_id"`
+	WorkspaceID         string               `json:"workspace_id"`
+	RepoID              string               `json:"repo_id"`
+	RepoName            string               `json:"repo_name"`
+	RepoDescription     string               `json:"repo_description,omitempty"`
+	OwnerID             string               `json:"owner_id"`
+	Created             string               `json:"created,omitempty"`
+	Updated             string               `json:"updated,omitempty"`
+	BranchCount         int32                `json:"branch_count,omitempty"`
+	CommitCount         int32                `json:"commit_count,omitempty"`
+	DatabaseConnections []DatabaseConnection `json:"database_connections,omitempty"`
+	LatestCommitCode    string               `json:"latest_commit_code,omitempty"`
+	LatestCommitBranch  string               `json:"latest_commit_branch,omitempty"`
+	LatestCommitDate    string               `json:"latest_commit_date,omitempty"`
 }
 
 type FullRepo struct {
-	TenantID        string   `json:"tenant_id"`
-	WorkspaceID     string   `json:"workspace_id"`
-	RepoID          string   `json:"repo_id"`
-	RepoName        string   `json:"repo_name"`
-	RepoDescription string   `json:"repo_description,omitempty"`
-	OwnerID         string   `json:"owner_id"`
-	Branches        []Branch `json:"branches"`
+	TenantID            string               `json:"tenant_id"`
+	WorkspaceID         string               `json:"workspace_id"`
+	RepoID              string               `json:"repo_id"`
+	RepoName            string               `json:"repo_name"`
+	RepoDescription     string               `json:"repo_description,omitempty"`
+	OwnerID             string               `json:"owner_id"`
+	Created             string               `json:"created,omitempty"`
+	Updated             string               `json:"updated,omitempty"`
+	BranchCount         int32                `json:"branch_count,omitempty"`
+	CommitCount         int32                `json:"commit_count,omitempty"`
+	DatabaseConnections []DatabaseConnection `json:"database_connections,omitempty"`
+	LatestCommitCode    string               `json:"latest_commit_code,omitempty"`
+	LatestCommitBranch  string               `json:"latest_commit_branch,omitempty"`
+	LatestCommitDate    string               `json:"latest_commit_date,omitempty"`
+	Branches            []Branch             `json:"branches"`
 }
 
 type ListReposResponse struct {
@@ -78,18 +101,22 @@ type DeleteRepoResponse struct {
 
 // Branch represents a branch
 type Branch struct {
-	TenantID            string   `json:"tenant_id"`
-	WorkspaceID         string   `json:"workspace_id"`
-	RepoID              string   `json:"repo_id"`
-	BranchID            string   `json:"branch_id"`
-	BranchName          string   `json:"branch_name"`
-	ParentBranchID      string   `json:"parent_branch_id"`
-	ParentBranchName    string   `json:"parent_branch_name"`
-	ConnectedToDatabase bool     `json:"connected_to_database"`
-	DatabaseID          string   `json:"database_id"`
-	Branches            []Branch `json:"branches"`
-	Commits             []Commit `json:"commits"`
-	Status              Status   `json:"status"`
+	TenantID            string          `json:"tenant_id"`
+	WorkspaceID         string          `json:"workspace_id"`
+	RepoID              string          `json:"repo_id"`
+	BranchID            string          `json:"branch_id"`
+	BranchName          string          `json:"branch_name"`
+	ParentBranchID      string          `json:"parent_branch_id"`
+	ParentBranchName    string          `json:"parent_branch_name"`
+	ConnectedToDatabase bool            `json:"connected_to_database"`
+	DatabaseID          string          `json:"database_id"`
+	DatabaseName        string          `json:"database_name,omitempty"`
+	RepoName            string          `json:"repo_name,omitempty"`
+	Branches            []Branch        `json:"branches"`
+	Commits             []CommitSummary `json:"commits"`
+	Status              Status          `json:"status"`
+	Created             string          `json:"created,omitempty"`
+	Updated             string          `json:"updated,omitempty"`
 }
 
 type ShowBranchResponse struct {
@@ -137,19 +164,33 @@ type DeleteBranchResponse struct {
 
 // Commit models
 
-// Commit represents a commit
+// CommitSummary represents a commit without schema_structure (used in lists)
+type CommitSummary struct {
+	TenantID      string `json:"tenant_id"`
+	WorkspaceID   string `json:"workspace_id"`
+	RepoID        string `json:"repo_id"`
+	BranchID      string `json:"branch_id"`
+	CommitID      string `json:"commit_id"`
+	CommitCode    string `json:"commit_code"`
+	IsHead        bool   `json:"is_head"`
+	CommitMessage string `json:"commit_message"`
+	SchemaType    string `json:"schema_type"`
+	CommitDate    string `json:"commit_date"`
+}
+
+// Commit represents a commit with full details including schema_structure
 type Commit struct {
-	TenantID        string `json:"tenant_id"`
-	WorkspaceID     string `json:"workspace_id"`
-	RepoID          string `json:"repo_id"`
-	BranchID        string `json:"branch_id"`
-	CommitID        string `json:"commit_id"`
-	CommitCode      string `json:"commit_code"`
-	IsHead          bool   `json:"is_head"`
-	CommitMessage   string `json:"commit_message"`
-	SchemaType      string `json:"schema_type"`
-	SchemaStructure string `json:"schema_structure"`
-	CommitDate      string `json:"commit_date"`
+	TenantID        string      `json:"tenant_id"`
+	WorkspaceID     string      `json:"workspace_id"`
+	RepoID          string      `json:"repo_id"`
+	BranchID        string      `json:"branch_id"`
+	CommitID        string      `json:"commit_id"`
+	CommitCode      string      `json:"commit_code"`
+	IsHead          bool        `json:"is_head"`
+	CommitMessage   string      `json:"commit_message"`
+	SchemaType      string      `json:"schema_type"`
+	SchemaStructure interface{} `json:"schema_structure"` // Can be either parsed JSON object or string
+	CommitDate      string      `json:"commit_date"`
 }
 
 type ShowCommitResponse struct {

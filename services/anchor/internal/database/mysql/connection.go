@@ -270,6 +270,156 @@ func CollectInstanceMetadata(ctx context.Context, db interface{}) (map[string]in
 	}
 	metadata["max_connections"] = maxConnections
 
+	// Get logical databases list with sizes
+	logicalDatabases := []map[string]interface{}{}
+	dbQuery := `
+		SELECT 
+			s.schema_name,
+			IFNULL(SUM(t.data_length + t.index_length), 0) as size_bytes,
+			COUNT(t.table_name) as table_count
+		FROM information_schema.schemata s
+		LEFT JOIN information_schema.tables t ON s.schema_name = t.table_schema
+		WHERE s.schema_name NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+		GROUP BY s.schema_name
+		ORDER BY s.schema_name
+	`
+	rows, err := sqlDB.QueryContext(ctx, dbQuery)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var dbName string
+			var sizeBytes int64
+			var tableCount int
+			if err := rows.Scan(&dbName, &sizeBytes, &tableCount); err == nil {
+				logicalDatabases = append(logicalDatabases, map[string]interface{}{
+					"name":        dbName,
+					"size_bytes":  sizeBytes,
+					"table_count": tableCount,
+				})
+			}
+		}
+	}
+	metadata["logical_databases"] = logicalDatabases
+
+	// Get storage engines
+	engines := []string{}
+	engQuery := "SELECT engine FROM information_schema.engines WHERE support IN ('YES', 'DEFAULT') ORDER BY engine"
+	rows, err = sqlDB.QueryContext(ctx, engQuery)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var engine string
+			if err := rows.Scan(&engine); err == nil {
+				engines = append(engines, engine)
+			}
+		}
+	}
+	metadata["storage_engines"] = engines
+
+	// Check replication status
+	var replicaStatus string
+	err = sqlDB.QueryRowContext(ctx, "SELECT @@read_only").Scan(&replicaStatus)
+	if err == nil {
+		metadata["is_replica"] = (replicaStatus == "1")
+		metadata["replication_enabled"] = true
+	}
+
+	// Get master/slave info
+	rows, err = sqlDB.QueryContext(ctx, "SHOW SLAVE STATUS")
+	if err == nil {
+		defer rows.Close()
+		if rows.Next() {
+			metadata["replication_role"] = "replica"
+		} else {
+			// Check for master status
+			rows2, err2 := sqlDB.QueryContext(ctx, "SHOW MASTER STATUS")
+			if err2 == nil {
+				defer rows2.Close()
+				if rows2.Next() {
+					metadata["replication_role"] = "master"
+				}
+			}
+		}
+	}
+
+	// Check if SSL is enabled
+	var sslEnabled string
+	err = sqlDB.QueryRowContext(ctx, "SHOW VARIABLES LIKE 'have_ssl'").Scan(&sslEnabled, &sslEnabled)
+	if err == nil && sslEnabled == "YES" {
+		metadata["ssl_enabled"] = true
+	} else {
+		metadata["ssl_enabled"] = false
+	}
+
+	// Get key server settings
+	serverSettings := make(map[string]string)
+	settingsQuery := `
+		SELECT variable_name, variable_value
+		FROM performance_schema.global_variables
+		WHERE variable_name IN (
+			'innodb_buffer_pool_size', 'max_connections', 'table_open_cache',
+			'thread_cache_size', 'query_cache_size', 'innodb_log_file_size',
+			'innodb_flush_log_at_trx_commit', 'sync_binlog'
+		)
+	`
+	rows, err = sqlDB.QueryContext(ctx, settingsQuery)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name, value string
+			if err := rows.Scan(&name, &value); err == nil {
+				serverSettings[name] = value
+			}
+		}
+	}
+	metadata["server_settings"] = serverSettings
+
+	// Detect MySQL edition/distribution
+	edition := "MySQL"
+	if strings.Contains(version, "MariaDB") {
+		edition = "MariaDB"
+	} else if strings.Contains(version, "Percona") {
+		edition = "Percona Server"
+	} else if strings.Contains(version, "Aurora") {
+		edition = "Amazon Aurora MySQL"
+	}
+	metadata["edition"] = edition
+
+	// Platform detection from version comment
+	if strings.Contains(version, "linux") || strings.Contains(version, "Linux") {
+		metadata["platform"] = "linux"
+	} else if strings.Contains(version, "Win") || strings.Contains(version, "win") {
+		metadata["platform"] = "windows"
+	} else if strings.Contains(version, "osx") || strings.Contains(version, "Darwin") {
+		metadata["platform"] = "darwin"
+	}
+
+	// Check for common features/capabilities
+	features := []string{}
+	
+	// Check for partitioning support
+	var hasPartitioning string
+	err = sqlDB.QueryRowContext(ctx, "SELECT support FROM information_schema.engines WHERE engine = 'partition'").Scan(&hasPartitioning)
+	if err == nil && (hasPartitioning == "YES" || hasPartitioning == "DEFAULT") {
+		features = append(features, "partitioning")
+	}
+
+	// Check for replication
+	var hasReplication int
+	err = sqlDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.plugins WHERE plugin_name LIKE '%replication%' AND plugin_status = 'ACTIVE'").Scan(&hasReplication)
+	if err == nil && hasReplication > 0 {
+		features = append(features, "replication")
+	}
+
+	// Check for InnoDB
+	var hasInnoDB string
+	err = sqlDB.QueryRowContext(ctx, "SELECT support FROM information_schema.engines WHERE engine = 'InnoDB'").Scan(&hasInnoDB)
+	if err == nil && (hasInnoDB == "YES" || hasInnoDB == "DEFAULT") {
+		features = append(features, "innodb")
+	}
+
+	metadata["features"] = features
+
 	return metadata, nil
 }
 

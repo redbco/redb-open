@@ -9,6 +9,7 @@ import (
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	"github.com/redbco/redb-open/services/core/internal/services/branch"
 	"github.com/redbco/redb-open/services/core/internal/services/commit"
+	"github.com/redbco/redb-open/services/core/internal/services/database"
 	"github.com/redbco/redb-open/services/core/internal/services/repo"
 	"github.com/redbco/redb-open/services/core/internal/services/workspace"
 	"google.golang.org/grpc/codes"
@@ -40,10 +41,38 @@ func (s *Server) ListRepos(ctx context.Context, req *corev1.ListReposRequest) (*
 		return nil, status.Errorf(codes.Internal, "failed to list repos: %v", err)
 	}
 
-	// Convert to protobuf format
+	// Convert to protobuf format with details
 	protoRepos := make([]*corev1.Repo, len(repos))
 	for i, r := range repos {
-		protoRepos[i] = s.repoToProto(r)
+		// Get branch count
+		branchCount, err := repoService.GetBranchCount(ctx, req.TenantId, workspaceID, r.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to get branch count for repo %s: %v", r.ID, err)
+			branchCount = 0
+		}
+
+		// Get commit count
+		commitCount, err := repoService.GetCommitCount(ctx, req.TenantId, workspaceID, r.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to get commit count for repo %s: %v", r.ID, err)
+			commitCount = 0
+		}
+
+		// Get database connections
+		connections, err := repoService.GetDatabaseConnections(ctx, req.TenantId, workspaceID, r.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to get database connections for repo %s: %v", r.ID, err)
+			connections = []*repo.DatabaseConnection{}
+		}
+
+		// Get latest commit info
+		latestCommit, err := repoService.GetLatestCommitInfo(ctx, req.TenantId, workspaceID, r.ID)
+		if err != nil {
+			s.engine.logger.Warnf("Failed to get latest commit info for repo %s: %v", r.ID, err)
+			latestCommit = nil
+		}
+
+		protoRepos[i] = s.repoToProtoWithDetails(r, branchCount, commitCount, connections, latestCommit)
 	}
 
 	return &corev1.ListReposResponse{
@@ -72,13 +101,55 @@ func (s *Server) ShowRepo(ctx context.Context, req *corev1.ShowRepoRequest) (*co
 		return nil, status.Errorf(codes.NotFound, "repo not found: %v", err)
 	}
 
-	// Convert to protobuf format
-	protoRepo := s.repoToProto(&repo.Repo{
-		ID:          r.ID,
-		Name:        r.Name,
-		Description: r.Description,
-		OwnerID:     r.OwnerID,
-	})
+	// Get branch count
+	branchCount, err := repoService.GetBranchCount(ctx, req.TenantId, workspaceID, r.ID)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get branch count for repo %s: %v", r.ID, err)
+		branchCount = 0
+	}
+
+	// Get commit count
+	commitCount, err := repoService.GetCommitCount(ctx, req.TenantId, workspaceID, r.ID)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get commit count for repo %s: %v", r.ID, err)
+		commitCount = 0
+	}
+
+	// Get database connections
+	connections, err := repoService.GetDatabaseConnections(ctx, req.TenantId, workspaceID, r.ID)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get database connections for repo %s: %v", r.ID, err)
+		connections = []*repo.DatabaseConnection{}
+	}
+
+	// Get latest commit info
+	latestCommit, err := repoService.GetLatestCommitInfo(ctx, req.TenantId, workspaceID, r.ID)
+	if err != nil {
+		s.engine.logger.Warnf("Failed to get latest commit info for repo %s: %v", r.ID, err)
+		latestCommit = nil
+	}
+
+	// Convert database connections
+	protoConnections := make([]*corev1.DatabaseConnection, len(connections))
+	for i, conn := range connections {
+		protoConnections[i] = &corev1.DatabaseConnection{
+			BranchName:     conn.BranchName,
+			DatabaseName:   conn.DatabaseName,
+			DatabaseStatus: conn.DatabaseStatus,
+		}
+	}
+
+	// Handle latest commit info
+	latestCommitCode := ""
+	latestCommitBranch := ""
+	latestCommitDate := ""
+	if latestCommit != nil {
+		latestCommitCode = latestCommit.CommitCode
+		latestCommitBranch = latestCommit.BranchName
+		latestCommitDate = latestCommit.CommitDate.Format("2006-01-02T15:04:05Z")
+	}
+
+	// Convert branches
 	protoBranches := make([]*corev1.Branch, len(r.Branches))
 	for i, b := range r.Branches {
 		protoBranches[i] = s.branchToProtoWithCommits(b)
@@ -86,13 +157,21 @@ func (s *Server) ShowRepo(ctx context.Context, req *corev1.ShowRepoRequest) (*co
 
 	return &corev1.ShowRepoResponse{
 		Repo: &corev1.FullRepo{
-			TenantId:        protoRepo.TenantId,
-			WorkspaceId:     protoRepo.WorkspaceId,
-			RepoId:          protoRepo.RepoId,
-			RepoName:        protoRepo.RepoName,
-			RepoDescription: protoRepo.RepoDescription,
-			OwnerId:         protoRepo.OwnerId,
-			Branches:        protoBranches,
+			TenantId:            r.TenantID,
+			WorkspaceId:         r.WorkspaceID,
+			RepoId:              r.ID,
+			RepoName:            r.Name,
+			RepoDescription:     r.Description,
+			OwnerId:             r.OwnerID,
+			Created:             r.Created.Format("2006-01-02T15:04:05Z"),
+			Updated:             r.Updated.Format("2006-01-02T15:04:05Z"),
+			BranchCount:         branchCount,
+			CommitCount:         commitCount,
+			DatabaseConnections: protoConnections,
+			LatestCommitCode:    latestCommitCode,
+			LatestCommitBranch:  latestCommitBranch,
+			LatestCommitDate:    latestCommitDate,
+			Branches:            protoBranches,
 		},
 	}, nil
 }
@@ -782,6 +861,22 @@ func (s *Server) commitToProto(c *commit.Commit) *corev1.Commit {
 	}
 }
 
+// Helper function to convert commit to protobuf summary (without schema_structure)
+func (s *Server) commitToProtoSummary(c *commit.Commit) *corev1.CommitSummary {
+	return &corev1.CommitSummary{
+		TenantId:      c.TenantID,
+		WorkspaceId:   c.WorkspaceID,
+		RepoId:        c.RepoID,
+		BranchId:      c.BranchID,
+		CommitId:      fmt.Sprintf("%d", c.ID),
+		CommitCode:    c.Code,
+		IsHead:        c.IsHead,
+		CommitMessage: c.Message,
+		SchemaType:    c.SchemaType,
+		CommitDate:    c.Created.Format("2006-01-02T15:04:05Z"),
+	}
+}
+
 func (s *Server) branchToProtoWithCommits(b *repo.Branch) *corev1.Branch {
 	var parentBranchID, parentBranchName, databaseID string
 	if b.ParentBranchID != nil {
@@ -796,23 +891,20 @@ func (s *Server) branchToProtoWithCommits(b *repo.Branch) *corev1.Branch {
 		databaseID = *b.ConnectedDatabaseID
 	}
 
-	// Convert commits
-	protoCommits := make([]*corev1.Commit, len(b.Commits))
+	// Convert commits (use summary without schema_structure)
+	protoCommits := make([]*corev1.CommitSummary, len(b.Commits))
 	for i, c := range b.Commits {
-		protoCommits[i] = s.commitToProto(&commit.Commit{
-			ID:              c.ID,
-			TenantID:        c.TenantID,
-			WorkspaceID:     c.WorkspaceID,
-			RepoID:          c.RepoID,
-			BranchID:        c.BranchID,
-			Code:            c.Code,
-			IsHead:          c.IsHead,
-			Message:         c.Message,
-			SchemaType:      c.SchemaType,
-			SchemaStructure: c.SchemaStructure,
-			PolicyIDs:       c.PolicyIDs,
-			Created:         c.Created,
-			Updated:         c.Updated,
+		protoCommits[i] = s.commitToProtoSummary(&commit.Commit{
+			ID:          c.ID,
+			TenantID:    c.TenantID,
+			WorkspaceID: c.WorkspaceID,
+			RepoID:      c.RepoID,
+			BranchID:    c.BranchID,
+			Code:        c.Code,
+			IsHead:      c.IsHead,
+			Message:     c.Message,
+			SchemaType:  c.SchemaType,
+			Created:     c.Created,
 		})
 	}
 
@@ -833,7 +925,7 @@ func (s *Server) branchToProtoWithCommits(b *repo.Branch) *corev1.Branch {
 
 // Helper function to convert branch with commits to protobuf
 func (s *Server) branchWithCommitsToProto(b *branch.BranchWithCommits) *corev1.Branch {
-	var parentBranchID, parentBranchName, databaseID string
+	var parentBranchID, parentBranchName, databaseID, databaseName string
 	if b.ParentBranchID != nil {
 		parentBranchID = *b.ParentBranchID
 		// Get parent branch name
@@ -844,25 +936,34 @@ func (s *Server) branchWithCommitsToProto(b *branch.BranchWithCommits) *corev1.B
 	}
 	if b.ConnectedDatabaseID != nil {
 		databaseID = *b.ConnectedDatabaseID
+		// Get database name
+		databaseService := database.NewService(s.engine.db, s.engine.logger)
+		if dbName, err := databaseService.GetDatabaseNameByID(context.Background(), databaseID); err == nil {
+			databaseName = dbName
+		}
 	}
 
-	// Convert commits
-	protoCommits := make([]*corev1.Commit, len(b.Commits))
+	// Get repo name
+	repoName := ""
+	repoService := repo.NewService(s.engine.db, s.engine.logger)
+	if rName, err := repoService.GetRepoNameByID(context.Background(), b.TenantID, b.WorkspaceID, b.RepoID); err == nil {
+		repoName = rName
+	}
+
+	// Convert commits (use summary without schema_structure)
+	protoCommits := make([]*corev1.CommitSummary, len(b.Commits))
 	for i, c := range b.Commits {
-		protoCommits[i] = s.commitToProto(&commit.Commit{
-			ID:              c.ID,
-			TenantID:        c.TenantID,
-			WorkspaceID:     c.WorkspaceID,
-			RepoID:          c.RepoID,
-			BranchID:        c.BranchID,
-			Code:            c.Code,
-			IsHead:          c.IsHead,
-			Message:         c.Message,
-			SchemaType:      c.SchemaType,
-			SchemaStructure: c.SchemaStructure,
-			PolicyIDs:       c.PolicyIDs,
-			Created:         c.Created,
-			Updated:         c.Updated,
+		protoCommits[i] = s.commitToProtoSummary(&commit.Commit{
+			ID:          c.ID,
+			TenantID:    c.TenantID,
+			WorkspaceID: c.WorkspaceID,
+			RepoID:      c.RepoID,
+			BranchID:    c.BranchID,
+			Code:        c.Code,
+			IsHead:      c.IsHead,
+			Message:     c.Message,
+			SchemaType:  c.SchemaType,
+			Created:     c.Created,
 		})
 	}
 
@@ -885,5 +986,9 @@ func (s *Server) branchWithCommitsToProto(b *branch.BranchWithCommits) *corev1.B
 		Branches:            protoChildBranches,
 		Commits:             protoCommits,
 		Status:              statusStringToProto(b.Status),
+		Created:             b.Created.Format("2006-01-02T15:04:05Z"),
+		Updated:             b.Updated.Format("2006-01-02T15:04:05Z"),
+		RepoName:            repoName,
+		DatabaseName:        databaseName,
 	}
 }

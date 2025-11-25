@@ -111,6 +111,24 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 	return result, nil
 }
 
+// CollectInstanceMetrics collects performance metrics (not available on database connection)
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	return nil, adapter.NewConfigurationError(
+		dbcapabilities.MongoDB,
+		"metadata",
+		"instance metrics collection not supported on database connection",
+	)
+}
+
+// ListLogicalDatabases lists logical databases (not available on database connection)
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	return nil, adapter.NewConfigurationError(
+		dbcapabilities.MongoDB,
+		"metadata",
+		"list databases not supported on database connection",
+	)
+}
+
 // InstanceMetadataOps implements adapter.MetadataOperator for MongoDB instance connections.
 type InstanceMetadataOps struct {
 	conn *InstanceConnection
@@ -191,4 +209,83 @@ func (i *InstanceMetadataOps) ExecuteCommand(ctx context.Context, command string
 		return nil, adapter.WrapError(dbcapabilities.MongoDB, "execute_command", err)
 	}
 	return result, nil
+}
+
+// CollectInstanceMetrics collects performance metrics from the MongoDB instance
+func (i *InstanceMetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+
+	// Get server status for metrics
+	serverStatus := i.conn.client.Database("admin").RunCommand(ctx, map[string]interface{}{"serverStatus": 1})
+	var status map[string]interface{}
+	if err := serverStatus.Decode(&status); err == nil {
+		// Extract connection metrics
+		if conns, ok := status["connections"].(map[string]interface{}); ok {
+			if current, ok := conns["current"].(int32); ok {
+				metrics["active_connections"] = current
+			}
+			if available, ok := conns["available"].(int32); ok {
+				metrics["idle_connections"] = available
+			}
+		}
+
+		// Extract cache metrics (WiredTiger)
+		if wiredTiger, ok := status["wiredTiger"].(map[string]interface{}); ok {
+			if cache, ok := wiredTiger["cache"].(map[string]interface{}); ok {
+				// Calculate cache hit ratio if available
+				metrics["extended_wiredtiger"] = cache
+			}
+		}
+
+		// Check if replica set
+		if replStatus, ok := status["repl"].(map[string]interface{}); ok {
+			if setName, ok := replStatus["setName"].(string); ok && setName != "" {
+				metrics["is_replica"] = true
+				// Get replication lag if available
+				if rbid, ok := replStatus["rbid"].(int32); ok {
+					metrics["replica_set_id"] = rbid
+				}
+			} else {
+				metrics["is_replica"] = false
+			}
+		}
+	}
+
+	return metrics, nil
+}
+
+// ListLogicalDatabases lists all logical databases in the MongoDB instance
+func (i *InstanceMetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	// List all databases
+	dbs, err := i.conn.client.ListDatabaseNames(ctx, map[string]interface{}{})
+	if err != nil {
+		return nil, adapter.WrapError(dbcapabilities.MongoDB, "list_databases", err)
+	}
+
+	var databases []adapter.LogicalDatabaseInfo
+	for _, dbName := range dbs {
+		// Get database stats
+		db := i.conn.client.Database(dbName)
+		statsCmd := map[string]interface{}{"dbStats": 1}
+		statsResult := db.RunCommand(ctx, statsCmd)
+
+		var stats map[string]interface{}
+		if err := statsResult.Decode(&stats); err == nil {
+			dbInfo := adapter.LogicalDatabaseInfo{
+				Name:  dbName,
+				Owner: "admin", // MongoDB doesn't have per-database owners
+			}
+
+			// Get size if available
+			if dataSize, ok := stats["dataSize"].(int64); ok {
+				dbInfo.SizeBytes = dataSize
+			} else if dataSize, ok := stats["dataSize"].(float64); ok {
+				dbInfo.SizeBytes = int64(dataSize)
+			}
+
+			databases = append(databases, dbInfo)
+		}
+	}
+
+	return databases, nil
 }

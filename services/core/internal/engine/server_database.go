@@ -11,6 +11,7 @@ import (
 	commonv1 "github.com/redbco/redb-open/api/proto/common/v1"
 	corev1 "github.com/redbco/redb-open/api/proto/core/v1"
 	"github.com/redbco/redb-open/services/core/internal/services/branch"
+	"github.com/redbco/redb-open/services/core/internal/services/commit"
 	"github.com/redbco/redb-open/services/core/internal/services/database"
 	"github.com/redbco/redb-open/services/core/internal/services/instance"
 	"github.com/redbco/redb-open/services/core/internal/services/mapping"
@@ -83,6 +84,49 @@ func (s *Server) ShowDatabase(ctx context.Context, req *corev1.ShowDatabaseReque
 
 	// Convert to protobuf format
 	protoDatabase := s.databaseToProto(db)
+
+	// Add repository and commit timeline information
+	repoService := repo.NewService(s.engine.db, s.engine.logger)
+	commitService := commit.NewService(s.engine.db, s.engine.logger)
+
+	// Find repo and branch connected to this database
+	repoInfo, err := repoService.FindRepoAndBranchByDatabaseID(ctx, db.ID)
+	if err == nil && repoInfo.Success {
+		// Get repo details
+		repoDetails, err := repoService.Get(ctx, req.TenantId, workspaceID, repoInfo.RepoID)
+		if err == nil {
+			protoDatabase.ConnectedRepoId = repoInfo.RepoID
+			protoDatabase.ConnectedRepoName = repoDetails.Name
+			protoDatabase.ConnectedBranchId = repoInfo.BranchID
+
+			// Get branch details for name
+			branchService := branch.NewService(s.engine.db, s.engine.logger)
+			branchDetails, err := branchService.Get(ctx, req.TenantId, workspaceID, repoInfo.RepoID, repoInfo.BranchID)
+			if err == nil {
+				protoDatabase.ConnectedBranchName = branchDetails.Name
+			}
+
+			// Get commit timeline for this branch
+			commits, err := commitService.List(ctx, req.TenantId, workspaceID, repoInfo.RepoID, repoInfo.BranchID)
+			if err == nil {
+				// Convert commits to timeline entries (limit to last 50 for performance)
+				maxCommits := 50
+				if len(commits) > maxCommits {
+					commits = commits[:maxCommits]
+				}
+
+				protoDatabase.CommitTimeline = make([]*corev1.CommitTimelineEntry, len(commits))
+				for i, c := range commits {
+					protoDatabase.CommitTimeline[i] = &corev1.CommitTimelineEntry{
+						CommitCode:    c.Code,
+						CommitMessage: c.Message,
+						Created:       c.Created.Format(time.RFC3339),
+						IsHead:        c.IsHead,
+					}
+				}
+			}
+		}
+	}
 
 	return &corev1.ShowDatabaseResponse{
 		Database: protoDatabase,

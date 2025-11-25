@@ -248,16 +248,8 @@ func (r *Repository) GetAllInstanceConfigs(ctx context.Context, nodeID string) (
 }
 
 // UpdateDatabaseConnectionStatus updates the connection status for a database
-func (r *Repository) UpdateDatabaseConnectionStatus(ctx context.Context, databaseID string, connected bool, status string) error {
-	syslog.Info("anchor", "Updating database connection status for database %s: connected=%t, status=%s", databaseID, connected, status)
-
-	// Determine the status value based on connection state
-	var dbStatus string
-	if connected {
-		dbStatus = "STATUS_CONNECTED"
-	} else {
-		dbStatus = "STATUS_DISCONNECTED"
-	}
+func (r *Repository) UpdateDatabaseConnectionStatus(ctx context.Context, databaseID string, status string, statusMessage string) error {
+	syslog.Info("anchor", "Updating database connection status for database %s: status=%s, message=%s", databaseID, status, statusMessage)
 
 	query := `
 		UPDATE databases 
@@ -268,7 +260,7 @@ func (r *Repository) UpdateDatabaseConnectionStatus(ctx context.Context, databas
 		WHERE database_id = $3
 	`
 
-	result, err := r.db.Pool().Exec(ctx, query, dbStatus, status, databaseID)
+	result, err := r.db.Pool().Exec(ctx, query, status, statusMessage, databaseID)
 	if err != nil {
 		return fmt.Errorf("error updating database connection status: %w", err)
 	}
@@ -283,16 +275,8 @@ func (r *Repository) UpdateDatabaseConnectionStatus(ctx context.Context, databas
 }
 
 // UpdateInstanceConnectionStatus updates the connection status for an instance
-func (r *Repository) UpdateInstanceConnectionStatus(ctx context.Context, instanceID string, connected bool, status string) error {
-	syslog.Info("anchor", "Updating instance connection status for instance %s: connected=%t, status=%s", instanceID, connected, status)
-
-	// Determine the status value based on connection state
-	var instStatus string
-	if connected {
-		instStatus = "STATUS_CONNECTED"
-	} else {
-		instStatus = "STATUS_DISCONNECTED"
-	}
+func (r *Repository) UpdateInstanceConnectionStatus(ctx context.Context, instanceID string, status string, statusMessage string) error {
+	syslog.Info("anchor", "Updating instance connection status for instance %s: status=%s, message=%s", instanceID, status, statusMessage)
 
 	query := `
 		UPDATE instances 
@@ -303,7 +287,7 @@ func (r *Repository) UpdateInstanceConnectionStatus(ctx context.Context, instanc
 		WHERE instance_id = $3
 	`
 
-	result, err := r.db.Pool().Exec(ctx, query, instStatus, status, instanceID)
+	result, err := r.db.Pool().Exec(ctx, query, status, statusMessage, instanceID)
 	if err != nil {
 		return fmt.Errorf("error updating instance connection status: %w", err)
 	}
@@ -354,10 +338,20 @@ func (r *Repository) UpdateDatabaseMetadata(ctx context.Context, metadata *Datab
 func (r *Repository) UpdateInstanceMetadata(ctx context.Context, metadata *InstanceMetadata) error {
 	syslog.Info("anchor", "Updating instance metadata for instance %s", metadata.InstanceID)
 
-	// Marshal metadata to JSON
-	metadataJSON, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("error marshaling instance metadata to JSON: %w", err)
+	// Marshal the full metadata map to JSON for the instance_metadata column
+	var metadataJSON []byte
+	var err error
+	if metadata.Metadata != nil {
+		metadataJSON, err = json.Marshal(metadata.Metadata)
+		if err != nil {
+			return fmt.Errorf("error marshaling instance metadata to JSON: %w", err)
+		}
+	} else {
+		// Fallback to old behavior if Metadata field is not populated
+		metadataJSON, err = json.Marshal(metadata)
+		if err != nil {
+			return fmt.Errorf("error marshaling instance metadata to JSON: %w", err)
+		}
 	}
 
 	query := `

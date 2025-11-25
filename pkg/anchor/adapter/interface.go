@@ -4,6 +4,7 @@ package adapter
 
 import (
 	"context"
+	"time"
 
 	"github.com/redbco/redb-open/pkg/dbcapabilities"
 	"github.com/redbco/redb-open/pkg/unifiedmodel"
@@ -175,6 +176,10 @@ type MetadataOperator interface {
 
 	// Command execution (for databases supporting admin commands)
 	ExecuteCommand(ctx context.Context, command string) ([]byte, error)
+
+	// Extended metrics and metadata collection (optional - may return nil for databases that don't support it)
+	CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error)
+	ListLogicalDatabases(ctx context.Context) ([]LogicalDatabaseInfo, error)
 }
 
 // ReplicationSource represents an active replication connection.
@@ -221,4 +226,14 @@ type StreamResult struct {
 	Data       []map[string]interface{} // The batch of data
 	HasMore    bool                     // Whether more data is available
 	NextCursor string                   // Cursor for pagination
+}
+
+// LogicalDatabaseInfo represents metadata about a logical database within an instance
+type LogicalDatabaseInfo struct {
+	Name      string
+	SizeBytes int64
+	Owner     string
+	Encoding  string
+	Collation string
+	CreatedAt *time.Time
 }

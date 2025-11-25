@@ -77,6 +77,14 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 	return []byte(fmt.Sprintf("%v", result)), nil
 }
 
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Redis, "collect instance metrics", "not available on database connections")
+}
+
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Redis, "list logical databases", "not available on database connections")
+}
+
 type InstanceMetadataOps struct {
 	conn *InstanceConnection
 }
@@ -133,6 +141,33 @@ func (i *InstanceMetadataOps) ExecuteCommand(ctx context.Context, command string
 		return nil, adapter.WrapError(dbcapabilities.Redis, "execute_command", err)
 	}
 	return []byte(fmt.Sprintf("%v", result)), nil
+}
+
+func (i *InstanceMetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// Redis metrics can be collected from INFO command
+	info, err := i.conn.client.Info(ctx).Result()
+	if err == nil {
+		// Parse basic metrics from info
+		_ = info // Placeholder for future metric parsing
+	}
+	return metrics, nil
+}
+
+func (i *InstanceMetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	// Redis has numbered databases (0-15 by default)
+	var databases []adapter.LogicalDatabaseInfo
+	// Get the number of databases from CONFIG
+	configGet := i.conn.client.ConfigGet(ctx, "databases")
+	if result, err := configGet.Result(); err == nil && len(result) >= 2 {
+		// Create a simple entry for Redis
+		databases = append(databases, adapter.LogicalDatabaseInfo{
+			Name:      "redis",
+			SizeBytes: 0, // Would need to iterate through all databases to get size
+			Owner:     "redis",
+		})
+	}
+	return databases, nil
 }
 
 func splitLines(s string) []string {

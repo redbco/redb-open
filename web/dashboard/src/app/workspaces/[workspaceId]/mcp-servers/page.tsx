@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useToast } from '@/components/ui/Toast';
-import { Server, Plus, RefreshCw, Activity, CheckCircle, Power } from 'lucide-react';
+import { Server, Plus, RefreshCw, Activity, CheckCircle, Power, AlertCircle } from 'lucide-react';
 import { api } from '@/lib/api/endpoints';
 import type { MCPServer } from '@/lib/api/types';
 
@@ -80,16 +80,38 @@ export default function MCPServersPage({ params }: MCPServersPageProps) {
   }
 
   const enabledServers = mcpServers.filter(s => s.mcp_server_enabled).length;
+  const disabledServers = mcpServers.length - enabledServers;
   const healthyServers = mcpServers.filter(s => s.status === 'healthy').length;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between bg-gradient-to-r from-violet-50/50 to-transparent dark:from-violet-900/10 p-6 -mx-6 rounded-lg mb-6">
         <div>
-          <h2 className="text-3xl font-bold text-foreground">MCP Servers</h2>
-          <p className="text-muted-foreground mt-2">
-            Manage Model Context Protocol servers for resource access
-          </p>
+          <div className="flex items-center gap-3">
+            <Server className="w-8 h-8 text-violet-600 dark:text-violet-400" />
+            <h2 className="text-3xl font-bold text-foreground">MCP Servers</h2>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <p className="text-muted-foreground">
+              Manage Model Context Protocol servers for resource access
+            </p>
+            {!isLoading && mcpServers.length > 0 && (
+              <>
+                <span className="text-muted-foreground/30">•</span>
+                {disabledServers > 0 ? (
+                  <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 text-sm font-medium animate-in fade-in duration-300">
+                    <AlertCircle className="w-4 h-4" />
+                    {disabledServers} disabled
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium animate-in fade-in duration-300">
+                    <CheckCircle className="w-4 h-4" />
+                    All servers enabled
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
         <div className="flex items-center space-x-2">
           <button
@@ -111,55 +133,6 @@ export default function MCPServersPage({ params }: MCPServersPageProps) {
           </button>
         </div>
       </div>
-
-      {/* Overview Metrics */}
-      {!isLoading && mcpServers.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          {[
-            {
-              title: 'Total Servers',
-              value: mcpServers.length.toString(),
-              change: 'MCP instances',
-              icon: Server,
-              color: 'text-blue-600 dark:text-blue-400'
-            },
-            {
-              title: 'Enabled',
-              value: enabledServers.toString(),
-              change: 'Active servers',
-              icon: Power,
-              color: 'text-green-600 dark:text-green-400'
-            },
-            {
-              title: 'Healthy',
-              value: healthyServers.toString(),
-              change: 'Running smoothly',
-              icon: CheckCircle,
-              color: 'text-green-600 dark:text-green-400'
-            },
-            {
-              title: 'Resources',
-              value: '-',
-              change: 'Available resources',
-              icon: Activity,
-              color: 'text-purple-600 dark:text-purple-400'
-            }
-          ].map((metric, index) => (
-            <div key={index} className="bg-card border border-border rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">{metric.title}</p>
-                  <p className="text-2xl font-bold text-foreground mt-1">{metric.value}</p>
-                  <p className="text-sm text-muted-foreground mt-1">{metric.change}</p>
-                </div>
-                <div className={`w-12 h-12 rounded-lg bg-muted/50 flex items-center justify-center ${metric.color}`}>
-                  <metric.icon className="h-6 w-6" />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* Server List */}
       {isLoading ? (
@@ -188,47 +161,80 @@ export default function MCPServersPage({ params }: MCPServersPageProps) {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {mcpServers.map((server) => (
             <Link
               key={server.mcp_server_id}
               href={`/workspaces/${workspaceId}/mcp-servers/${encodeURIComponent(server.mcp_server_name)}`}
-              className="bg-card border border-border rounded-lg p-6 hover:border-primary/50 transition-all cursor-pointer"
+              className="group bg-card border border-border rounded-xl p-5 hover:shadow-lg hover:border-primary/20 transition-all duration-200 flex flex-col h-full cursor-pointer"
             >
               <div className="flex items-start justify-between mb-4">
-                <div>
-                  <div className="flex items-center space-x-3 mb-2">
-                    <Server className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                    <h3 className="text-lg font-semibold text-foreground">{server.mcp_server_name}</h3>
+                <div className="flex items-center space-x-4">
+                  <div className="w-12 h-12 bg-gradient-to-br from-violet-50 to-violet-100 dark:from-violet-900/20 dark:to-violet-800/20 rounded-xl flex items-center justify-center border border-border shadow-sm group-hover:scale-105 transition-transform duration-200">
+                    <Server className="h-6 w-6 text-violet-600 dark:text-violet-400" />
                   </div>
-                  {server.mcp_server_description && (
-                    <p className="text-sm text-muted-foreground mb-3">{server.mcp_server_description}</p>
+                  <div>
+                    <h3 className="font-bold text-lg text-foreground group-hover:text-primary transition-colors">{server.mcp_server_name}</h3>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                      <span className="font-medium">Port {server.mcp_server_port}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="relative flex h-2.5 w-2.5">
+                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                      server.mcp_server_enabled ? 'bg-emerald-500' : 'bg-slate-500'
+                    }`}></span>
+                    <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                      server.mcp_server_enabled ? 'bg-emerald-500' : 'bg-slate-500'
+                    }`}></span>
+                  </div>
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {server.mcp_server_enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex-grow">
+                <p className="text-sm text-muted-foreground mb-4 line-clamp-2 min-h-[2.5rem]">
+                  {server.mcp_server_description || <span className="text-muted-foreground/60 italic">No description provided</span>}
+                </p>
+
+                <div className="grid grid-cols-2 gap-y-3 gap-x-4">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <Activity className="h-3.5 w-3.5" />
+                      Status
+                    </span>
+                    <span className="text-sm font-medium text-foreground capitalize">
+                      {server.status}
+                    </span>
+                  </div>
+
+                  {server.mcp_server_host_ids && server.mcp_server_host_ids.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                        <Server className="h-3.5 w-3.5" />
+                        Nodes
+                      </span>
+                      <span className="text-sm font-medium text-foreground">
+                        {server.mcp_server_host_ids.length}
+                      </span>
+                    </div>
                   )}
                 </div>
-                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                  server.mcp_server_enabled
-                    ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                    : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400'
-                }`}>
-                  {server.mcp_server_enabled ? 'Enabled' : 'Disabled'}
-                </span>
               </div>
-              
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Port:</span>
-                  <span className="text-foreground font-mono">{server.mcp_server_port}</span>
+
+              <div className="mt-auto pt-4 border-t border-border/50 flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  Click to view details
+                </span>
+                <div className="flex items-center gap-1">
+                  {server.mcp_server_enabled && (
+                    <Power className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  )}
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Status:</span>
-                  <span className="text-foreground capitalize">{server.status}</span>
-                </div>
-                {server.mcp_server_host_ids && server.mcp_server_host_ids.length > 0 && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Nodes:</span>
-                    <span className="text-foreground">{server.mcp_server_host_ids.length}</span>
-                  </div>
-                )}
               </div>
             </Link>
           ))}

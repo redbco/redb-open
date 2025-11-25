@@ -538,6 +538,143 @@ func (s *Service) List(ctx context.Context, tenantID, workspaceID string) ([]*Re
 	return repos, nil
 }
 
+// GetBranchCount retrieves the number of branches for a repo
+func (s *Service) GetBranchCount(ctx context.Context, tenantID, workspaceID, repoID string) (int32, error) {
+	query := `
+		SELECT COUNT(*) 
+		FROM branches 
+		WHERE tenant_id = $1 AND workspace_id = $2 AND repo_id = $3
+	`
+
+	var count int32
+	err := s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, repoID).Scan(&count)
+	if err != nil {
+		s.logger.Errorf("Failed to get branch count: %v", err)
+		return 0, err
+	}
+
+	return count, nil
+}
+
+// GetCommitCount retrieves the total number of commits for a repo across all branches
+func (s *Service) GetCommitCount(ctx context.Context, tenantID, workspaceID, repoID string) (int32, error) {
+	query := `
+		SELECT COUNT(*) 
+		FROM commits 
+		WHERE tenant_id = $1 AND workspace_id = $2 AND repo_id = $3
+	`
+
+	var count int32
+	err := s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, repoID).Scan(&count)
+	if err != nil {
+		s.logger.Errorf("Failed to get commit count: %v", err)
+		return 0, err
+	}
+
+	return count, nil
+}
+
+// DatabaseConnection represents a branch-database connection
+type DatabaseConnection struct {
+	BranchName     string
+	DatabaseName   string
+	DatabaseStatus string
+}
+
+// GetDatabaseConnections retrieves all branch-database connections for a repo
+func (s *Service) GetDatabaseConnections(ctx context.Context, tenantID, workspaceID, repoID string) ([]*DatabaseConnection, error) {
+	query := `
+		SELECT b.branch_name, d.database_name, d.status
+		FROM branches b
+		INNER JOIN databases d ON b.connected_database_id = d.database_id
+		WHERE b.tenant_id = $1 AND b.workspace_id = $2 AND b.repo_id = $3 
+		AND b.connected_to_database = true
+		AND b.connected_database_id IS NOT NULL
+		ORDER BY b.branch_name
+	`
+
+	rows, err := s.db.Pool().Query(ctx, query, tenantID, workspaceID, repoID)
+	if err != nil {
+		s.logger.Errorf("Failed to get database connections: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var connections []*DatabaseConnection
+	for rows.Next() {
+		var conn DatabaseConnection
+		err := rows.Scan(&conn.BranchName, &conn.DatabaseName, &conn.DatabaseStatus)
+		if err != nil {
+			s.logger.Errorf("Failed to scan database connection: %v", err)
+			return nil, err
+		}
+		connections = append(connections, &conn)
+	}
+
+	if err = rows.Err(); err != nil {
+		s.logger.Errorf("Error after scanning database connections: %v", err)
+		return nil, err
+	}
+
+	return connections, nil
+}
+
+// GetRepoNameByID retrieves the repo name by repo ID
+func (s *Service) GetRepoNameByID(ctx context.Context, tenantID, workspaceID, repoID string) (string, error) {
+	s.logger.Infof("Getting repo name for repo ID: %s", repoID)
+	query := `
+		SELECT repo_name
+		FROM repos
+		WHERE tenant_id = $1 AND workspace_id = $2 AND repo_id = $3
+	`
+
+	var repoName string
+	err := s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, repoID).Scan(&repoName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errors.New("repo not found")
+		}
+		s.logger.Errorf("Failed to get repo name by ID: %v", err)
+		return "", err
+	}
+
+	return repoName, nil
+}
+
+// LatestCommitInfo represents the latest commit information for a repo
+type LatestCommitInfo struct {
+	CommitCode string
+	BranchName string
+	CommitDate time.Time
+}
+
+// GetLatestCommitInfo retrieves the latest commit information for a repo
+func (s *Service) GetLatestCommitInfo(ctx context.Context, tenantID, workspaceID, repoID string) (*LatestCommitInfo, error) {
+	query := `
+		SELECT c.commit_code, b.branch_name, c.created
+		FROM commits c
+		INNER JOIN branches b ON c.branch_id = b.branch_id
+		WHERE c.tenant_id = $1 AND c.workspace_id = $2 AND c.repo_id = $3
+		ORDER BY c.created DESC
+		LIMIT 1
+	`
+
+	var info LatestCommitInfo
+	var commitCode string
+	err := s.db.Pool().QueryRow(ctx, query, tenantID, workspaceID, repoID).Scan(&commitCode, &info.BranchName, &info.CommitDate)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// No commits yet - this is not an error
+			return nil, nil
+		}
+		s.logger.Errorf("Failed to get latest commit info: %v", err)
+		return nil, err
+	}
+
+	info.CommitCode = commitCode
+	return &info, nil
+}
+
 // Update updates a repo
 func (s *Service) Update(ctx context.Context, tenantID, workspaceID, repoName string, updates map[string]interface{}) (*Repo, error) {
 	s.logger.Infof("Updating repo with name: %s", repoName)

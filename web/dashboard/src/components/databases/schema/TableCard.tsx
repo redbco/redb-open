@@ -3,14 +3,17 @@
 import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { Table, ChevronDown, ChevronRight, Edit2, Plus, Database, Eye, Info } from 'lucide-react';
+import { Table, ChevronDown, ChevronRight, Settings, Upload, Trash2, Eraser, ExternalLink, Shield } from 'lucide-react';
 import { ColumnRow } from './ColumnRow';
+import { formatContainerCategory } from '@/lib/formatters';
 import type { SchemaTable } from '@/lib/api/types';
 
 interface TableCardProps {
   table: SchemaTable;
   onModifyTable?: (tableName: string) => void;
-  onAddColumn?: (tableName: string) => void;
+  onDeployTable?: (tableName: string) => void;
+  onDropTable?: (tableName: string) => void;
+  onWipeTable?: (tableName: string) => void;
   onModifyColumn?: (tableName: string, columnName: string) => void;
   onDropColumn?: (tableName: string, columnName: string) => void;
 }
@@ -18,12 +21,13 @@ interface TableCardProps {
 export function TableCard({
   table,
   onModifyTable,
-  onAddColumn,
+  onDeployTable,
+  onDropTable,
+  onWipeTable,
   onModifyColumn,
   onDropColumn,
 }: TableCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const [showClassificationDetails, setShowClassificationDetails] = useState(false);
   const params = useParams();
   const workspaceId = params?.workspaceId as string;
   const databaseName = params?.databaseName as string;
@@ -60,6 +64,12 @@ export function TableCard({
 
   const privilegedColumnCount = privilegedColumnStats.high;
 
+  // Format classification source for display
+  const formatClassificationSource = (source?: string) => {
+    if (!source) return 'auto';
+    return source.toLowerCase() === 'automatic' || source.toLowerCase() === 'auto' ? 'auto' : source;
+  };
+
   // Build link to table data page
   const tableDataLink = workspaceId && databaseName 
     ? `/workspaces/${workspaceId}/databases/${databaseName}/tables/${table.name}`
@@ -73,7 +83,7 @@ export function TableCard({
   });
 
   return (
-    <div className="bg-card border border-border rounded-lg overflow-hidden hover:shadow-md transition-shadow">
+    <div className="group bg-card border border-border rounded-xl overflow-hidden hover:shadow-lg hover:border-primary/20 transition-all duration-200">
       {/* Table Header */}
       <div className="p-5 border-b border-border bg-muted/30">
         <div className="flex items-start justify-between mb-3">
@@ -88,131 +98,75 @@ export function TableCard({
                 <ChevronRight className="h-5 w-5 text-muted-foreground" />
               )}
             </button>
-            <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-              <Table className="h-5 w-5 text-primary" />
+            <div className={`w-10 h-10 bg-gradient-to-br rounded-xl flex items-center justify-center border border-border shadow-sm group-hover:scale-105 transition-transform duration-200 ${
+              privilegedColumnCount > 0 
+                ? 'from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20' 
+                : 'from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900'
+            }`}>
+              {privilegedColumnCount > 0 ? (
+                <Shield className="h-5 w-5 text-red-600 dark:text-red-400" />
+              ) : (
+                <Table className="h-5 w-5 text-foreground" />
+              )}
             </div>
             <div className="flex-1">
-              <Link href={tableDataLink}>
-                <h3 className="text-lg font-semibold text-foreground hover:text-primary transition-colors cursor-pointer">
-                  {table.name}
-                </h3>
+              <Link 
+                href={tableDataLink}
+                className="font-semibold text-lg text-foreground hover:text-primary hover:underline transition-colors flex items-center gap-1"
+              >
+                {table.name}
+                <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-50 transition-opacity" />
               </Link>
               <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
-                {databaseType && (
-                  <span className="inline-flex items-center gap-1">
-                    <Database className="h-3 w-3" />
-                    {databaseType}
-                  </span>
-                )}
-                {objectType && objectType !== 'table' && <span>• Type: {objectType}</span>}
-                {table.item_count !== undefined && <span>• {table.item_count} item{table.item_count !== 1 ? 's' : ''}</span>}
+                <span className="font-medium">
+                  {formatContainerCategory(primaryCategory)} ({formatClassificationSource(classificationSource)}, {(classificationConfidence * 100).toFixed(0)}%)
+                </span>
+                <span>•</span>
+                <span>{table.columns.length} column{table.columns.length !== 1 ? 's' : ''}</span>
               </div>
             </div>
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center gap-2">
-            <Link href={tableDataLink}>
-              <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors">
-                <Eye className="h-3.5 w-3.5" />
-                View Data
-              </button>
-            </Link>
+          <div className="flex items-center gap-1">
             {onModifyTable && (
               <button
                 onClick={() => onModifyTable(table.name)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 text-sm border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+                className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-md transition-colors"
+                title="Modify Table"
               >
-                <Edit2 className="h-3.5 w-3.5" />
-                Modify
+                <Settings className="h-4 w-4" />
               </button>
             )}
-            {onAddColumn && (
+            {onDeployTable && (
               <button
-                onClick={() => onAddColumn(table.name)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                onClick={() => onDeployTable(table.name)}
+                className="p-2 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md transition-colors"
+                title="Deploy to Database"
               >
-                <Plus className="h-3.5 w-3.5" />
-                Add Column
+                <Upload className="h-4 w-4" />
+              </button>
+            )}
+            {onDropTable && (
+              <button
+                onClick={() => onDropTable(table.name)}
+                className="p-2 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
+                title="Drop Table"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+            {onWipeTable && (
+              <button
+                onClick={() => onWipeTable(table.name)}
+                className="p-2 text-muted-foreground hover:text-orange-600 dark:hover:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded-md transition-colors"
+                title="Wipe Table Data"
+              >
+                <Eraser className="h-4 w-4" />
               </button>
             )}
           </div>
         </div>
-
-        {/* Classification Info from enriched schema endpoint */}
-        <div className="flex items-center gap-4 text-sm flex-wrap">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-background border border-border">
-            <span className="text-muted-foreground">Category:</span>
-            <span className="font-medium text-foreground">{primaryCategory}</span>
-            {classificationSource && (
-              <span className="text-xs text-muted-foreground">({classificationSource})</span>
-            )}
-          </div>
-
-          {classificationConfidence > 0 && (
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-background border border-border">
-              <span className="text-muted-foreground">Confidence:</span>
-              <span className="font-medium text-foreground">
-                {(classificationConfidence * 100).toFixed(0)}%
-              </span>
-              {classificationScores.length > 1 && (
-                <button
-                  onClick={() => setShowClassificationDetails(!showClassificationDetails)}
-                  className="ml-1 p-0.5 hover:bg-accent rounded transition-colors"
-                  title="Show classification details"
-                >
-                  <Info className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          )}
-
-          {privilegedColumnCount > 0 && (
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400 border border-red-200 dark:border-red-800">
-              <span className="font-medium">
-                {privilegedColumnCount} High-Confidence Privileged Column{privilegedColumnCount !== 1 ? 's' : ''}
-              </span>
-            </div>
-          )}
-          
-          {privilegedColumnStats.total > privilegedColumnCount && (
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400 border border-yellow-200 dark:border-yellow-800">
-              <span className="font-medium text-xs">
-                +{privilegedColumnStats.total - privilegedColumnCount} Lower-Confidence
-              </span>
-            </div>
-          )}
-
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-background border border-border">
-            <span className="text-muted-foreground">
-              {table.columns.length} Column{table.columns.length !== 1 ? 's' : ''}
-            </span>
-          </div>
-        </div>
-
-        {/* Classification Details Dropdown */}
-        {showClassificationDetails && classificationScores.length > 1 && (
-          <div className="mt-3 p-3 bg-muted/30 rounded-md border border-border">
-            <p className="text-xs font-medium text-muted-foreground mb-2">
-              Classification Scores (from schema analysis):
-            </p>
-            <div className="space-y-1.5">
-              {classificationScores.slice(0, 3).map((score, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-xs">
-                  <div className="flex-shrink-0 w-12 text-right font-mono text-muted-foreground">
-                    {(score.score * 100).toFixed(0)}%
-                  </div>
-                  <div className="flex-1">
-                    <span className="font-medium text-foreground">{score.category}</span>
-                    {score.reason && (
-                      <span className="text-muted-foreground ml-2">- {score.reason}</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Columns List */}

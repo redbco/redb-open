@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/redbco/redb-open/pkg/anchor/adapter"
 )
 
 // MetadataOps implements metadata operations for S3.
@@ -203,4 +204,18 @@ func (m *MetadataOps) countObjects(ctx context.Context, client *S3Client, bucket
 	}
 
 	return count, nil
+}
+
+// CollectInstanceMetrics collects performance metrics.
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// TODO: Implement database-specific metrics collection
+	return metrics, nil
+}
+
+// ListLogicalDatabases lists logical databases.
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	var databases []adapter.LogicalDatabaseInfo
+	// TODO: Implement database-specific database listing
+	return databases, nil
 }

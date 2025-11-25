@@ -136,6 +136,14 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 }
 
 // InstanceMetadataOps implements adapter.MetadataOperator for instance connections.
+
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Oracle, "collect instance metrics", "not available on database connections")
+}
+
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Oracle, "list logical databases", "not available on database connections")
+}
 type InstanceMetadataOps struct {
 	conn *InstanceConnection
 }
@@ -247,4 +255,17 @@ func (i *InstanceMetadataOps) ExecuteCommand(ctx context.Context, command string
 		"execute command",
 		"not yet implemented",
 	)
+}
+
+
+func (i *InstanceMetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// TODO: Implement Oracle-specific metrics collection
+	return metrics, nil
+}
+
+func (i *InstanceMetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	var databases []adapter.LogicalDatabaseInfo
+	// TODO: Implement Oracle-specific database listing
+	return databases, nil
 }

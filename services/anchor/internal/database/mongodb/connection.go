@@ -375,6 +375,137 @@ func CollectInstanceMetadata(ctx context.Context, db interface{}) (map[string]in
 		}
 	}
 
+	// Get logical databases list with sizes
+	logicalDatabases := []map[string]interface{}{}
+	for _, dbName := range dbs {
+		// Skip system databases
+		if dbName == "admin" || dbName == "local" || dbName == "config" {
+			continue
+		}
+
+		// Get database stats
+		dbStatsCmd := bson.D{{Key: "dbStats", Value: 1}}
+		dbStatsResult := client.Database(dbName).RunCommand(ctx, dbStatsCmd)
+		var statsDoc bson.M
+		if err := dbStatsResult.Decode(&statsDoc); err == nil {
+			dbInfo := map[string]interface{}{
+				"name": dbName,
+			}
+
+			// Get size
+			if dataSize, ok := statsDoc["dataSize"]; ok {
+				switch s := dataSize.(type) {
+				case int64:
+					dbInfo["size_bytes"] = s
+				case float64:
+					dbInfo["size_bytes"] = int64(s)
+				case int32:
+					dbInfo["size_bytes"] = int64(s)
+				}
+			}
+
+			// Get collection count
+			if collections, ok := statsDoc["collections"]; ok {
+				switch c := collections.(type) {
+				case int32:
+					dbInfo["collection_count"] = int(c)
+				case int64:
+					dbInfo["collection_count"] = int(c)
+				case float64:
+					dbInfo["collection_count"] = int(c)
+				}
+			}
+
+			logicalDatabases = append(logicalDatabases, dbInfo)
+		}
+	}
+	metadata["logical_databases"] = logicalDatabases
+
+	// Check deployment type (standalone, replica set, sharded)
+	isMasterCmd := bson.D{{Key: "isMaster", Value: 1}}
+	isMasterResult := client.Database("admin").RunCommand(ctx, isMasterCmd)
+	var isMasterDoc bson.M
+	if err := isMasterResult.Decode(&isMasterDoc); err == nil {
+		if setName, ok := isMasterDoc["setName"].(string); ok && setName != "" {
+			metadata["deployment_type"] = "replica_set"
+			metadata["replica_set_name"] = setName
+			metadata["is_replica"] = true
+			metadata["replication_enabled"] = true
+
+			// Determine role
+			if ismaster, ok := isMasterDoc["ismaster"].(bool); ok && ismaster {
+				metadata["replication_role"] = "primary"
+			} else if issecondary, ok := isMasterDoc["secondary"].(bool); ok && issecondary {
+				metadata["replication_role"] = "secondary"
+			} else if isarbiter, ok := isMasterDoc["arbiterOnly"].(bool); ok && isarbiter {
+				metadata["replication_role"] = "arbiter"
+			}
+		} else if msg, ok := isMasterDoc["msg"].(string); ok && msg == "isdbgrid" {
+			metadata["deployment_type"] = "sharded_cluster"
+		} else {
+			metadata["deployment_type"] = "standalone"
+		}
+	}
+
+	// Get storage engine
+	if storageEngine, ok := statusDoc["storageEngine"].(bson.M); ok {
+		if name, ok := storageEngine["name"].(string); ok {
+			metadata["storage_engine"] = name
+		}
+	}
+
+	// Edition detection
+	edition := "MongoDB Community"
+	if version, ok := metadata["version"].(string); ok {
+		if strings.Contains(version, "Enterprise") {
+			edition = "MongoDB Enterprise"
+		} else if strings.Contains(version, "Atlas") {
+			edition = "MongoDB Atlas"
+		}
+	}
+	metadata["edition"] = edition
+
+	// Platform detection
+	if host, ok := statusDoc["host"].(string); ok {
+		if strings.Contains(strings.ToLower(host), "linux") {
+			metadata["platform"] = "linux"
+		} else if strings.Contains(strings.ToLower(host), "darwin") {
+			metadata["platform"] = "darwin"
+		} else if strings.Contains(strings.ToLower(host), "win") {
+			metadata["platform"] = "windows"
+		}
+	}
+
+	// Architecture
+	if process, ok := statusDoc["process"].(string); ok {
+		metadata["process_type"] = process // mongod, mongos, etc.
+	}
+
+	// Features
+	features := []string{}
+	if metadata["deployment_type"] == "replica_set" {
+		features = append(features, "replication")
+	}
+	if metadata["deployment_type"] == "sharded_cluster" {
+		features = append(features, "sharding")
+	}
+
+	// Check for common features via buildInfo
+	buildInfoCmd := bson.D{{Key: "buildInfo", Value: 1}}
+	buildInfoResult := client.Database("admin").RunCommand(ctx, buildInfoCmd)
+	var buildInfoDoc bson.M
+	if err := buildInfoResult.Decode(&buildInfoDoc); err == nil {
+		if modules, ok := buildInfoDoc["modules"].(bson.A); ok && len(modules) > 0 {
+			for _, module := range modules {
+				if moduleStr, ok := module.(string); ok {
+					features = append(features, moduleStr)
+				}
+			}
+		}
+	}
+
+	metadata["features"] = features
+
 	return metadata, nil
 }
 

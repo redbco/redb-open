@@ -79,6 +79,8 @@ func convertStatus(grpcStatus commonv1.Status) Status {
 		return StatusActive
 	case commonv1.Status_STATUS_CLEAN:
 		return StatusClean
+	case commonv1.Status_STATUS_UNCHANGED:
+		return StatusUnchanged
 	default:
 		return StatusUnknown
 	}

@@ -381,21 +381,20 @@ func convertBranchFromGRPC(grpcBranch *corev1.Branch) Branch {
 		childBranches[i] = convertBranchFromGRPC(child)
 	}
 
-	// Convert commits
-	commits := make([]Commit, len(grpcBranch.Commits))
+	// Convert commits (as CommitSummary without schema_structure)
+	commits := make([]CommitSummary, len(grpcBranch.Commits))
 	for i, commit := range grpcBranch.Commits {
-		commits[i] = Commit{
-			TenantID:        commit.TenantId,
-			WorkspaceID:     commit.WorkspaceId,
-			RepoID:          commit.RepoId,
-			BranchID:        commit.BranchId,
-			CommitID:        commit.CommitId,
-			CommitCode:      commit.CommitCode,
-			IsHead:          commit.IsHead,
-			CommitMessage:   commit.CommitMessage,
-			SchemaType:      commit.SchemaType,
-			SchemaStructure: commit.SchemaStructure,
-			CommitDate:      commit.CommitDate,
+		commits[i] = CommitSummary{
+			TenantID:      commit.TenantId,
+			WorkspaceID:   commit.WorkspaceId,
+			RepoID:        commit.RepoId,
+			BranchID:      commit.BranchId,
+			CommitID:      commit.CommitId,
+			CommitCode:    commit.CommitCode,
+			IsHead:        commit.IsHead,
+			CommitMessage: commit.CommitMessage,
+			SchemaType:    commit.SchemaType,
+			CommitDate:    commit.CommitDate,
 		}
 	}
 
@@ -409,9 +408,13 @@ func convertBranchFromGRPC(grpcBranch *corev1.Branch) Branch {
 		ParentBranchName:    grpcBranch.ParentBranchName,
 		ConnectedToDatabase: grpcBranch.ConnectedToDatabase,
 		DatabaseID:          grpcBranch.DatabaseId,
+		DatabaseName:        grpcBranch.DatabaseName,
+		RepoName:            grpcBranch.RepoName,
 		Branches:            childBranches,
 		Commits:             commits,
 		Status:              convertStatus(grpcBranch.Status),
+		Created:             grpcBranch.Created,
+		Updated:             grpcBranch.Updated,
 	}
 }
 

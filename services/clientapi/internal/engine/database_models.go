@@ -1,5 +1,13 @@
 package engine
 
+// CommitTimelineEntry represents a single commit in the timeline
+type CommitTimelineEntry struct {
+	CommitCode    string `json:"commit_code"`
+	CommitMessage string `json:"commit_message"`
+	CommitDate    string `json:"commit_date"`
+	IsHead        bool   `json:"is_head"`
+}
+
 // Database represents a database
 type Database struct {
 	TenantID              string   `json:"tenant_id"`
@@ -15,7 +23,6 @@ type Database struct {
 	DatabaseVendor        string   `json:"database_vendor"`
 	DatabaseVersion       string   `json:"database_version"`
 	DatabaseUsername      string   `json:"database_username"`
-	DatabasePassword      string   `json:"database_password"`
 	DatabaseDBName        string   `json:"database_db_name"`
 	DatabaseEnabled       bool     `json:"database_enabled"`
 	PolicyIDs             []string `json:"policy_ids"`
@@ -24,8 +31,6 @@ type Database struct {
 	Status                Status   `json:"status"`
 	Created               string   `json:"created"`
 	Updated               string   `json:"updated"`
-	DatabaseSchema        string   `json:"database_schema"`
-	DatabaseTables        string   `json:"database_tables"`
 	InstanceHost          string   `json:"instance_host"`
 	InstancePort          int32    `json:"instance_port"`
 	InstanceSSLMode       string   `json:"instance_ssl_mode"`
@@ -38,6 +43,13 @@ type Database struct {
 
 	// Resource registry data (structured)
 	ResourceContainers []DatabaseResourceContainer `json:"resource_containers,omitempty"`
+
+	// Repository and commit timeline
+	ConnectedRepoID     string                `json:"connected_repo_id,omitempty"`
+	ConnectedRepoName   string                `json:"connected_repo_name,omitempty"`
+	ConnectedBranchID   string                `json:"connected_branch_id,omitempty"`
+	ConnectedBranchName string                `json:"connected_branch_name,omitempty"`
+	CommitTimeline      []CommitTimelineEntry `json:"commit_timeline,omitempty"`
 }
 
 // DatabaseResourceItem represents an item in a database resource container
@@ -67,18 +79,18 @@ type DatabaseResourceItem struct {
 
 // DatabaseResourceContainer represents a database resource container (table, collection, etc.)
 type DatabaseResourceContainer struct {
-	ObjectType                        string                     `json:"object_type"`
-	ObjectName                        string                     `json:"object_name"`
-	ContainerClassification           string                     `json:"container_classification,omitempty"`
-	ContainerClassificationConfidence float64                    `json:"container_classification_confidence,omitempty"`
-	ContainerClassificationSource     string                     `json:"container_classification_source"`
-	ContainerMetadata                 map[string]interface{}     `json:"container_metadata,omitempty"`
-	EnrichedMetadata                  map[string]interface{}     `json:"enriched_metadata,omitempty"`
-	DatabaseType                      string                     `json:"database_type,omitempty"`
-	Vendor                            string                     `json:"vendor,omitempty"`
-	ItemCount                         int32                      `json:"item_count"`
-	Status                            string                     `json:"status"`
-	Items                             []DatabaseResourceItem     `json:"items"`
+	ObjectType                        string                 `json:"object_type"`
+	ObjectName                        string                 `json:"object_name"`
+	ContainerClassification           string                 `json:"container_classification,omitempty"`
+	ContainerClassificationConfidence float64                `json:"container_classification_confidence,omitempty"`
+	ContainerClassificationSource     string                 `json:"container_classification_source"`
+	ContainerMetadata                 map[string]interface{} `json:"container_metadata,omitempty"`
+	EnrichedMetadata                  map[string]interface{} `json:"enriched_metadata,omitempty"`
+	DatabaseType                      string                 `json:"database_type,omitempty"`
+	Vendor                            string                 `json:"vendor,omitempty"`
+	ItemCount                         int32                  `json:"item_count"`
+	Status                            string                 `json:"status"`
+	Items                             []DatabaseResourceItem `json:"items"`
 }
 
 type ListDatabasesResponse struct {
@@ -178,27 +190,27 @@ type DisconnectDatabaseResponse struct {
 }
 
 type DatabaseDisconnectMetadata struct {
-	DatabaseName                string `json:"database_name"`
-	InstanceName                string `json:"instance_name"`
-	IsLastDatabaseInInstance    bool   `json:"is_last_database_in_instance"`
-	TotalDatabasesInInstance    int32  `json:"total_databases_in_instance"`
-	HasAttachedBranch           bool   `json:"has_attached_branch"`
-	AttachedRepoName            string `json:"attached_repo_name,omitempty"`
-	AttachedBranchName          string `json:"attached_branch_name,omitempty"`
-	IsOnlyBranchInRepo          bool   `json:"is_only_branch_in_repo"`
-	TotalBranchesInRepo         int32  `json:"total_branches_in_repo"`
-	HasOtherDatabasesOnBranch   bool   `json:"has_other_databases_on_branch"`
-	CanDeleteBranchOnly         bool   `json:"can_delete_branch_only"`
-	CanDeleteEntireRepo         bool   `json:"can_delete_entire_repo"`
-	ShouldDeleteRepo            bool   `json:"should_delete_repo"`
-	ShouldDeleteBranch          bool   `json:"should_delete_branch"`
+	DatabaseName              string `json:"database_name"`
+	InstanceName              string `json:"instance_name"`
+	IsLastDatabaseInInstance  bool   `json:"is_last_database_in_instance"`
+	TotalDatabasesInInstance  int32  `json:"total_databases_in_instance"`
+	HasAttachedBranch         bool   `json:"has_attached_branch"`
+	AttachedRepoName          string `json:"attached_repo_name,omitempty"`
+	AttachedBranchName        string `json:"attached_branch_name,omitempty"`
+	IsOnlyBranchInRepo        bool   `json:"is_only_branch_in_repo"`
+	TotalBranchesInRepo       int32  `json:"total_branches_in_repo"`
+	HasOtherDatabasesOnBranch bool   `json:"has_other_databases_on_branch"`
+	CanDeleteBranchOnly       bool   `json:"can_delete_branch_only"`
+	CanDeleteEntireRepo       bool   `json:"can_delete_entire_repo"`
+	ShouldDeleteRepo          bool   `json:"should_delete_repo"`
+	ShouldDeleteBranch        bool   `json:"should_delete_branch"`
 }
 
 type GetDatabaseDisconnectMetadataResponse struct {
-	Message  string                      `json:"message"`
-	Success  bool                        `json:"success"`
-	Status   Status                      `json:"status"`
-	Metadata DatabaseDisconnectMetadata  `json:"metadata"`
+	Message  string                     `json:"message"`
+	Success  bool                       `json:"success"`
+	Status   Status                     `json:"status"`
+	Metadata DatabaseDisconnectMetadata `json:"metadata"`
 }
 
 type GetLatestStoredDatabaseSchemaResponse struct {

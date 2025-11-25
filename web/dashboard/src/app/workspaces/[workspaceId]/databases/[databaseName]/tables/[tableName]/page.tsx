@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { api } from '@/lib/api/endpoints';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { CellValue } from '@/components/ui/CellValue';
-import { Table, ArrowLeft, Lock, Unlock, Key, Shield, ChevronDown, ChevronUp, Database } from 'lucide-react';
+import { Table, ArrowLeft, Lock, Unlock, Key, Shield, ChevronDown, ChevronUp, Database, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import {
   Select,
@@ -82,6 +82,7 @@ export default function TableDataPage({ params }: TableDataPageProps) {
           setColumnSchemas(response.column_schemas || []);
           setTotalRows(response.total_rows || 0);
           setTotalPages(response.total_pages || 0);
+          
         } else {
           setError(response.message || 'Failed to fetch table data.');
         }
@@ -318,64 +319,96 @@ export default function TableDataPage({ params }: TableDataPageProps) {
 
   const columnNames = getColumnNames();
   const hasPrivilegedColumns = columnSchemas.some(col => col.is_privileged);
+  const privilegedColumnCount = columnSchemas.filter(col => col.is_privileged && (col.privileged_confidence || 0) > 0.7).length;
+
+  const handleRefresh = () => {
+    setCurrentPage(1);
+    // Trigger re-fetch by updating a key dependency
+    window.location.reload();
+  };
 
   return (
     <TooltipProvider>
-      <div className="container mx-auto p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-4">
-          <Link
-            href={`/workspaces/${workspaceId}/databases/${databaseName}/schema`}
-            className="inline-flex items-center text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Schema
-          </Link>
-        </div>
-        
-        <h1 className="text-3xl font-bold text-foreground flex items-center gap-2">
-          <Table className="h-8 w-8" />
-          {tableName}
-        </h1>
-
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowColumnDetails(!showColumnDetails)}
-            className="flex items-center gap-2"
-          >
-            {showColumnDetails ? (
-              <>
-                <ChevronUp className="h-4 w-4" /> Hide Details
-              </>
-            ) : (
-              <>
-                <ChevronDown className="h-4 w-4" /> Show Details
-              </>
-            )}
-          </Button>
-          {hasPrivilegedColumns && (
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between bg-gradient-to-r from-blue-50/50 to-transparent dark:from-blue-900/10 p-6 -mx-6 rounded-lg">
+          <div className="flex items-center gap-4">
+            <Link
+              href={`/workspaces/${workspaceId}/databases/${databaseName}/schema`}
+              className="p-2 hover:bg-accent rounded-md transition-colors"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Link>
+            <div className="flex items-center gap-3">
+              <div className={`w-12 h-12 bg-gradient-to-br rounded-xl flex items-center justify-center border border-border shadow-sm ${
+                privilegedColumnCount > 0 
+                  ? 'from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20' 
+                  : 'from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900'
+              }`}>
+                {privilegedColumnCount > 0 ? (
+                  <Shield className="h-7 w-7 text-red-600 dark:text-red-400" />
+                ) : (
+                  <Table className="h-7 w-7 text-foreground" />
+                )}
+              </div>
+              <div>
+                <h2 className="text-3xl font-bold text-foreground">{tableName}</h2>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                  <Link
+                    href={`/workspaces/${workspaceId}/databases/${databaseName}/schema`}
+                    className="font-medium hover:underline hover:text-primary transition-colors"
+                  >
+                    {databaseName}
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefresh}
+              className="inline-flex items-center px-3 py-2 border border-input bg-background rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+              disabled={isLoading}
+            >
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </button>
             <Button
-              variant={showPrivilegedData ? "default" : "outline"}
+              variant="outline"
               size="sm"
-              onClick={() => setShowPrivilegedData(!showPrivilegedData)}
+              onClick={() => setShowColumnDetails(!showColumnDetails)}
               className="flex items-center gap-2"
             >
-              {showPrivilegedData ? (
+              {showColumnDetails ? (
                 <>
-                  <Unlock className="h-4 w-4" /> Hide Privileged
+                  <ChevronUp className="h-4 w-4" /> Hide Details
                 </>
               ) : (
                 <>
-                  <Lock className="h-4 w-4" /> Show Privileged
+                  <ChevronDown className="h-4 w-4" /> Show Details
                 </>
               )}
             </Button>
-          )}
+            {hasPrivilegedColumns && (
+              <Button
+                variant={showPrivilegedData ? "default" : "outline"}
+                size="sm"
+                onClick={() => setShowPrivilegedData(!showPrivilegedData)}
+                className="flex items-center gap-2"
+              >
+                {showPrivilegedData ? (
+                  <>
+                    <Unlock className="h-4 w-4" /> Hide Privileged
+                  </>
+                ) : (
+                  <>
+                    <Lock className="h-4 w-4" /> Show Privileged
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
 
       {/* Table Info Summary */}
       {columnSchemas.length > 0 && (

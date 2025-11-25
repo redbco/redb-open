@@ -2,15 +2,16 @@
 
 import { GitBranch } from 'lucide-react';
 import { BranchTreeNode } from './BranchTreeNode';
-import type { Branch } from '@/lib/api/types';
+import type { Branch, DatabaseConnection } from '@/lib/api/types';
 
 interface RepositoryTreeProps {
   branches: Branch[];
   workspaceId: string;
   repoName: string;
+  databaseConnections: DatabaseConnection[];
 }
 
-export function RepositoryTree({ branches, workspaceId, repoName }: RepositoryTreeProps) {
+export function RepositoryTree({ branches, workspaceId, repoName, databaseConnections }: RepositoryTreeProps) {
   // Find the main branch (root branch with no parent)
   const mainBranch = branches.find(
     (b) => b.branch_name === 'main' || !b.parent_branch_id
@@ -42,6 +43,7 @@ export function RepositoryTree({ branches, workspaceId, repoName }: RepositoryTr
             repoName={repoName}
             level={0}
             allBranches={branches}
+            databaseConnections={databaseConnections}
           />
         ))}
       </div>
@@ -56,6 +58,7 @@ export function RepositoryTree({ branches, workspaceId, repoName }: RepositoryTr
         repoName={repoName}
         level={0}
         allBranches={branches}
+        databaseConnections={databaseConnections}
       />
     </div>
   );

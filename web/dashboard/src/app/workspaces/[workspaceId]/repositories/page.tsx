@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRepositories } from '@/lib/hooks/useRepositories';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useToast } from '@/components/ui/Toast';
-import { GitBranch, Plus, RefreshCw } from 'lucide-react';
+import { GitBranch, Plus, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import { RepositoryCard } from '@/components/repositories/RepositoryCard';
 import { AddRepositoryDialog } from '@/components/repositories/AddRepositoryDialog';
 
@@ -25,6 +25,10 @@ export default function RepositoriesPage({ params }: RepositoriesPageProps) {
 
   const { repositories, isLoading, error, refetch } = useRepositories(workspaceId);
 
+  const inactiveRepositories = repositories.filter(r =>
+    r.status && !['active', 'online'].includes(r.status.toLowerCase())
+  ).length;
+
   const handleRefresh = () => {
     refetch();
     showToast({
@@ -44,12 +48,34 @@ export default function RepositoriesPage({ params }: RepositoriesPageProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between bg-gradient-to-r from-indigo-50/50 to-transparent dark:from-indigo-900/10 p-6 -mx-6 rounded-lg mb-6">
         <div>
-          <h2 className="text-3xl font-bold text-foreground">Repositories</h2>
-          <p className="text-muted-foreground mt-2">
-            Manage schema repositories and version control
-          </p>
+          <div className="flex items-center gap-3">
+            <GitBranch className="w-8 h-8 text-indigo-600 dark:text-indigo-400" />
+            <h2 className="text-3xl font-bold text-foreground">Repositories</h2>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <p className="text-muted-foreground">
+              Manage schema repositories and version control
+            </p>
+            {!isLoading && repositories.length > 0 && (
+              <>
+                <span className="text-muted-foreground/30">•</span>
+                {inactiveRepositories > 0 ? (
+                  <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 text-sm font-medium animate-in fade-in duration-300">
+                    <AlertCircle className="w-4 h-4" />
+                    {inactiveRepositories} inactive
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium animate-in fade-in duration-300">
+                    <CheckCircle2 className="w-4 h-4" />
+                    All repositories active
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
         <div className="flex items-center space-x-3">
           <button

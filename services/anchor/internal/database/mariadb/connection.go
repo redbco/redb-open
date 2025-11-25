@@ -285,6 +285,57 @@ func CollectInstanceMetadata(ctx context.Context, db interface{}) (map[string]in
 	}
 	metadata["max_connections"] = maxConnections
 
+	// Get logical databases list with sizes
+	logicalDatabases := []map[string]interface{}{}
+	dbQuery := `
+		SELECT 
+			s.schema_name,
+			IFNULL(SUM(t.data_length + t.index_length), 0) as size_bytes,
+			COUNT(t.table_name) as table_count
+		FROM information_schema.schemata s
+		LEFT JOIN information_schema.tables t ON s.schema_name = t.table_schema
+		WHERE s.schema_name NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+		GROUP BY s.schema_name
+		ORDER BY s.schema_name
+	`
+	rows, err := sqlDB.QueryContext(ctx, dbQuery)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var dbName string
+			var sizeBytes int64
+			var tableCount int
+			if err := rows.Scan(&dbName, &sizeBytes, &tableCount); err == nil {
+				logicalDatabases = append(logicalDatabases, map[string]interface{}{
+					"name":        dbName,
+					"size_bytes":  sizeBytes,
+					"table_count": tableCount,
+				})
+			}
+		}
+	}
+	metadata["logical_databases"] = logicalDatabases
+
+	// Edition/distribution
+	metadata["edition"] = "MariaDB"
+
+	// Platform detection
+	if strings.Contains(version, "linux") || strings.Contains(version, "Linux") {
+		metadata["platform"] = "linux"
+	} else if strings.Contains(version, "Win") || strings.Contains(version, "win") {
+		metadata["platform"] = "windows"
+	} else if strings.Contains(version, "osx") || strings.Contains(version, "Darwin") {
+		metadata["platform"] = "darwin"
+	}
+
+	// Check replication status
+	var replicaStatus string
+	err = sqlDB.QueryRowContext(ctx, "SELECT @@read_only").Scan(&replicaStatus)
+	if err == nil {
+		metadata["is_replica"] = (replicaStatus == "1")
+		metadata["replication_enabled"] = true
+	}
+
 	// MariaDB specific variables
 	var threadsCached int
 	err = sqlDB.QueryRowContext(ctx, "SELECT variable_value FROM information_schema.global_status WHERE variable_name = 'Threads_cached'").Scan(&threadsCached)
@@ -313,6 +364,35 @@ func CollectInstanceMetadata(ctx context.Context, db interface{}) (map[string]in
 		}
 		metadata["available_engines"] = availableEngines
 	}
+
+	// Check for MariaDB-specific features
+	features := []string{}
+	
+	// Check for Galera cluster
+	var galeraVersion string
+	err = sqlDB.QueryRowContext(ctx, "SELECT @@wsrep_provider_version").Scan(&galeraVersion)
+	if err == nil && galeraVersion != "" {
+		features = append(features, "galera_cluster")
+	}
+
+	// Check for ColumnStore
+	var hasColumnStore int
+	err = sqlDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.plugins WHERE plugin_name = 'ColumnStore' AND plugin_status = 'ACTIVE'").Scan(&hasColumnStore)
+	if err == nil && hasColumnStore > 0 {
+		features = append(features, "columnstore")
+	}
+
+	// Replication
+	rows, err = sqlDB.QueryContext(ctx, "SHOW SLAVE STATUS")
+	if err == nil {
+		defer rows.Close()
+		if rows.Next() {
+			features = append(features, "replication")
+			metadata["replication_role"] = "replica"
+		}
+	}
+
+	metadata["features"] = features
 
 	return metadata, nil
 }

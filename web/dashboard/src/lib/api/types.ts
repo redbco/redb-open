@@ -281,6 +281,13 @@ export interface Profile {
   workspace_ids?: string[];
 }
 
+export interface CommitTimelineEntry {
+  commit_code: string;
+  commit_message: string;
+  commit_date: string;
+  is_head: boolean;
+}
+
 // Database Types
 export interface Database {
   tenant_id: string;
@@ -296,7 +303,6 @@ export interface Database {
   database_vendor: string;
   database_version?: string;
   database_username?: string;
-  database_password?: string;
   database_db_name: string;
   database_enabled: boolean;
   policy_ids?: string[];
@@ -305,8 +311,6 @@ export interface Database {
   status: string;
   created?: string;
   updated?: string;
-  database_schema?: string; // JSON string of schema data
-  database_tables?: string; // JSON string of tables data (legacy)
   resource_containers?: SchemaContainer[]; // New unified container structure
   instance_host?: string;
   instance_port?: number;
@@ -317,6 +321,13 @@ export interface Database {
   instance_ssl?: boolean;
   instance_status_message?: string;
   instance_status?: string;
+  
+  // Repository and commit timeline
+  connected_repo_id?: string;
+  connected_repo_name?: string;
+  connected_branch_id?: string;
+  connected_branch_name?: string;
+  commit_timeline?: CommitTimelineEntry[];
 }
 
 export interface ListDatabasesResponse {
@@ -655,6 +666,45 @@ export interface GetDatabaseSchemaResponse {
 }
 
 // Instance Types
+export interface LogicalDatabase {
+  name: string;
+  encoding: string;
+  collation: string;
+  owner: string;
+  size_bytes: number;
+  is_connected?: boolean; // for future use
+}
+
+export interface ServerSettings {
+  [key: string]: string;
+}
+
+export interface InstanceMetadata {
+  version?: string;
+  platform?: string;
+  architecture?: string;
+  edition?: string;
+  is_replica?: boolean;
+  ssl_enabled?: boolean;
+  replication_enabled?: boolean;
+  replication_slots?: number;
+  max_connections?: number;
+  total_connections?: number;
+  total_databases?: number;
+  uptime_seconds?: number;
+  logical_databases?: LogicalDatabase[];
+  server_settings?: ServerSettings;
+  extensions?: string[];
+  features?: string[];
+}
+
+export interface ConnectedDatabase {
+  database_name: string;
+  database_db_name: string;
+  database_username: string;
+  status: string;
+}
+
 export interface Instance {
   tenant_id: string;
   workspace_id: string;
@@ -678,6 +728,8 @@ export interface Instance {
   instance_ssl_cert?: string;
   instance_ssl_key?: string;
   instance_ssl_root_cert?: string;
+  instance_metadata?: InstanceMetadata;
+  connected_databases?: ConnectedDatabase[];
   policy_ids?: string[];
   owner_id?: string;
   instance_status_message?: string;
@@ -1086,6 +1138,12 @@ export interface ListWorkspacesResponse {
 }
 
 // Repository Types
+export interface DatabaseConnection {
+  branch_name: string;
+  database_name: string;
+  database_status?: string;
+}
+
 export interface Repository {
   tenant_id: string;
   workspace_id: string;
@@ -1095,6 +1153,11 @@ export interface Repository {
   repo_type?: string;
   owner_id?: string;
   branch_count?: number;
+  commit_count?: number;
+  database_connections?: DatabaseConnection[];
+  latest_commit_code?: string;
+  latest_commit_branch?: string;
+  latest_commit_date?: string;
   branches?: Branch[];  // Nested branches when fetching single repository
   created?: string;
   updated?: string;
@@ -1144,8 +1207,10 @@ export interface Branch {
   parent_branch_name?: string;
   attached_database_id?: string;
   attached_database_name?: string;
+  database_name?: string;  // Direct database name from API
+  connected_to_database?: boolean;  // Connection status from API
   commit_count?: number;
-  commits?: Commit[];  // Nested commits when fetching single branch
+  commits?: CommitSummary[];  // Nested commits when fetching single branch (without schema_structure)
   branches?: Branch[];  // Nested child branches when fetching single branch
   owner_id?: string;
   created?: string;
@@ -1198,24 +1263,92 @@ export interface DetachBranchResponse {
 }
 
 // Commit Types
+// Change Status for commit containers and items
+export type ChangeStatus = 
+  | 'STATUS_UNCHANGED'
+  | 'STATUS_CREATED' 
+  | 'STATUS_UPDATED'
+  | 'STATUS_DELETED';
+
+// Commit Container - represents a data container (table, collection, etc.) in a commit
+export interface CommitContainer {
+  change_status: ChangeStatus;
+  container_classification: string;
+  container_classification_confidence: number;
+  container_classification_source: string;
+  container_metadata?: Record<string, any>;
+  database_id: string;
+  database_type: string;
+  enriched_metadata?: Record<string, any>;
+  item_count: number;
+  object_name: string;
+  object_type: string;
+  protocol: string;
+  resource_uri: string;
+  scope: string;
+  tenant_id: string;
+  workspace_id: string;
+}
+
+// Commit Item - represents an item (column, field, etc.) in a commit container
+export interface CommitItem {
+  change_status: ChangeStatus;
+  container_uri: string;
+  data_type: string;
+  is_array: boolean;
+  is_indexed: boolean;
+  is_nullable: boolean;
+  is_primary_key: boolean;
+  is_privileged: boolean;
+  is_required: boolean;
+  is_unique: boolean;
+  item_display_name: string;
+  item_name: string;
+  item_type: string;
+  ordinal_position: number;
+  protocol: string;
+  resource_uri: string;
+  scope: string;
+  array_dimensions?: number;
+  default_value?: string;
+  detection_confidence?: number;
+  detection_method?: string;
+  privileged_classification?: string;
+}
+
+// Commit Schema Structure - container/item-based schema representation
+export interface CommitSchemaStructure {
+  containers: CommitContainer[];
+  items: CommitItem[];
+}
+
+// Commit Summary (without schema_structure, used in lists)
+export interface CommitSummary {
+  tenant_id: string;
+  workspace_id: string;
+  repo_id: string;
+  branch_id: string;
+  commit_id: string;
+  commit_code: string;
+  is_head: boolean;
+  commit_message?: string;
+  schema_type?: string;
+  commit_date?: string;
+}
+
+// Full Commit (with schema_structure, used in detail views)
 export interface Commit {
   tenant_id: string;
   workspace_id: string;
   repo_id: string;
-  repo_name: string;
   branch_id: string;
-  branch_name: string;
   commit_id: string;
   commit_code: string;
+  is_head: boolean;
   commit_message?: string;
-  commit_description?: string;
-  schema_structure?: string;
-  parent_commit_id?: string;
-  parent_commit_code?: string;
-  owner_id?: string;
-  created?: string;
-  updated?: string;
-  status?: string;
+  schema_type?: string;
+  schema_structure?: CommitSchemaStructure | string; // Can be object or JSON string
+  commit_date?: string;
 }
 
 export interface ListCommitsResponse {

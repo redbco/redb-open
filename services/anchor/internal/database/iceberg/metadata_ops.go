@@ -53,6 +53,14 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 	return []byte(result), nil
 }
 
+
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Iceberg, "collect instance metrics", "not available on database connections")
+}
+
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Iceberg, "list logical databases", "not available on database connections")
+}
 type InstanceMetadataOps struct {
 	conn *InstanceConnection
 }
@@ -88,4 +96,17 @@ func (i *InstanceMetadataOps) GetTableCount(ctx context.Context) (int, error) {
 func (i *InstanceMetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byte, error) {
 	result := fmt.Sprintf(`{"success": false, "error": "Iceberg uses REST/metadata APIs, not SQL commands"}`)
 	return []byte(result), nil
+}
+
+
+func (i *InstanceMetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// TODO: Implement Iceberg-specific metrics collection
+	return metrics, nil
+}
+
+func (i *InstanceMetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	var databases []adapter.LogicalDatabaseInfo
+	// TODO: Implement Iceberg-specific database listing
+	return databases, nil
 }

@@ -120,6 +120,14 @@ func (m *MetadataOps) ExecuteCommand(ctx context.Context, command string) ([]byt
 	return []byte(result), nil
 }
 
+
+func (m *MetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Neo4j, "collect instance metrics", "not available on database connections")
+}
+
+func (m *MetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	return nil, adapter.NewUnsupportedOperationError(dbcapabilities.Neo4j, "list logical databases", "not available on database connections")
+}
 type InstanceMetadataOps struct {
 	conn *InstanceConnection
 }
@@ -191,4 +199,17 @@ func (i *InstanceMetadataOps) ExecuteCommand(ctx context.Context, command string
 
 	result := fmt.Sprintf(`{"success": true, "command": "%s"}`, command)
 	return []byte(result), nil
+}
+
+
+func (i *InstanceMetadataOps) CollectInstanceMetrics(ctx context.Context) (map[string]interface{}, error) {
+	metrics := make(map[string]interface{})
+	// TODO: Implement Neo4j-specific metrics collection
+	return metrics, nil
+}
+
+func (i *InstanceMetadataOps) ListLogicalDatabases(ctx context.Context) ([]adapter.LogicalDatabaseInfo, error) {
+	var databases []adapter.LogicalDatabaseInfo
+	// TODO: Implement Neo4j-specific database listing
+	return databases, nil
 }
